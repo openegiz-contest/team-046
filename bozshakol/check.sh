@@ -42,8 +42,13 @@ PY
 )"
 expected_n="$(printf '%s\n' "$expected" | grep -c .)"
 things="$(curl -s --max-time 20 -u "$AUTH" "$DITTO/api/2/search/things?namespaces=$NS&option=size(200)&fields=thingId,_modified")"
-if [ -z "$things" ]; then
-  bad "Ditto не отвечает по адресу $DITTO"
+case "$things" in
+  "{"*) things_ok=1 ;;
+  *) things_ok=0 ;;
+esac
+if [ "$things_ok" = 0 ]; then
+  bad "Ditto не отвечает по адресу $DITTO (ответ: $(printf '%s' "$things" | tr -d '
+' | cut -c1-60)); после запуска подождите 1–2 минуты и повторите"
 else
   result="$(python3 - "$expected" "$FRESH_S" <<'PY' "$things"
 import json, sys, datetime
@@ -71,6 +76,19 @@ PY
   read -r total missing_n stale_n <<<"$(printf '%s\n' "$result" | sed -n 1p)"
   missing="$(printf '%s\n' "$result" | sed -n 2p)"
   stale="$(printf '%s\n' "$result" | sed -n 3p)"
+  # Поисковый индекс Ditto отстаёт первые секунды после создания двойников:
+  # то, чего нет в поиске, спрашиваем напрямую.
+  if [ "$missing_n" != 0 ]; then
+    still=""
+    for t in $missing; do
+      code="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' -u "$AUTH" "$DITTO/api/2/things/$t?fields=thingId")"
+      [ "$code" = 200 ] || still="$still $t"
+    done
+    missing="${still# }"
+    missing_n=0
+    [ -n "$missing" ] && missing_n="$(printf '%s
+' "$missing" | wc -w)"
+  fi
   if [ "$missing_n" = 0 ]; then ok "все $total двойников $NS есть в Ditto"; else bad "нет двойников ($missing_n): $missing"; fi
   if [ "$stale_n" = 0 ]; then ok "все двойники обновлялись за последние ${FRESH_S} с"; else bad "не обновлялись больше ${FRESH_S} с ($stale_n): $stale"; fi
 fi
@@ -108,7 +126,8 @@ echo "4. История в InfluxDB"
 flux='from(bucket: "default") |> range(start: -2m) |> filter(fn: (r) => r.thingId =~ /^kz\.bozshakol:/) |> keep(columns: ["_time","thingId"]) |> group() |> count(column: "thingId") |> rename(columns: {thingId: "_value"})'
 points="$(curl -s --max-time 20 -X POST "$INFLUX/api/v2/query?org=opentwins" \
   -H "Authorization: Token ${INFLUXDB_TOKEN}" -H 'Content-Type: application/vnd.flux' -H 'Accept: application/csv' \
-  --data-binary "$flux" | tr -d '' | grep -v '^$' | awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="_value") c=i} NR==2{print $c}')"
+  --data-binary "$flux" | tr -d '
+' | grep -v '^$' | awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="_value") c=i} NR==2{print $c}')"
 if [ -n "${points:-}" ] && [ "${points:-0}" -gt 0 ] 2>/dev/null; then
   ok "за последние 2 минуты в InfluxDB записано $points точек $NS"
 else
