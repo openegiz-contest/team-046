@@ -124,10 +124,7 @@ if [ "$code_three" = 200 ]; then ok "three.js отдаётся локально"
 # 4. В InfluxDB есть свежие точки kz.bozshakol --------------------------------------
 echo "4. История в InfluxDB"
 flux='from(bucket: "default") |> range(start: -2m) |> filter(fn: (r) => r.thingId =~ /^kz\.bozshakol:/) |> keep(columns: ["_time","thingId"]) |> group() |> count(column: "thingId") |> rename(columns: {thingId: "_value"})'
-points="$(curl -s --max-time 20 -X POST "$INFLUX/api/v2/query?org=opentwins" \
-  -H "Authorization: Token ${INFLUXDB_TOKEN}" -H 'Content-Type: application/vnd.flux' -H 'Accept: application/csv' \
-  --data-binary "$flux" | tr -d '
-' | grep -v '^$' | awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="_value") c=i} NR==2{print $c}')"
+points="$(curl -s --max-time 20 -X POST "$INFLUX/api/v2/query?org=opentwins" \n  -H "Authorization: Token ${INFLUXDB_TOKEN}" -H 'Content-Type: application/vnd.flux' -H 'Accept: application/csv' \n  --data-binary "$flux" | tr -d '' | grep -v '^$' | awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="_value") c=i} NR==2{print $c}')"
 if [ -n "${points:-}" ] && [ "${points:-0}" -gt 0 ] 2>/dev/null; then
   ok "за последние 2 минуты в InfluxDB записано $points точек $NS"
 else
