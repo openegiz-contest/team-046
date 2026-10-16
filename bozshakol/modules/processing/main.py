@@ -18,7 +18,7 @@ log = setup_logging("bz-processing")
 PUBLISH_S = 5.0
 
 CRUSHER_TPH = 4000.0
-BUNKER_T = 1500.0
+BUNKER_T = 3000.0
 SAG_TPH = 2850.0        # 25 млн т/год
 CLAY_TPH = 570.0        # 5 млн т/год
 RECOVERY = 73.4         # % (2025)
@@ -115,7 +115,7 @@ def main():
             crushed = bunker.take(CRUSHER_TPH * dt / 3600.0)
             crusher_state = "running" if crushed > 0 else "idle"
         crusher_tph = crushed / dt * 3600.0 if dt > 0 else 0.0
-        accepting = (not crusher_stop) and bunker.stock < BUNKER_T * 0.9
+        accepting = (not crusher_stop) and bunker.stock < BUNKER_T * 0.85
         conveyor_load = crusher_tph * 3000.0 / (2.5 * 3600.0)  # т на ленте при 2,5 м/с (допущение)
         coarse.add(crushed, bunker.cu, bunker.clay)
 

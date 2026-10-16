@@ -165,7 +165,7 @@
    "_parents": "kz.bozshakol:plant-sulphide",
    "type": "гирационная",
    "rated_tph": 4000,
-   "bunker_t": 1500,
+   "bunker_t": 3000,
    "downstream": "kz.bozshakol:conveyor-01"
   },
   "features": {

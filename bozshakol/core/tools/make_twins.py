@@ -182,7 +182,7 @@ proc[tid("power-grid")] = twin("Электроснабжение", "power", "min
     "crusher": feat(0.0, "МВт"), "other": feat(6.0, "МВт"), "energy_shift": feat(0.0, "МВт·ч"),
 })
 proc[tid("crusher-01")] = twin("Гирационная дробилка", "crusher", "plant-sulphide", attrs={
-    "type": "гирационная", "rated_tph": 4000, "bunker_t": 1500, "downstream": tid("conveyor-01"),
+    "type": "гирационная", "rated_tph": 4000, "bunker_t": 3000, "downstream": tid("conveyor-01"),
 }, features={
     "state": feat("running"), "accepting": feat(True), "throughput": feat(0.0, "т/ч"),
     "bunker": feat(0.0, "т"), "received_total": feat(0.0, "т"), "trucks_queued": feat(0, "шт"),
