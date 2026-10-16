@@ -1,0 +1,196 @@
+{
+ "kz.bozshakol:mine": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Карьер Бозшаколь",
+   "kind": "mine",
+   "_isType": false,
+   "operator": "KAZ Minerals Bozshakol",
+   "region": "Павлодарская область",
+   "plant_sulphide_mtpa": 25,
+   "plant_clay_mtpa": 5,
+   "shift_hours": 12
+  },
+  "features": {
+   "sim_time": {
+    "properties": {
+     "value": "2026-01-15T08:00:00",
+     "unit": "ISO"
+    }
+   },
+   "shift": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "shift_hour": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ч"
+    }
+   },
+   "temperature": {
+    "properties": {
+     "value": -12.0,
+     "unit": "°C"
+    }
+   },
+   "wind": {
+    "properties": {
+     "value": 4.0,
+     "unit": "м/с"
+    }
+   },
+   "visibility": {
+    "properties": {
+     "value": 5000,
+     "unit": "м"
+    }
+   },
+   "speed_limit": {
+    "properties": {
+     "value": 50,
+     "unit": "км/ч"
+    }
+   },
+   "ore_to_plants": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "plan_fulfilment": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "feed_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "feed_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "cu_concentrate_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "trucks_hauling": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:scenarios": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Сценарии «что если»",
+   "kind": "scenarios",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine"
+  },
+  "features": {
+   "blizzard": {
+    "properties": {
+     "value": false,
+     "visibility_m": 300,
+     "speed_limit_kmh": 20,
+     "owner": "core"
+    }
+   },
+   "dispatch_off": {
+    "properties": {
+     "value": false,
+     "owner": "haulage"
+    }
+   },
+   "road_closed": {
+    "properties": {
+     "value": false,
+     "road": "road-ramp-2",
+     "owner": "haulage"
+    }
+   },
+   "excavator_down": {
+    "properties": {
+     "value": false,
+     "excavator": "excavator-02",
+     "owner": "haulage"
+    }
+   },
+   "clay_face": {
+    "properties": {
+     "value": false,
+     "face": "face-03",
+     "clay_pct": 45,
+     "owner": "geology"
+    }
+   },
+   "bad_blast": {
+    "properties": {
+     "value": false,
+     "face": "face-01",
+     "p80_mm": 450,
+     "owner": "geology"
+    }
+   },
+   "crusher_stop": {
+    "properties": {
+     "value": false,
+     "owner": "processing"
+    }
+   },
+   "sag_maintenance": {
+    "properties": {
+     "value": false,
+     "owner": "processing"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:pit-central": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Центральный карьер",
+   "kind": "pit",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "length_m": 4400,
+   "width_m": 1100,
+   "depth_m": 200,
+   "bench_height_m": 15,
+   "bench_face_angle_deg": 58
+  },
+  "features": {
+   "depth": {
+    "properties": {
+     "value": 200,
+     "unit": "м"
+    }
+   },
+   "bench_height": {
+    "properties": {
+     "value": 15,
+     "unit": "м"
+    }
+   },
+   "active_faces": {
+    "properties": {
+     "value": 6,
+     "unit": "шт"
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,25 @@
+# 3D-сцена рудника: nginx отдаёт bozshakol/web и проксирует Ditto (/ditto/...),
+# подставляя пароль из .env; в страницу пароль не попадает.
+services:
+  bz-web:
+    image: docker.io/library/nginx:1.25-alpine
+    restart: unless-stopped
+    mem_limit: 64m
+    environment:
+      DITTO_BASIC_AUTH: ${DITTO_BASIC_AUTH}
+      GRAFANA_URL: http://${OPENEGIZ_PUBLIC_HOST:-localhost}:${GRAFANA_PORT:-3000}
+    ports:
+      - "${OPENEGIZ_BIND:-127.0.0.1}:${BOZSHAKOL_WEB_PORT:-8095}:80"
+    volumes:
+      - .:/usr/share/nginx/html:ro
+      # geometry.json отдаётся по /geometry.json через alias в nginx (см. nginx/default.conf.template)
+      - ../core:/usr/share/nginx/core:ro
+      - ./nginx:/etc/nginx/templates:ro
+    depends_on:
+      ditto-nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6

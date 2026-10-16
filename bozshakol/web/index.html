@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карьер Бозшаколь — цифровой двойник</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <!-- Холст сцены и слой HTML-подписей -->
+  <div id="viewport">
+    <canvas id="scene"></canvas>
+    <div id="labels"></div>
+  </div>
+
+  <!-- Кнопки сверху -->
+  <div id="topbar">
+    <button id="btn-view" type="button" title="Переключить вид">Сверху</button>
+    <span id="load-status">загрузка…</span>
+  </div>
+
+  <!-- Боковая панель диспетчера -->
+  <aside id="panel">
+    <h1>Карьер Бозшаколь — диспетчер смены</h1>
+    <div class="status-line">связь: <span id="conn">нет</span></div>
+    <a id="grafana-link" href="#" target="_blank" rel="noopener" hidden>Дашборды Grafana</a>
+
+    <section>
+      <h2>Рудник</h2>
+      <table id="mine-table" class="kv"></table>
+    </section>
+
+    <section>
+      <h2>Диспетчеризация</h2>
+      <table id="dispatch-table" class="kv"></table>
+    </section>
+
+    <section>
+      <h2>Сценарии «что если»</h2>
+      <div id="scenarios"></div>
+    </section>
+
+    <section class="legend">
+      <h2>Самосвалы</h2>
+      <div><i style="background:#3d8f6e"></i> сульфидная руда</div>
+      <div><i style="background:#c8722a"></i> глинистая руда</div>
+      <div><i style="background:#8a8a8a"></i> вскрыша</div>
+      <div><i style="background:#ffffff;border:1px solid #999"></i> порожний</div>
+      <div><i style="background:#d32f2f"></i> авария (down)</div>
+      <div><i style="background:#d32f2f;height:4px"></i> дорога закрыта</div>
+    </section>
+  </aside>
+
+  <!-- Карточка двойника -->
+  <div id="card" hidden>
+    <div class="card-head">
+      <div>
+        <div id="card-name">—</div>
+        <div id="card-id" class="muted">—</div>
+      </div>
+      <button id="card-close" type="button" title="Закрыть">×</button>
+    </div>
+    <table class="kv" id="card-table">
+      <thead><tr><th>признак</th><th>значение</th><th>единица</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

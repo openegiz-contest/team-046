@@ -1,0 +1,439 @@
+{
+ "kz.bozshakol:plant-sulphide": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Сульфидная фабрика",
+   "kind": "plant",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "capacity_mtpa": 25,
+   "design_tph": 2850,
+   "recovery_cu_design_pct": 73.4
+  },
+  "features": {
+   "feed_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "feed_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "feed_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "plan_fulfilment": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "ore_shift_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cu_concentrate_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "recovery": {
+    "properties": {
+     "value": 73.4,
+     "unit": "%"
+    }
+   },
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:plant-clay": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Фабрика глинистой руды",
+   "kind": "plant",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "capacity_mtpa": 5,
+   "design_tph": 570
+  },
+  "features": {
+   "feed_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "feed_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "plan_fulfilment": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "ore_shift_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cu_concentrate_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:power-grid": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Электроснабжение",
+   "kind": "power",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "supply_mw": 120
+  },
+  "features": {
+   "load": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "sag_mill": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "ball_mills": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "crusher": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "other": {
+    "properties": {
+     "value": 6.0,
+     "unit": "МВт"
+    }
+   },
+   "energy_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт·ч"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:crusher-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Гирационная дробилка",
+   "kind": "crusher",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-sulphide",
+   "type": "гирационная",
+   "rated_tph": 4000,
+   "bunker_t": 1500,
+   "downstream": "kz.bozshakol:conveyor-01"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   },
+   "accepting": {
+    "properties": {
+     "value": true
+    }
+   },
+   "throughput": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "bunker": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "received_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "trucks_queued": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "feed_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:conveyor-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Магистральный конвейер",
+   "kind": "conveyor",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-sulphide",
+   "length_m": 3000,
+   "rated_tph": 4000,
+   "downstream": "kz.bozshakol:stockpile-coarse"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   },
+   "throughput": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/с"
+    }
+   },
+   "load": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:stockpile-coarse": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Склад крупнодроблёной руды",
+   "kind": "stockpile",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-sulphide",
+   "capacity_t": 200000,
+   "downstream": "kz.bozshakol:sag-mill-01"
+  },
+  "features": {
+   "stock": {
+    "properties": {
+     "value": 60000.0,
+     "unit": "т"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.39,
+     "unit": "% Cu"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 5.0,
+     "unit": "%"
+    }
+   },
+   "received_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "reclaimed_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:sag-mill-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Мельница полусамоизмельчения",
+   "kind": "mill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-sulphide",
+   "diameter_m": 12.2,
+   "power_mw": 28,
+   "rated_tph": 2850,
+   "downstream": "kz.bozshakol:flotation-01"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   },
+   "throughput": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "p80_product": {
+    "properties": {
+     "value": 150,
+     "unit": "мкм"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:flotation-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Флотация",
+   "kind": "flotation",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-sulphide",
+   "cells": 14
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "running"
+    }
+   },
+   "feed_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "feed_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "recovery": {
+    "properties": {
+     "value": 73.4,
+     "unit": "%"
+    }
+   },
+   "concentrate_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "concentrate_cu": {
+    "properties": {
+     "value": 24.0,
+     "unit": "% Cu"
+    }
+   },
+   "cu_in_concentrate_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т Cu"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:stockpile-clay": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Склад глинистой руды",
+   "kind": "stockpile",
+   "_isType": false,
+   "_parents": "kz.bozshakol:plant-clay",
+   "capacity_t": 120000,
+   "downstream": "kz.bozshakol:plant-clay"
+  },
+  "features": {
+   "stock": {
+    "properties": {
+     "value": 30000.0,
+     "unit": "т"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.31,
+     "unit": "% Cu"
+    }
+   },
+   "accepting": {
+    "properties": {
+     "value": true
+    }
+   },
+   "received_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "reclaimed_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "trucks_queued": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ }
+}

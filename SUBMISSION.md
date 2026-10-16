@@ -4,17 +4,15 @@
 
 ## Concept
 
-<!-- Written by the Team before the code: your own choice, a few sentences per answer. Everything else in the Submission follows from it. -->
+**Enterprise:** Двойник представляет медный карьер Бозшаколь (KAZ Minerals Bozshakol, Павлодарская область) и путь руды от забоя до двух обогатительных фабрик — сульфидной (25 млн т в год) и фабрики глинистой руды (5 млн т в год).
 
-**Enterprise:** <!-- Which mining enterprise, or which part of it, the twin represents. -->
+**Users:** Пользователь — горный диспетчер смены.
 
-**Users:** <!-- Who uses the twin. -->
+**Decision:** Двойник помогает ему решить, какие забои отрабатывать и куда направлять самосвалы — на дробилку сульфидной фабрики, на склад глинистой руды или в отвал, — чтобы обе фабрики получали план по объёму и качеству питания, и как перестроиться при сбое: остановке дробилки, поломке экскаватора, закрытии съезда, неудачном взрыве, метели.
 
-**Decision:** <!-- Which decision the twin helps them make. -->
+**Why this choice:** Почему так: это реальные задачи Бозшаколя — содержание меди в руде снижается (0,51% в 2020 году, 0,39% в 2025 году), глинистая руда (6,26 млн т в 2025 году) перерабатывается на отдельной фабрике, а система диспетчеризации сократила ожидание самосвала у экскаватора с 3–5 до 1–1,5 минуты. Двойник позволяет проиграть решение диспетчера заранее, не останавливая карьер.
 
-**Why this choice:** <!-- Why this enterprise, these users and this decision. -->
-
-**Real or fictional:** <!-- A real object: name it and give the sources of its numbers. A fictional one: which real objects it resembles and where its numbers come from. A real object with sourced numbers scores higher. -->
+**Real or fictional:** Объект реальный; цифры — из открытых источников (раздел «Данные и допущения»), недостающие параметры — допущения с обоснованием.
 
 ## Team
 

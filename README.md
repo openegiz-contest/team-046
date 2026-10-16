@@ -1,43 +1,85 @@
-# <Team name>: a digital mine on OpenEgiz
+# Бозшаколь: цифровой двойник медного карьера на OpenEgiz
 
-> Team Repository of the contest “Digital Mine on OpenEgiz”. **Replace the contents of this file with the instructions for your Submission.** The AI Jury runs the Submission strictly by these instructions, from scratch, in the Judge Environment. Accepted languages: English, Kazakh, Russian.
+Двойник карьера Бозшаколь (KAZ Minerals Bozshakol, Павлодарская область) и пути руды от забоя
+до двух обогатительных фабрик — сульфидной и фабрики глинистой руды. Пользователь — горный
+диспетчер смены. Описание замысла, модулей и данных — в [SUBMISSION.md](SUBMISSION.md).
 
-> **Start with the Concept**, the first section of [SUBMISSION.md](SUBMISSION.md): the Team writes it before any code. What AI agents build from this Template without a Concept is the Default Solution, published on the [contest site](https://openegiz-contest.github.io/) as the low bar: a Submission that does not go beyond it gets low levels in the Rubric. AI agents read [AGENTS.md](AGENTS.md).
+## Запуск с нуля
 
-## Running
-
-Requirements (Docker, `make`, Windows/WSL2 setup) are in [OPENEGIZ.md](OPENEGIZ.md) / [OPENEGIZ.ru.md](OPENEGIZ.ru.md).
+Проверено на Ubuntu 24.04 с Docker 29 и Docker Compose 2.40 (нужно 6 ГБ памяти для Docker).
+Все команды выполняются из корня репозитория.
 
 ```bash
-sudo apt install -y make   # if make is missing (clean Ubuntu)
-make up            # the OpenEgiz platform
-make example-mine  # the Example Mine: twins, simulator, dashboard
+sudo apt-get update && sudo apt-get install -y make
 ```
 
-Replace these commands with the commands of your Submission. The Submission must start by following these instructions without manual intervention (Rules, clause 6.4); downloading datasets and models and building are also listed here.
+```bash
+make bozshakol
+```
 
-## What to open
+Эта команда поднимает платформу OpenEgiz (при первом запуске создаёт пароли в `deploy/compose/.env`),
+собирает образы рудника, создаёт двойники и запускает сервисы, 3D-сцену и дашборды. Первый запуск
+скачивает образы и собирает расширенный API платформы: обычно 10–20 минут в зависимости от сети;
+повторный запуск — 2–3 минуты. В конце команда печатает адреса.
 
-- Grafana: the address and login are printed by `make up`.
-- <where to see the mine visualization, which dashboards>
+Проверка работающего стенда (двойники, телеметрия, сценарии, 3D-страница, история в InfluxDB):
 
-## Repository contents
+```bash
+make bozshakol-check
+```
 
-| Path | Contents |
+Остановить (данные остаются) и снова поднять:
+
+```bash
+make down
+```
+
+```bash
+make up
+```
+
+## Что открыть в браузере
+
+| Что | Адрес | Вход |
+|---|---|---|
+| 3D-сцена карьера (панель диспетчера, сценарии «что если», карточки двойников) | http://localhost:8095 | не нужен |
+| Grafana → Dashboards → папка **Бозшаколь** (обзор, транспорт, геология, переработка и энергия) | http://localhost:3000 | `admin` / значение `GRAFANA_ADMIN_PASSWORD` из `deploy/compose/.env` (его печатает `make bozshakol`) |
+| Grafana → приложение **OpenEgiz** → **Twins** — иерархия двойников `kz.bozshakol` | там же | там же |
+| Ditto API: все двойники | http://localhost:8080/api/2/search/things?namespaces=kz.bozshakol | `ditto` / `DITTO_PASSWORD` из `deploy/compose/.env` |
+
+Порты задаются в `deploy/compose/.env` (`GRAFANA_PORT`, `DITTO_PORT`, `BOZSHAKOL_WEB_PORT` и другие);
+в таблице — значения по умолчанию.
+
+Сценарии «что если» включаются кнопками в 3D-сцене или записью одного признака, например:
+
+```bash
+. deploy/compose/.env && curl -u "ditto:$DITTO_PASSWORD" -X PUT -H 'Content-Type: application/json' -d true "http://localhost:$DITTO_PORT/api/2/things/kz.bozshakol:scenarios/features/crusher_stop/properties/value"
+```
+
+Отмена — то же самое с `false`. Полный список сценариев — в [bozshakol/contract/README.md](bozshakol/contract/README.md).
+
+## Как устроен репозиторий
+
+| Путь | Содержимое |
 |---|---|
-| `team/` | Directory for the Team's code. Using it is optional: any part may be changed, including the platform core |
-| `SUBMISSION.md` | Description of the Submission: **required** |
-| `presentation.pdf` | Presentation: **required**, in the repository root |
-| `AGENTS.md`, `CLAUDE.md` | Instructions for your AI agents (Codex, Claude Code and others read them automatically) |
-| `examples/mine/` | The Example Mine: shows how a digital mine is built on OpenEgiz. It is not a basis for the Submission |
-| `OPENEGIZ.md`, `OPENEGIZ.ru.md` | Documentation of the OpenEgiz platform v1.0.4 |
+| `bozshakol/` | Всё наше. `contract/README.md` — договор команды: имена и иерархия двойников, протокол телеметрии, счётчики, сценарии, владельцы папок |
+| `bozshakol/core/` | Координатор: создание двойников (`bz-setup`), модельное время, погода, итоговые показатели (`bz-core`), `geometry.json`, общая библиотека `bzlib/` |
+| `bozshakol/modules/haulage/`, `geology/`, `processing/` | Модули: транспорт и диспетчеризация, геология и качество руды, переработка и энергия — по сервису, `twins.json` и README на модуль |
+| `bozshakol/web/` | 3D-сцена (three.js локально, nginx), слои модулей в `web/layers/` |
+| `bozshakol/grafana/` | Дашборды Grafana |
+| `bozshakol/data/SOURCES.md` | Источники цифр и допущения |
+| `bozshakol/check.sh` | Проверка работающего стенда |
+| `SUBMISSION.md` | Описание решения |
+| `examples/mine/` | Пример рудника из шаблона платформы; в решении не используется |
+| `OPENEGIZ.md`, `OPENEGIZ.ru.md` | Документация платформы OpenEgiz v1.0.4: требования, Windows/WSL2, устранение неполадок |
 
-The Submission is the `main` branch at the moment of the Freeze; other branches are not evaluated.
+Справка о платформе (установка Docker, Windows/WSL2, `make up`, `make smoke`, `make clean`) —
+в [OPENEGIZ.ru.md](OPENEGIZ.ru.md) / [OPENEGIZ.md](OPENEGIZ.md).
 
-## License
+## Лицензия
 
-The Submission is distributed under the MIT license, see [LICENSE](LICENSE). Copyright belongs to the Team: add the line `Copyright (c) 2026 <Team members>` to `LICENSE`.
+Решение распространяется под лицензией MIT, см. [LICENSE](LICENSE).
 
 ---
 
-Platform: [aleka07/openegiz](https://github.com/aleka07/openegiz). If the platform was useful to you, support the project with a star on GitHub.
+Платформа: [aleka07/openegiz](https://github.com/aleka07/openegiz).

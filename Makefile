@@ -144,3 +144,32 @@ lint:
 	@bash scripts/compose-env.sh
 	docker compose -f deploy/compose/docker-compose.yml config -q
 	@echo "lint: ok"
+
+# ---------------------------------------------------------------------------
+# Бозшаколь: наш рудник (bozshakol/). Только добавлено; цели выше не менялись.
+# ---------------------------------------------------------------------------
+BZ_MARKER  := deploy/compose/.bozshakol
+BZ_COMPOSE := bozshakol/compose.yml
+# Once `make bozshakol` has run, every compose command also loads our overlay,
+# so `make down` / `make up` stop and start the mine with the platform.
+COMPOSE += $(if $(wildcard $(BZ_MARKER)), -f $(BZ_COMPOSE))
+
+.PHONY: bozshakol bozshakol-check bozshakol-stop bozshakol-logs
+## Start the platform and the Bozshakol mine (twins, services, 3D scene, dashboards)
+bozshakol: up
+	@grep -q '^BOZSHAKOL_WEB_PORT=' deploy/compose/.env || echo 'BOZSHAKOL_WEB_PORT=8095' >> deploy/compose/.env
+	$(COMPOSE_BASE) -f $(BZ_COMPOSE) up -d --build --wait --wait-timeout 600
+	@touch $(BZ_MARKER)
+	@bash bozshakol/urls.sh
+
+## Check the running Bozshakol stand (twins, telemetry, scenarios, 3D page, InfluxDB)
+bozshakol-check:
+	@bash bozshakol/check.sh
+
+## Stop the Bozshakol services only (platform, twins and data stay)
+bozshakol-stop:
+	$(COMPOSE_BASE) -f $(BZ_COMPOSE) stop bz-core bz-haulage bz-geology bz-processing bz-web
+
+## Follow logs of the Bozshakol services (one service: make bozshakol-logs S=bz-haulage)
+bozshakol-logs:
+	$(COMPOSE_BASE) -f $(BZ_COMPOSE) logs -f --tail=100 $(or $(S),bz-core bz-haulage bz-geology bz-processing bz-web)

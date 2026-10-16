@@ -1,0 +1,3212 @@
+{
+ "kz.bozshakol:dispatch": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Диспетчеризация",
+   "kind": "dispatch",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "downstream": [
+    "kz.bozshakol:crusher-01",
+    "kz.bozshakol:stockpile-clay",
+    "kz.bozshakol:dump-waste-1"
+   ],
+   "fleet": "22 × 135 т + 6 × 180 т"
+  },
+  "features": {
+   "mode": {
+    "properties": {
+     "value": "auto"
+    }
+   },
+   "avg_wait_excavator": {
+    "properties": {
+     "value": 0.0,
+     "unit": "мин"
+    }
+   },
+   "trucks_hauling": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "trucks_down": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "assignments": {
+    "properties": {
+     "value": "{}",
+     "unit": "json"
+    }
+   },
+   "delivered_crusher_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "delivered_crusher_cu_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т Cu"
+    }
+   },
+   "delivered_clay_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "delivered_clay_cu_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т Cu"
+    }
+   },
+   "delivered_dump_t": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   },
+   "queue_crusher": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "queue_clay": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "queue_dump": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 01 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-02": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 02 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-03": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 03 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-04": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 04 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-05": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 05 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-06": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 06 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-07": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 07 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-08": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 08 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-09": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 09 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-10": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 10 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-11": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 11 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-12": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 12 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-13": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 13 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-14": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 14 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-15": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 15 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-16": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 16 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-17": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 17 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-18": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 18 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-19": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 19 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-20": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 20 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-21": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 21 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-22": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 22 (135 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 135,
+   "make": "Caterpillar",
+   "model": "793 (135 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-23": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 23 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-24": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 24 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-25": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 25 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-26": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 26 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-27": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 27 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:truck-28": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Самосвал 28 (180 т)",
+   "kind": "truck",
+   "_isType": false,
+   "_parents": "kz.bozshakol:dispatch",
+   "capacity_t": 180,
+   "make": "Caterpillar",
+   "model": "795 (180 т)"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "queued_load"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "heading": {
+    "properties": {
+     "value": 0.0,
+     "unit": "°"
+    }
+   },
+   "speed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "км/ч"
+    }
+   },
+   "payload": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "cargo_type": {
+    "properties": {
+     "value": "none"
+    }
+   },
+   "cargo_cu": {
+    "properties": {
+     "value": 0.0,
+     "unit": "% Cu"
+    }
+   },
+   "cargo_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "destination": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "excavator": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "fuel": {
+    "properties": {
+     "value": 100.0,
+     "unit": "%"
+    }
+   },
+   "trips_total": {
+    "properties": {
+     "value": 0,
+     "unit": "рейсов"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 01",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-01"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-02": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 02",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-02"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-03": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 03",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-03"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-04": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 04",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-04"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-05": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 05",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-05"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:excavator-06": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Экскаватор 06",
+   "kind": "excavator",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "Hitachi EX3600 (допущение)",
+   "bucket_m3": 22,
+   "bucket_t": 40,
+   "downstream": "kz.bozshakol:dispatch"
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "idle"
+    }
+   },
+   "face": {
+    "properties": {
+     "value": "face-06"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "queue": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "loaded_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "passes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "ковшей"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:road-ramp-1": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Съезд 1 (северный борт)",
+   "kind": "road",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "open": {
+    "properties": {
+     "value": true
+    }
+   },
+   "speed_limit": {
+    "properties": {
+     "value": 30,
+     "unit": "км/ч"
+    }
+   },
+   "trucks_on_road": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:road-ramp-2": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Съезд 2 (южный борт)",
+   "kind": "road",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "open": {
+    "properties": {
+     "value": true
+    }
+   },
+   "speed_limit": {
+    "properties": {
+     "value": 30,
+     "unit": "км/ч"
+    }
+   },
+   "trucks_on_road": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:road-crusher": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Дорога к дробилке",
+   "kind": "road",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "open": {
+    "properties": {
+     "value": true
+    }
+   },
+   "speed_limit": {
+    "properties": {
+     "value": 40,
+     "unit": "км/ч"
+    }
+   },
+   "trucks_on_road": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:dump-waste-1": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Отвал вскрыши 1",
+   "kind": "dump",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "received_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "accepting": {
+    "properties": {
+     "value": true
+    }
+   },
+   "trucks_queued": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ }
+}

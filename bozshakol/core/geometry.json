@@ -1,0 +1,632 @@
+{
+ "_comment": "Геометрия рудника Бозшаколь в метрах; начало координат — центр карьера, X — восток, Y — север, Z — высота. Сгенерировано core/tools/make_geometry.py.",
+ "units": "m",
+ "pit": {
+  "center": [
+   0,
+   0,
+   0
+  ],
+  "semi_axes_top": [
+   2200,
+   550
+  ],
+  "depth": 200,
+  "bench_height": 15,
+  "bench_face_angle_deg": 58,
+  "berm_width": 12,
+  "bench_count": 13,
+  "inset_per_bench": 21.4
+ },
+ "nodes": {
+  "floor-w": [
+   -1500,
+   0,
+   -200
+  ],
+  "floor-c": [
+   0,
+   0,
+   -200
+  ],
+  "floor-e": [
+   900,
+   0,
+   -200
+  ],
+  "floor-e2": [
+   1450,
+   -40,
+   -185
+  ],
+  "face-01": [
+   -1300,
+   80,
+   -200
+  ],
+  "face-02": [
+   -300,
+   -120,
+   -200
+  ],
+  "face-03": [
+   700,
+   100,
+   -200
+  ],
+  "face-04": [
+   1400,
+   -60,
+   -185
+  ],
+  "face-05": [
+   -1500,
+   400,
+   -50
+  ],
+  "face-06": [
+   1500,
+   -450,
+   -50
+  ],
+  "r1-bottom": [
+   -1600,
+   180,
+   -200
+  ],
+  "r1-mid1": [
+   -400,
+   330,
+   -120
+  ],
+  "r1-mid2": [
+   -1400,
+   450,
+   -50
+  ],
+  "r1-top": [
+   -600,
+   560,
+   0
+  ],
+  "r2-bottom": [
+   1600,
+   -180,
+   -185
+  ],
+  "r2-mid1": [
+   400,
+   -330,
+   -120
+  ],
+  "r2-mid2": [
+   1400,
+   -450,
+   -50
+  ],
+  "r2-top": [
+   600,
+   -560,
+   0
+  ],
+  "crusher": [
+   -100,
+   680,
+   5
+  ],
+  "rim-w": [
+   -2400,
+   0,
+   2
+  ],
+  "rim-sw": [
+   -1200,
+   -620,
+   2
+  ],
+  "rim-e": [
+   2400,
+   0,
+   3
+  ],
+  "rim-ne": [
+   1800,
+   800,
+   5
+  ],
+  "dump-waste-1": [
+   -2200,
+   -1100,
+   20
+  ],
+  "stockpile-clay": [
+   1100,
+   2400,
+   10
+  ]
+ },
+ "edges": [
+  {
+   "from": "floor-w",
+   "to": "floor-c",
+   "road": "floor",
+   "length_m": 1500.0,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "floor-c",
+   "to": "floor-e",
+   "road": "floor",
+   "length_m": 900.0,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "floor-e",
+   "to": "floor-e2",
+   "road": "floor",
+   "length_m": 551.7,
+   "grade_pct": 2.7
+  },
+  {
+   "from": "face-01",
+   "to": "floor-w",
+   "road": "floor",
+   "length_m": 215.4,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "face-02",
+   "to": "floor-c",
+   "road": "floor",
+   "length_m": 323.1,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "face-03",
+   "to": "floor-e",
+   "road": "floor",
+   "length_m": 223.6,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "face-04",
+   "to": "floor-e2",
+   "road": "floor",
+   "length_m": 53.9,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "floor-w",
+   "to": "r1-bottom",
+   "road": "floor",
+   "length_m": 205.9,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "floor-e2",
+   "to": "r2-bottom",
+   "road": "floor",
+   "length_m": 205.2,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "r1-bottom",
+   "to": "r1-mid1",
+   "road": "road-ramp-1",
+   "length_m": 1212.0,
+   "grade_pct": 6.6
+  },
+  {
+   "from": "r1-mid1",
+   "to": "r1-mid2",
+   "road": "road-ramp-1",
+   "length_m": 1009.6,
+   "grade_pct": 7.0
+  },
+  {
+   "from": "r1-mid2",
+   "to": "r1-top",
+   "road": "road-ramp-1",
+   "length_m": 809.1,
+   "grade_pct": 6.2
+  },
+  {
+   "from": "face-05",
+   "to": "r1-mid2",
+   "road": "floor",
+   "length_m": 111.8,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "r2-bottom",
+   "to": "r2-mid1",
+   "road": "road-ramp-2",
+   "length_m": 1211.1,
+   "grade_pct": 5.4
+  },
+  {
+   "from": "r2-mid1",
+   "to": "r2-mid2",
+   "road": "road-ramp-2",
+   "length_m": 1009.6,
+   "grade_pct": 7.0
+  },
+  {
+   "from": "r2-mid2",
+   "to": "r2-top",
+   "road": "road-ramp-2",
+   "length_m": 809.1,
+   "grade_pct": 6.2
+  },
+  {
+   "from": "face-06",
+   "to": "r2-mid2",
+   "road": "floor",
+   "length_m": 100.0,
+   "grade_pct": 0.0
+  },
+  {
+   "from": "r1-top",
+   "to": "crusher",
+   "road": "road-crusher",
+   "length_m": 514.2,
+   "grade_pct": 1.0
+  },
+  {
+   "from": "r1-top",
+   "to": "rim-w",
+   "road": "rim",
+   "length_m": 1885.1,
+   "grade_pct": 0.1
+  },
+  {
+   "from": "rim-w",
+   "to": "dump-waste-1",
+   "road": "rim",
+   "length_m": 1118.2,
+   "grade_pct": 1.6
+  },
+  {
+   "from": "r2-top",
+   "to": "rim-sw",
+   "road": "rim",
+   "length_m": 1801.0,
+   "grade_pct": 0.1
+  },
+  {
+   "from": "rim-sw",
+   "to": "dump-waste-1",
+   "road": "rim",
+   "length_m": 1109.4,
+   "grade_pct": 1.6
+  },
+  {
+   "from": "r2-top",
+   "to": "rim-e",
+   "road": "rim",
+   "length_m": 1885.1,
+   "grade_pct": 0.2
+  },
+  {
+   "from": "rim-e",
+   "to": "rim-ne",
+   "road": "rim",
+   "length_m": 1000.0,
+   "grade_pct": 0.2
+  },
+  {
+   "from": "rim-ne",
+   "to": "stockpile-clay",
+   "road": "rim",
+   "length_m": 1746.4,
+   "grade_pct": 0.3
+  },
+  {
+   "from": "crusher",
+   "to": "rim-ne",
+   "road": "rim",
+   "length_m": 1903.8,
+   "grade_pct": 0.0
+  }
+ ],
+ "roads": {
+  "road-ramp-1": {
+   "name": "Съезд 1 (северный борт)",
+   "speed_limit_kmh": 30
+  },
+  "road-ramp-2": {
+   "name": "Съезд 2 (южный борт)",
+   "speed_limit_kmh": 30
+  },
+  "road-crusher": {
+   "name": "Дорога к дробилке",
+   "speed_limit_kmh": 40
+  },
+  "floor": {
+   "name": "Дороги на дне карьера",
+   "speed_limit_kmh": 40
+  },
+  "rim": {
+   "name": "Дороги по борту и поверхности",
+   "speed_limit_kmh": 50
+  }
+ },
+ "load_points": {
+  "excavator-01": "face-01",
+  "excavator-02": "face-02",
+  "excavator-03": "face-03",
+  "excavator-04": "face-04",
+  "excavator-05": "face-05",
+  "excavator-06": "face-06"
+ },
+ "dump_points": {
+  "crusher-01": "crusher",
+  "stockpile-clay": "stockpile-clay",
+  "dump-waste-1": "dump-waste-1"
+ },
+ "objects": [
+  {
+   "id": "crusher-01",
+   "kind": "crusher",
+   "position": [
+    -100,
+    720,
+    6
+   ],
+   "yaw_deg": 0
+  },
+  {
+   "id": "conveyor-01",
+   "kind": "conveyor",
+   "path": [
+    [
+     -100,
+     740,
+     8
+    ],
+    [
+     -100,
+     3250,
+     16
+    ]
+   ]
+  },
+  {
+   "id": "stockpile-coarse",
+   "kind": "stockpile",
+   "position": [
+    -100,
+    3300,
+    18
+   ],
+   "radius": 60
+  },
+  {
+   "id": "plant-sulphide",
+   "kind": "plant",
+   "position": [
+    -100,
+    3600,
+    20
+   ],
+   "size": [
+    260,
+    140,
+    28
+   ]
+  },
+  {
+   "id": "sag-mill-01",
+   "kind": "mill",
+   "position": [
+    -180,
+    3560,
+    20
+   ]
+  },
+  {
+   "id": "flotation-01",
+   "kind": "flotation",
+   "position": [
+    -20,
+    3640,
+    20
+   ]
+  },
+  {
+   "id": "stockpile-clay",
+   "kind": "stockpile",
+   "position": [
+    1100,
+    2450,
+    10
+   ],
+   "radius": 50
+  },
+  {
+   "id": "plant-clay",
+   "kind": "plant",
+   "position": [
+    1100,
+    2750,
+    14
+   ],
+   "size": [
+    140,
+    90,
+    20
+   ]
+  },
+  {
+   "id": "power-grid",
+   "kind": "substation",
+   "position": [
+    -700,
+    3500,
+    20
+   ],
+   "size": [
+    60,
+    40,
+    10
+   ]
+  },
+  {
+   "id": "dump-waste-1",
+   "kind": "dump",
+   "position": [
+    -2300,
+    -1250,
+    25
+   ],
+   "radius": 260
+  },
+  {
+   "id": "face-01",
+   "kind": "face",
+   "position": [
+    -1300,
+    130,
+    -200
+   ],
+   "ore_type": "sulphide"
+  },
+  {
+   "id": "face-02",
+   "kind": "face",
+   "position": [
+    -300,
+    -170,
+    -200
+   ],
+   "ore_type": "sulphide"
+  },
+  {
+   "id": "face-03",
+   "kind": "face",
+   "position": [
+    700,
+    150,
+    -200
+   ],
+   "ore_type": "sulphide"
+  },
+  {
+   "id": "face-04",
+   "kind": "face",
+   "position": [
+    1400,
+    -110,
+    -185
+   ],
+   "ore_type": "clay"
+  },
+  {
+   "id": "face-05",
+   "kind": "face",
+   "position": [
+    -1500,
+    450,
+    -50
+   ],
+   "ore_type": "waste"
+  },
+  {
+   "id": "face-06",
+   "kind": "face",
+   "position": [
+    1500,
+    -500,
+    -50
+   ],
+   "ore_type": "waste"
+  },
+  {
+   "id": "excavator-01",
+   "kind": "excavator",
+   "position": [
+    -1300,
+    105,
+    -200
+   ],
+   "face": "face-01"
+  },
+  {
+   "id": "excavator-02",
+   "kind": "excavator",
+   "position": [
+    -300,
+    -145,
+    -200
+   ],
+   "face": "face-02"
+  },
+  {
+   "id": "excavator-03",
+   "kind": "excavator",
+   "position": [
+    700,
+    125,
+    -200
+   ],
+   "face": "face-03"
+  },
+  {
+   "id": "excavator-04",
+   "kind": "excavator",
+   "position": [
+    1400,
+    -85,
+    -185
+   ],
+   "face": "face-04"
+  },
+  {
+   "id": "excavator-05",
+   "kind": "excavator",
+   "position": [
+    -1500,
+    425,
+    -50
+   ],
+   "face": "face-05"
+  },
+  {
+   "id": "excavator-06",
+   "kind": "excavator",
+   "position": [
+    1500,
+    -475,
+    -50
+   ],
+   "face": "face-06"
+  },
+  {
+   "id": "drill-01",
+   "kind": "drill",
+   "position": [
+    -1000,
+    330,
+    -155
+   ]
+  },
+  {
+   "id": "drill-02",
+   "kind": "drill",
+   "position": [
+    400,
+    -380,
+    -140
+   ]
+  },
+  {
+   "id": "drill-03",
+   "kind": "drill",
+   "position": [
+    1200,
+    300,
+    -125
+   ]
+  }
+ ]
+}

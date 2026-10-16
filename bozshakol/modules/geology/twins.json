@@ -1,0 +1,581 @@
+{
+ "kz.bozshakol:face-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 01",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-01",
+   "bench_level_m": -200
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.42,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.19,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 4,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 1800000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "crusher-01"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:face-02": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 02",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-02",
+   "bench_level_m": -200
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.38,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.19,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 6,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 1500000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "crusher-01"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:face-03": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 03",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-03",
+   "bench_level_m": -200
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.45,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.19,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 5,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 2000000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "crusher-01"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:face-04": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 04",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-04",
+   "bench_level_m": -185
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "clay"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.31,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.19,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 55,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 1200000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "stockpile-clay"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:face-05": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 05",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-05",
+   "bench_level_m": -50
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "waste"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.05,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.02,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 10,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 3000000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "dump-waste-1"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:face-06": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Забой 06",
+   "kind": "face",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "downstream": "kz.bozshakol:excavator-06",
+   "bench_level_m": -50
+  },
+  "features": {
+   "ore_type": {
+    "properties": {
+     "value": "waste"
+    }
+   },
+   "cu_grade": {
+    "properties": {
+     "value": 0.07,
+     "unit": "% Cu"
+    }
+   },
+   "au_grade": {
+    "properties": {
+     "value": 0.02,
+     "unit": "г/т"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 8,
+     "unit": "%"
+    }
+   },
+   "p80": {
+    "properties": {
+     "value": 250,
+     "unit": "мм"
+    }
+   },
+   "loading_factor": {
+    "properties": {
+     "value": 1.0,
+     "unit": "коэф."
+    }
+   },
+   "hardness": {
+    "properties": {
+     "value": 12,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "remaining": {
+    "properties": {
+     "value": 2500000.0,
+     "unit": "т"
+    }
+   },
+   "recommended_destination": {
+    "properties": {
+     "value": "dump-waste-1"
+    }
+   },
+   "blasted": {
+    "properties": {
+     "value": true
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-01": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровой станок 01",
+   "kind": "drill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "буровой станок класса DM45 (допущение)",
+   "hole_diameter_mm": 251
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "drilling"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "block": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "meters_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-02": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровой станок 02",
+   "kind": "drill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "буровой станок класса DM45 (допущение)",
+   "hole_diameter_mm": 251
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "drilling"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "block": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "meters_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-03": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровой станок 03",
+   "kind": "drill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "буровой станок класса DM45 (допущение)",
+   "hole_diameter_mm": 251
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "drilling"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "block": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "meters_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   }
+  }
+ }
+}

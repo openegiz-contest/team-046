@@ -1,0 +1,25 @@
+# Рудник Бозшаколь: слой поверх deploy/compose/docker-compose.yml.
+# Запуск из корня репозитория: make bozshakol. После этого make up / make down
+# поднимают и останавливают рудник вместе с платформой.
+#
+# Каждая часть описывает свой сервис в своей папке; здесь они только подключаются.
+# Участник свою папку правит сам, этот файл — координатор.
+
+include:
+  # Пути — от папки проекта Compose (deploy/compose), как в examples/mine/compose.yml.
+  - ../../bozshakol/core/compose.yml
+  - ../../bozshakol/modules/haulage/compose.yml
+  - ../../bozshakol/modules/geology/compose.yml
+  - ../../bozshakol/modules/processing/compose.yml
+  - ../../bozshakol/web/compose.yml
+
+services:
+  grafana:
+    volumes:
+      # Свой провайдер дашбордов (папка «Бозшаколь», все *.json из bozshakol/grafana/).
+      # Папка provisioning платформы смонтирована только для чтения, поэтому поверх её
+      # подпапки dashboards/ кладётся наша (bozshakol.yaml + место под openegiz.yaml),
+      # а файл платформы openegiz.yaml монтируется обратно — дашборды OpenEgiz остаются.
+      - ../../bozshakol/grafana/provisioning:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/provisioning/dashboards/openegiz.yaml:/etc/grafana/provisioning/dashboards/openegiz.yaml:ro
+      - ../../bozshakol/grafana:/var/lib/grafana/bozshakol-dashboards:ro
