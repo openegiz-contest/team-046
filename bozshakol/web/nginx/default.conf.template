@@ -9,6 +9,10 @@ server {
     alias /usr/share/nginx/core/geometry.json;
     default_type application/json;
   }
+  # Рельеф и снимок (bozshakol/data/terrain), см. data/terrain/README.md
+  location /terrain/ {
+    alias /usr/share/nginx/terrain/;
+  }
   location = /config.json {
     default_type application/json;
     return 200 '{"grafanaUrl":"${GRAFANA_URL}"}';

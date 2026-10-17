@@ -14,6 +14,8 @@ services:
       - .:/usr/share/nginx/html:ro
       # geometry.json отдаётся по /geometry.json через alias в nginx (см. nginx/default.conf.template)
       - ../core:/usr/share/nginx/core:ro
+      # рельеф и снимок: /terrain/ (см. data/terrain/README.md)
+      - ../data/terrain:/usr/share/nginx/terrain:ro
       - ./nginx:/etc/nginx/templates:ro
     depends_on:
       ditto-nginx:

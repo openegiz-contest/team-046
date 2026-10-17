@@ -9,6 +9,7 @@
 import json
 import math
 import os
+import sys
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "geometry.json")
 
@@ -129,7 +130,32 @@ DUMP_POINTS = {
 LOAD_POINTS = {f"excavator-0{i}": f"face-0{i}" for i in range(1, 7)}
 
 
+def apply_terrain():
+    """Высоты наземных узлов и объектов (z >= 0 в таблицах выше) берутся из рельефа
+    data/terrain (Copernicus DEM), если он есть. Узлы внутри карьера остаются как в модели."""
+    terrain_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "terrain")
+    sys.path.insert(0, terrain_dir)
+    try:
+        from heights import load
+    except ImportError:
+        return None
+    terrain = load()
+    if terrain is None:
+        return None
+    for name, p in NODES.items():
+        if p[2] >= 0 and not terrain.inside_pit(p[0], p[1]):
+            p[2] = round(terrain.height_at(p[0], p[1]), 1)
+    for obj in OBJECTS:
+        if "position" in obj and obj["position"][2] >= 0 and not terrain.inside_pit(*obj["position"][:2]):
+            obj["position"][2] = round(terrain.height_at(obj["position"][0], obj["position"][1]) + (1 if obj["kind"] != "dump" else 0), 1)
+        if "path" in obj:
+            for p in obj["path"]:
+                p[2] = round(terrain.height_at(p[0], p[1]) + 3, 1)
+    return terrain
+
+
 def main():
+    terrain = apply_terrain()
     edges = []
     for a, b, road in EDGES:
         pa, pb = NODES[a], NODES[b]
@@ -141,6 +167,8 @@ def main():
     geometry = {
         "_comment": "Геометрия рудника Бозшаколь в метрах; начало координат — центр карьера, X — восток, Y — север, Z — высота. Сгенерировано core/tools/make_geometry.py.",
         "units": "m",
+        "terrain": ("data/terrain (Copernicus DEM GLO-30): высоты наземных узлов из рельефа, уровень 0 — борт карьера"
+                    if terrain else "рельеф не подключён: поверхность плоская, Z = 0"),
         "pit": PIT,
         "nodes": NODES,
         "edges": edges,
@@ -158,7 +186,7 @@ def main():
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(geometry, f, ensure_ascii=False, indent=1)
         f.write("\n")
-    print(f"{len(NODES)} узлов, {len(edges)} рёбер -> {os.path.normpath(OUT)}")
+    print(f"{len(NODES)} узлов, {len(edges)} рёбер -> {os.path.normpath(OUT)}; рельеф: {'да' if terrain else 'нет'}")
 
 
 if __name__ == "__main__":

@@ -14,12 +14,24 @@
   <div id="viewport">
     <canvas id="scene"></canvas>
     <div id="labels"></div>
+    <div id="scene-notes">
+      <span>вертикальный масштаб ×1,5</span>
+      <span id="attribution" hidden></span>
+    </div>
   </div>
 
-  <!-- Кнопки сверху -->
+  <!-- Кнопки-виды сверху по центру и плашка активных сценариев под ними -->
+  <div id="topwrap">
   <div id="topbar">
-    <button id="btn-view" type="button" title="Переключить вид">Сверху</button>
+    <button type="button" data-view="all" class="active" title="Общий план рудника">Весь рудник</button>
+    <button type="button" data-view="pit" title="Карьер с уступами и съездами">Карьер</button>
+    <button type="button" data-view="crusher" title="Дробилка и магистральный конвейер">Дробилка и конвейер</button>
+    <button type="button" data-view="plants" title="Сульфидная и глинистая фабрики">Фабрики</button>
+    <button type="button" data-view="top" title="Карта сверху (ортографическая камера)">Сверху (карта)</button>
+    <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним">Следовать за самосвалом</button>
     <span id="load-status">загрузка…</span>
+  </div>
+  <div id="scenario-banner" hidden></div>
   </div>
 
   <!-- Боковая панель диспетчера -->
@@ -29,13 +41,21 @@
     <a id="grafana-link" href="#" target="_blank" rel="noopener" hidden>Дашборды Grafana</a>
 
     <section>
-      <h2>Рудник</h2>
-      <table id="mine-table" class="kv"></table>
+      <div id="shift-line" class="shift">Смена — · —:—</div>
+      <h2>Фабрики</h2>
+      <div id="plants"></div>
+    </section>
+
+    <section id="transport-block">
+      <h2>Транспорт</h2>
+      <div id="dispatch-off-note" class="note bad" hidden>Диспетчеризация выключена — закреплённое распределение</div>
+      <table id="transport-table" class="kv"></table>
+      <div id="weather" class="muted">Погода: —</div>
     </section>
 
     <section>
-      <h2>Диспетчеризация</h2>
-      <table id="dispatch-table" class="kv"></table>
+      <h2>Журнал событий <span class="muted">(модельное время)</span></h2>
+      <div id="log"><div class="muted">пока событий нет</div></div>
     </section>
 
     <section>
@@ -44,13 +64,25 @@
     </section>
 
     <section class="legend">
-      <h2>Самосвалы</h2>
+      <h2>Легенда</h2>
+      <div class="legend-title">Груз самосвала</div>
       <div><i style="background:#3d8f6e"></i> сульфидная руда</div>
       <div><i style="background:#c8722a"></i> глинистая руда</div>
       <div><i style="background:#8a8a8a"></i> вскрыша</div>
       <div><i style="background:#ffffff;border:1px solid #999"></i> порожний</div>
       <div><i style="background:#d32f2f"></i> авария (down)</div>
+      <div class="legend-title">Оборудование</div>
+      <div><i style="background:#7d8692"></i> работает</div>
+      <div><i style="background:#7d8692;opacity:.55"></i> простой (нет руды) — отметка в подписи</div>
+      <div><i style="background:#d32f2f"></i> остановлено / не принимает</div>
+      <div><i style="background:#9aa5b3"></i> ТО мельницы — отметка «ТО» в подписи</div>
+      <div><i style="background:#f2a21b"></i> экскаватор (красный — сломан)</div>
+      <div class="legend-title">Карьер и дороги</div>
+      <div><i style="background:#d9cfae;border:1px solid #4a3f2e"></i> съезд (тёмная обводка)</div>
       <div><i style="background:#d32f2f;height:4px"></i> дорога закрыта</div>
+      <div><i style="background:#dcc08e"></i> берма (площадка уступа)</div>
+      <div><i style="background:#8f6a44"></i> стенка уступа</div>
+      <div><i style="background:#a8a27e"></i> дно карьера</div>
     </section>
   </aside>
 
