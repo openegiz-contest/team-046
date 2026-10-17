@@ -62,7 +62,7 @@
   ],
   "face-05": [
    -1500,
-   400,
+   -400,
    -50
   ],
   "face-06": [
@@ -72,23 +72,23 @@
   ],
   "r1-bottom": [
    -1600,
-   180,
+   -180,
    -200
   ],
   "r1-mid1": [
    -400,
-   330,
+   -330,
    -120
   ],
   "r1-mid2": [
    -1400,
-   450,
+   -450,
    -50
   ],
   "r1-top": [
    -600,
-   560,
-   -4.5
+   -560,
+   -1.5
   ],
   "r2-bottom": [
    1600,
@@ -111,39 +111,39 @@
    -2.6
   ],
   "crusher": [
-   -100,
-   680,
-   -3.9
+   -250,
+   -600,
+   -3.0
   ],
   "rim-w": [
-   -2400,
-   0,
-   25.9
+   -1200,
+   -700,
+   10.4
   ],
   "rim-sw": [
-   -1200,
-   -620,
-   11.9
+   1200,
+   -900,
+   0.8
   ],
   "rim-e": [
-   2400,
-   0,
-   -4.7
+   700,
+   -900,
+   12.0
   ],
   "rim-ne": [
-   1800,
-   800,
-   -11.7
+   -300,
+   -800,
+   -2.2
   ],
   "dump-waste-1": [
-   -2200,
-   -1100,
-   11.3
+   1900,
+   -1000,
+   4.8
   ],
   "stockpile-clay": [
-   1100,
-   2400,
-   -12.3
+   -700,
+   -1250,
+   -0.9
   ]
  },
  "edges": [
@@ -228,8 +228,8 @@
    "from": "r1-mid2",
    "to": "r1-top",
    "road": "road-ramp-1",
-   "length_m": 808.8,
-   "grade_pct": 5.6
+   "length_m": 809.0,
+   "grade_pct": 6.0
   },
   {
    "from": "face-05",
@@ -270,73 +270,73 @@
    "from": "r1-top",
    "to": "crusher",
    "road": "road-crusher",
-   "length_m": 514.2,
-   "grade_pct": 0.1
+   "length_m": 352.3,
+   "grade_pct": -0.4
   },
   {
    "from": "r1-top",
    "to": "rim-w",
    "road": "rim",
-   "length_m": 1885.3,
-   "grade_pct": 1.6
+   "length_m": 616.2,
+   "grade_pct": 1.9
   },
   {
    "from": "rim-w",
    "to": "dump-waste-1",
    "road": "rim",
-   "length_m": 1118.1,
-   "grade_pct": -1.3
+   "length_m": 3114.5,
+   "grade_pct": -0.2
   },
   {
    "from": "r2-top",
    "to": "rim-sw",
    "road": "rim",
-   "length_m": 1801.1,
-   "grade_pct": 0.8
+   "length_m": 689.6,
+   "grade_pct": 0.5
   },
   {
    "from": "rim-sw",
    "to": "dump-waste-1",
    "road": "rim",
-   "length_m": 1109.2,
-   "grade_pct": -0.1
+   "length_m": 707.1,
+   "grade_pct": 0.6
   },
   {
    "from": "r2-top",
    "to": "rim-e",
    "road": "rim",
-   "length_m": 1885.1,
-   "grade_pct": -0.1
+   "length_m": 354.7,
+   "grade_pct": 4.1
   },
   {
    "from": "rim-e",
    "to": "rim-ne",
    "road": "rim",
-   "length_m": 1000.0,
-   "grade_pct": -0.7
+   "length_m": 1005.1,
+   "grade_pct": -1.4
   },
   {
    "from": "rim-ne",
    "to": "stockpile-clay",
    "road": "rim",
-   "length_m": 1746.4,
-   "grade_pct": -0.0
+   "length_m": 602.1,
+   "grade_pct": 0.2
   },
   {
    "from": "crusher",
    "to": "rim-ne",
    "road": "rim",
-   "length_m": 1903.8,
-   "grade_pct": -0.4
+   "length_m": 206.2,
+   "grade_pct": 0.4
   }
  ],
  "roads": {
   "road-ramp-1": {
-   "name": "Съезд 1 (северный борт)",
+   "name": "Съезд 1 (юго-западный борт)",
    "speed_limit_kmh": 30
   },
   "road-ramp-2": {
-   "name": "Съезд 2 (южный борт)",
+   "name": "Съезд 2 (юго-восточный борт)",
    "speed_limit_kmh": 30
   },
   "road-crusher": {
@@ -370,9 +370,9 @@
    "id": "crusher-01",
    "kind": "crusher",
    "position": [
-    -100,
-    720,
-    -2.6
+    -250,
+    -575,
+    -2.1
    ],
    "yaw_deg": 0
   },
@@ -381,14 +381,19 @@
    "kind": "conveyor",
    "path": [
     [
-     -100,
-     740,
-     -0.3
+     -300,
+     -620,
+     0.5
     ],
     [
-     -100,
-     3250,
-     -14.9
+     -1500,
+     -640,
+     13.3
+    ],
+    [
+     -2440,
+     -700,
+     21.7
     ]
    ]
   },
@@ -396,9 +401,9 @@
    "id": "stockpile-coarse",
    "kind": "stockpile",
    "position": [
-    -100,
-    3300,
-    -16.9
+    -2490,
+    -720,
+    18.4
    ],
    "radius": 60
   },
@@ -406,9 +411,9 @@
    "id": "plant-sulphide",
    "kind": "plant",
    "position": [
-    -100,
-    3600,
-    -16.9
+    -2700,
+    -760,
+    15.1
    ],
    "size": [
     260,
@@ -420,27 +425,27 @@
    "id": "sag-mill-01",
    "kind": "mill",
    "position": [
-    -180,
-    3560,
-    -16.3
+    -2780,
+    -720,
+    15.1
    ]
   },
   {
    "id": "flotation-01",
    "kind": "flotation",
    "position": [
-    -20,
-    3640,
-    -17.2
+    -2620,
+    -800,
+    14.4
    ]
   },
   {
    "id": "stockpile-clay",
    "kind": "stockpile",
    "position": [
-    1100,
-    2450,
-    -11.7
+    -700,
+    -1290,
+    0.2
    ],
    "radius": 50
   },
@@ -448,9 +453,9 @@
    "id": "plant-clay",
    "kind": "plant",
    "position": [
-    1100,
-    2750,
-    -9.6
+    -300,
+    -1060,
+    -1.8
    ],
    "size": [
     140,
@@ -462,9 +467,9 @@
    "id": "power-grid",
    "kind": "substation",
    "position": [
-    -700,
-    3500,
-    -12.7
+    -2450,
+    -950,
+    10.7
    ],
    "size": [
     60,
@@ -476,11 +481,11 @@
    "id": "dump-waste-1",
    "kind": "dump",
    "position": [
-    -2300,
-    -1250,
-    7.0
+    2200,
+    -1100,
+    2.2
    ],
-   "radius": 260
+   "radius": 400
   },
   {
    "id": "face-01",
@@ -527,7 +532,7 @@
    "kind": "face",
    "position": [
     -1500,
-    450,
+    -450,
     -50
    ],
    "ore_type": "waste"
@@ -587,7 +592,7 @@
    "kind": "excavator",
    "position": [
     -1500,
-    425,
+    -425,
     -50
    ],
    "face": "face-05"
