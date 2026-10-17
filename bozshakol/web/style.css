@@ -13,7 +13,7 @@
 }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #e9e3d2; }
 
-#viewport { position: fixed; inset: 0; }
+#viewport { position: fixed; top: 0; bottom: 0; left: 300px; right: 0; }   /* холст справа от панели */
 #scene { display: block; width: 100%; height: 100%; }
 #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .label {
@@ -24,8 +24,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #e9e3d2; }
 }
 .label.small { font-size: 10px; padding: 0 4px; opacity: 0.9; }
 
+#topwrap { position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: calc(100vw - 340px); }
 #topbar {
-  position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 10px; align-items: center;
   background: var(--panel-bg); padding: 6px 10px; border-radius: 6px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
@@ -70,3 +71,38 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; }
 #card-name { font-weight: 600; font-size: 14px; }
 .muted { color: var(--muted); font-size: 11px; }
 #card-close { border: none; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); }
+
+/* --- подписи по важности, значки сценариев --- */
+.label.warn { background: #fff3cd; color: #7a4a00; border: 1px solid #d9a400; font-weight: 600; }
+#scene-notes { position: absolute; right: 10px; bottom: 8px; display: flex; gap: 10px; pointer-events: none;
+  font-size: 10px; color: var(--muted); background: rgba(255,255,255,0.6); padding: 1px 6px; border-radius: 3px; }
+
+/* --- кнопки-виды и плашка сценариев --- */
+#topbar { flex-wrap: wrap; justify-content: center; }
+#topbar button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#topbar button:disabled { opacity: .5; cursor: default; }
+#scenario-banner {
+  background: #fff3cd; color: #7a4a00; border: 1px solid #d9a400; border-radius: 6px;
+  padding: 4px 12px; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+/* --- панель диспетчера --- */
+.shift { font-weight: 600; font-size: 13px; margin: 8px 0 2px; }
+.plant-card { border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; margin: 4px 0; background: rgba(255,255,255,0.5); }
+.plant-card.stopped { border-color: var(--bad); }
+.plant-card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.plant-card .state { font-size: 11px; padding: 0 6px; border-radius: 8px; color: #fff; background: var(--ok); }
+.plant-card .state.warn { background: #d9a400; }
+.plant-card .state.bad { background: var(--bad); }
+.bar { position: relative; height: 14px; background: #e9e3d2; border-radius: 3px; margin: 3px 0; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); }
+.bar i.warn { background: #d9a400; }
+.bar i.bad { background: var(--bad); }
+.bar span { position: absolute; right: 6px; top: 0; font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums; }
+#transport-block.alert { outline: 2px solid var(--bad); outline-offset: 4px; border-radius: 4px; }
+.note.bad { color: var(--bad); font-weight: 600; margin-bottom: 4px; }
+#weather { margin-top: 4px; }
+#log { max-height: 180px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; background: rgba(255,255,255,0.5); }
+.log-row { padding: 1px 0; border-bottom: 1px dotted var(--line); }
+.log-row .t { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.legend-title { color: var(--muted); font-size: 11px; margin-top: 6px; text-transform: uppercase; letter-spacing: .03em; }

@@ -1,6 +1,7 @@
 {
  "_comment": "Геометрия рудника Бозшаколь в метрах; начало координат — центр карьера, X — восток, Y — север, Z — высота. Сгенерировано core/tools/make_geometry.py.",
  "units": "m",
+ "terrain": "data/terrain (Copernicus DEM GLO-30): высоты наземных узлов из рельефа, уровень 0 — борт карьера",
  "pit": {
   "center": [
    0,
@@ -87,7 +88,7 @@
   "r1-top": [
    -600,
    560,
-   0
+   -4.5
   ],
   "r2-bottom": [
    1600,
@@ -107,42 +108,42 @@
   "r2-top": [
    600,
    -560,
-   0
+   -2.6
   ],
   "crusher": [
    -100,
    680,
-   5
+   -3.9
   ],
   "rim-w": [
    -2400,
    0,
-   2
+   25.9
   ],
   "rim-sw": [
    -1200,
    -620,
-   2
+   11.9
   ],
   "rim-e": [
    2400,
    0,
-   3
+   -4.7
   ],
   "rim-ne": [
    1800,
    800,
-   5
+   -11.7
   ],
   "dump-waste-1": [
    -2200,
    -1100,
-   20
+   11.3
   ],
   "stockpile-clay": [
    1100,
    2400,
-   10
+   -12.3
   ]
  },
  "edges": [
@@ -227,8 +228,8 @@
    "from": "r1-mid2",
    "to": "r1-top",
    "road": "road-ramp-1",
-   "length_m": 809.1,
-   "grade_pct": 6.2
+   "length_m": 808.8,
+   "grade_pct": 5.6
   },
   {
    "from": "face-05",
@@ -255,8 +256,8 @@
    "from": "r2-mid2",
    "to": "r2-top",
    "road": "road-ramp-2",
-   "length_m": 809.1,
-   "grade_pct": 6.2
+   "length_m": 808.9,
+   "grade_pct": 5.9
   },
   {
    "from": "face-06",
@@ -270,63 +271,63 @@
    "to": "crusher",
    "road": "road-crusher",
    "length_m": 514.2,
-   "grade_pct": 1.0
+   "grade_pct": 0.1
   },
   {
    "from": "r1-top",
    "to": "rim-w",
    "road": "rim",
-   "length_m": 1885.1,
-   "grade_pct": 0.1
+   "length_m": 1885.3,
+   "grade_pct": 1.6
   },
   {
    "from": "rim-w",
    "to": "dump-waste-1",
    "road": "rim",
-   "length_m": 1118.2,
-   "grade_pct": 1.6
+   "length_m": 1118.1,
+   "grade_pct": -1.3
   },
   {
    "from": "r2-top",
    "to": "rim-sw",
    "road": "rim",
-   "length_m": 1801.0,
-   "grade_pct": 0.1
+   "length_m": 1801.1,
+   "grade_pct": 0.8
   },
   {
    "from": "rim-sw",
    "to": "dump-waste-1",
    "road": "rim",
-   "length_m": 1109.4,
-   "grade_pct": 1.6
+   "length_m": 1109.2,
+   "grade_pct": -0.1
   },
   {
    "from": "r2-top",
    "to": "rim-e",
    "road": "rim",
    "length_m": 1885.1,
-   "grade_pct": 0.2
+   "grade_pct": -0.1
   },
   {
    "from": "rim-e",
    "to": "rim-ne",
    "road": "rim",
    "length_m": 1000.0,
-   "grade_pct": 0.2
+   "grade_pct": -0.7
   },
   {
    "from": "rim-ne",
    "to": "stockpile-clay",
    "road": "rim",
    "length_m": 1746.4,
-   "grade_pct": 0.3
+   "grade_pct": -0.0
   },
   {
    "from": "crusher",
    "to": "rim-ne",
    "road": "rim",
    "length_m": 1903.8,
-   "grade_pct": 0.0
+   "grade_pct": -0.4
   }
  ],
  "roads": {
@@ -371,7 +372,7 @@
    "position": [
     -100,
     720,
-    6
+    -2.6
    ],
    "yaw_deg": 0
   },
@@ -382,12 +383,12 @@
     [
      -100,
      740,
-     8
+     -0.3
     ],
     [
      -100,
      3250,
-     16
+     -14.9
     ]
    ]
   },
@@ -397,7 +398,7 @@
    "position": [
     -100,
     3300,
-    18
+    -16.9
    ],
    "radius": 60
   },
@@ -407,7 +408,7 @@
    "position": [
     -100,
     3600,
-    20
+    -16.9
    ],
    "size": [
     260,
@@ -421,7 +422,7 @@
    "position": [
     -180,
     3560,
-    20
+    -16.3
    ]
   },
   {
@@ -430,7 +431,7 @@
    "position": [
     -20,
     3640,
-    20
+    -17.2
    ]
   },
   {
@@ -439,7 +440,7 @@
    "position": [
     1100,
     2450,
-    10
+    -11.7
    ],
    "radius": 50
   },
@@ -449,7 +450,7 @@
    "position": [
     1100,
     2750,
-    14
+    -9.6
    ],
    "size": [
     140,
@@ -463,7 +464,7 @@
    "position": [
     -700,
     3500,
-    20
+    -12.7
    ],
    "size": [
     60,
@@ -477,7 +478,7 @@
    "position": [
     -2300,
     -1250,
-    25
+    7.0
    ],
    "radius": 260
   },

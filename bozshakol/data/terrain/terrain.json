@@ -1,0 +1,57 @@
+{
+ "_comment": "Сетка высот и снимок вокруг карьера Бозшаколь в координатах рудника (core/geometry.json). Сгенерировано make_terrain.py.",
+ "center": {
+  "lon": 74.307,
+  "lat": 51.855,
+  "utm_epsg": 32643,
+  "e": 452271.9,
+  "n": 5745138.1
+ },
+ "theta_deg": 11.0,
+ "half_m": 3000,
+ "heights": {
+  "file": "heights.bin",
+  "dtype": "int16 little-endian",
+  "unit": "дм относительно h_ref",
+  "step_m": 30,
+  "n": 201,
+  "order": "строки с юга на север, столбцы с запада на восток",
+  "h_ref_m": 233.2,
+  "min_m": -21.2,
+  "max_m": 37.7
+ },
+ "texture": {
+  "file": "texture.jpg",
+  "step_m": 10,
+  "n": 601,
+  "order": "строка 0 — север",
+  "scene": "S2B_T43UDT_20240629T060949_L2A",
+  "date": "2024-06-29"
+ },
+ "pit_contour": {
+  "type": "ellipse",
+  "center": [
+   0,
+   0
+  ],
+  "semi_axes": [
+   2200,
+   550
+  ],
+  "note": "контур карьера по снимку ≈ 4,3 × 1,2 км, принят как эллипс модели"
+ },
+ "sources": {
+  "dem": {
+   "name": "Copernicus DEM GLO-30",
+   "tile": "N51_00_E074_00",
+   "url": "https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com/Copernicus_DSM_COG_10_N51_00_E074_00_DEM/Copernicus_DSM_COG_10_N51_00_E074_00_DEM.tif",
+   "attribution": "produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+  },
+  "image": {
+   "name": "Sentinel-2 L2A TCI",
+   "scene": "S2B_T43UDT_20240629T060949_L2A",
+   "url": "https://e84-earth-search-sentinel-data.s3.us-west-2.amazonaws.com/sentinel-2-c1-l2a/43/U/DT/2024/6/S2B_T43UDT_20240629T060949_L2A/TCI.tif",
+   "attribution": "Contains modified Copernicus Sentinel data 2024"
+  }
+ }
+}
