@@ -1,0 +1,40 @@
+# Данные и допущения
+
+Реальные данные — со ссылкой на источник. Всё прочее — «допущение» с обоснованием.
+Строки для своей части участники присылают координатору.
+
+| Параметр | Значение | Источник | Реальные данные / допущение |
+|---|---|---|---|
+| Размеры карьера | ≈ 4,4 × 1,1 км, глубина ≈ 200 м (2023) | [inform.kz](https://www.inform.kz/ru/srok-sluzhbi-mednogo-mestorozhdeniya-bozshakol-prodlili-do-2063-goda-025350) | реальные |
+| Парк самосвалов | 22 × 135 т и 6 × 180 т (Caterpillar) | [inform.kz](https://www.inform.kz/ru/srok-sluzhbi-mednogo-mestorozhdeniya-bozshakol-prodlili-do-2063-goda-025350) | реальные |
+| Высота уступа | 10–15 м (в модели 15 м) | [cyberleninka.ru](https://cyberleninka.ru/article/n/razrabotka-predlozheniy-po-sovershenstvovaniyu-tsiklichno-potochnoy-tehnologii-dlya-mestorozhdeniya-bozshakol) | реальные |
+| Угол откоса уступа | 55–60° (в модели 58°) | [cyberleninka.ru](https://cyberleninka.ru/article/n/razrabotka-predlozheniy-po-sovershenstvovaniyu-tsiklichno-potochnoy-tehnologii-dlya-mestorozhdeniya-bozshakol) | реальные |
+| Добыча руды 2025 | 35,5 млн т | [KAZ Minerals, Q4 2025 Production report](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Переработка 2025 | 35,7 млн т, в т. ч. глинистой 6,26 млн т | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Содержание меди в руде 2025 | 0,39 % Cu | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Содержание золота 2025 | 0,19 г/т | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Извлечение меди 2025 | 73,4 % | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Мощность фабрик | сульфидная 25 млн т/год, глинистой руды 5 млн т/год | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
+| Дробилка | гирационная | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
+| Мельница полусамоизмельчения | диаметр 12,2 м, 28 МВт | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
+| Шаровые мельницы | 2 шт., диаметр 8,5 м | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
+| Обогащение | флотация | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
+| Расстояние дробилка — фабрика | ≈ 3 км, дальше конвейер | [ausenco.com](https://ausenco.com/projects/concentrator-designed-to-operate-in-extreme-winter-conditions/) | реальные |
+| Ожидание самосвала у экскаватора | снизилось с 3–5 до 1–1,5 мин после внедрения диспетчеризации | [im-mining.com](https://im-mining.com/2025/03/28/hexagons-fleet-and-fatigue-management-in-tandem-at-bozshakol/) | реальные |
+| Число экскаваторов | 6 (класс Hitachi EX3600, ковш 22 м³ ≈ 40 т) | — | допущение: точное число не публикуется; 6 забоев по 2 850 т/ч суммарной подачи на фабрики плюс вскрыша |
+| Число и типы забоев | 6: 3 сульфидных, 1 глинистый, 2 вскрышных | — | допущение: доля глинистой руды ≈ 18 % переработки (6,26 из 35,7 млн т), вскрыша ≈ тоннаж руды |
+| Содержание меди по забоям | сульфидные 0,38–0,45 %, глинистый 0,31 % | — | допущение: вокруг среднего 0,39 % за 2025 год |
+| Доля глины | сульфидные 4–6 %, глинистый 55 % | — | допущение: порог «глинистой руды» принят 30 % |
+| Крупность после взрыва P80 | 250 мм (норма), 450 мм (неудачный взрыв) | — | допущение: типичные значения для гирационной дробилки с приёмным отверстием ≈ 1,5 м |
+| Производительность дробилки | 4 000 т/ч, приёмный бункер 3 000 т | — | допущение: запас ≈ 1,4 к средней подаче 2 850 т/ч; бункер вмещает ≈ 20 самосвалов |
+| Производительность фабрик по часам | сульфидная 2 850 т/ч, глинистая 570 т/ч | — | расчёт: 25 и 5 млн т/год при ≈ 8 770 ч работы |
+| Склад крупнодроблёной руды | ёмкость 200 000 т | — | допущение: ≈ 3 суток работы фабрики |
+| Склад глинистой руды | ёмкость 120 000 т | — | допущение: ≈ 9 суток работы фабрики глинистой руды |
+| Скорости самосвалов | порожний 40 км/ч, гружёный 30 км/ч, на подъёме 8 % — 12 км/ч | — | допущение: типично для карьерных самосвалов класса 135–180 т |
+| Время погрузки / разгрузки | ковш 35 с (135 т — 4 ковша, 180 т — 5), разгрузка 60 с | — | допущение |
+| Уклон съездов | 6–7 % | — | допущение: обычный предел для карьерных съездов 8 % |
+| Дороги и положение объектов | `core/geometry.json` | — | допущение: схема, а не съёмка; форма карьера — эллипс по размерам из inform.kz |
+| Содержание меди в концентрате | 24 % Cu | — | допущение: типично для медных флотационных концентратов (20–30 %) |
+| Смена | 12 ч, старт модели 08:00 | — | допущение: две смены в сутки |
+| Погода | −12 °C, ветер 4 м/с, видимость 5 км; метель: видимость 300 м, ограничение 20 км/ч | — | допущение: зима в Павлодарской области; фабрика рассчитана на экстремальную зиму (ausenco.com) |
+| Электропотребление | мельница ПСИ 28 МВт, шаровые 2 × 8 МВт, дробилка 1 МВт, прочее 6 МВт | мощность ПСИ — mining-technology.com | остальное — допущение |

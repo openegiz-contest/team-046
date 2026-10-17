@@ -1,0 +1,6 @@
+three.js 0.160.0 (REVISION 160)
+Файлы получены с unpkg.com (пакет npm three@0.160.0), лицензия MIT (см. LICENSE):
+  three.module.js  <- https://unpkg.com/three@0.160.0/build/three.module.js
+  OrbitControls.js <- https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js
+  LICENSE          <- https://unpkg.com/three@0.160.0/LICENSE
+Файлы не изменялись. В рантайме страница грузит их только отсюда, без CDN.

@@ -1,0 +1,34 @@
+# Координатор: создание двойников (bz-setup, одноразовый) и сервис bz-core
+# (модельное время, погода, сценарии, итоговые показатели).
+services:
+  bz-setup:
+    build:
+      context: ..
+      dockerfile: core/Dockerfile
+    image: bozshakol/core:local
+    restart: "no"
+    command: ["python", "setup.py"]
+    environment:
+      DITTO_URL: http://ditto-nginx:80
+      DITTO_PASSWORD: ${DITTO_PASSWORD}
+      TWINS_DIR: /mine
+    volumes:
+      # Все twins.json читаются прямо из репозитория: core/twins.json и modules/*/twins.json
+      - ..:/mine:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  bz-core:
+    image: bozshakol/core:local
+    pull_policy: never
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      MQTT_HOST: mosquitto
+      DITTO_URL: http://ditto-nginx:80
+      DITTO_PASSWORD: ${DITTO_PASSWORD}
+      SIM_SPEEDUP: ${SIM_SPEEDUP:-10}
+    depends_on:
+      bz-setup:
+        condition: service_completed_successfully

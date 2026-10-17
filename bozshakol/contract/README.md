@@ -1,0 +1,184 @@
+# Договор команды: двойник карьера Бозшаколь
+
+Этот документ — общие правила для всех частей рудника. Всё наше лежит в `bozshakol/`.
+Правила меняет только координатор; участник, которому нужно изменить общее правило или
+общий признак, пишет координатору.
+
+## 1. Структура и владельцы
+
+| Путь | Что это | Владелец |
+|---|---|---|
+| `bozshakol/compose.yml` | наш слой поверх `deploy/compose/docker-compose.yml`; подключает `core/compose.yml`, `modules/*/compose.yml`, `web/compose.yml` через `include` | координатор |
+| `bozshakol/contract/` | этот договор | координатор |
+| `bozshakol/core/` | координатор: `bz-setup` (создание двойников), `bz-core` (модельное время, погода, сценарии, итоговые показатели), `twins.json`, `geometry.json`, общая библиотека `bzlib/` | координатор |
+| `bozshakol/modules/haulage/` | транспорт и диспетчеризация: сервис `bz-haulage`, `twins.json`, `compose.yml`, `Dockerfile`, `README.md` | участник №2 |
+| `bozshakol/modules/geology/` | геология, качество руды, буровзрывные работы: сервис `bz-geology` | участник №3 |
+| `bozshakol/modules/processing/` | переработка и энергия: сервис `bz-processing` | участник №4 |
+| `bozshakol/web/` | 3D-сцена (`bz-web`, nginx), кроме `web/layers/` | координатор |
+| `bozshakol/web/layers/haulage.js`, `geology.js`, `processing.js` | 3D-слои модулей | №2, №3, №4 соответственно |
+| `bozshakol/grafana/overview.json` | общий дашборд | координатор |
+| `bozshakol/grafana/haulage.json`, `geology.json`, `processing.json` | дашборды модулей | №2, №3, №4 |
+| `bozshakol/data/SOURCES.md` | источники цифр и допущения | координатор (участники присылают строки) |
+| `bozshakol/check.sh` | проверка работающего стенда | координатор |
+| корневые `README.md`, `SUBMISSION.md`, `Makefile` (только наши цели) | | координатор |
+
+Участник меняет только свои файлы. Общие файлы участник не трогает: его сервис описан в его
+`compose.yml` (подключается через `include` из `bozshakol/compose.yml`), его двойники — в его
+`twins.json` (`bz-setup` читает все `modules/*/twins.json`), его дашборд — в его файле в
+`bozshakol/grafana/` (Grafana подхватывает папку целиком), его 3D-слой — в его файле в `web/layers/`.
+
+## 2. Имена и иерархия двойников
+
+- Пространство имён: `kz.bozshakol`, двойник — `kz.bozshakol:<имя>`; политика `default:basic_policy`.
+- Иерархия — штатным атрибутом платформы `_parents` (по нему приложение OpenEgiz в Grafana строит дерево):
+
+```text
+mine
+├── pit-central      забои face-*, экскаваторы excavator-*, буровые drill-*, дороги road-*, отвал dump-waste-1
+├── dispatch         самосвалы truck-*
+├── plant-sulphide   crusher-01, conveyor-01, stockpile-coarse, sag-mill-01, flotation-01
+├── plant-clay       stockpile-clay
+├── power-grid
+└── scenarios
+```
+
+- Технологические связи (куда уходит материал) — дополнительным атрибутом `downstream`
+  (строка или список thingId), только поверх `_parents`, не вместо.
+- Обязательные атрибуты: `name` (по-русски), `kind`, `_parents` (кроме `mine`), основные паспортные
+  параметры (грузоподъёмность, производительность и т. п.).
+- Признаки — как в шаблоне платформы: `{"properties": {"value": ..., "unit": ...}}`. Единицы — по-русски
+  (`т`, `т/ч`, `км/ч`, `% Cu`, `м`, `мин`, `МВт`). Значение — число, строка или логическое; у сценариев
+  рядом с `value` лежат параметры.
+
+## 3. Телеметрия и чтение чужих двойников
+
+- Сервис пишет свои двойники **только** сообщениями Ditto protocol в MQTT-топик `telemetry/<thingId>`
+  (например `telemetry/kz.bozshakol:truck-01`): команда `modify`, путь `/features`, значение —
+  все признаки двойника:
+
+```json
+{"topic": "kz.bozshakol/truck-01/things/twin/commands/modify",
+ "headers": {"response-required": false, "content-type": "application/json"},
+ "path": "/features",
+ "value": {"state": {"properties": {"value": "hauling"}}, "speed": {"properties": {"value": 28.5, "unit": "км/ч"}}}}
+```
+
+- У каждого двойника ровно один сервис-владелец; только он пишет его признаки. Исключение —
+  `scenarios`: его признаки включает и выключает пользователь (3D-страница, curl), модули только читают.
+- Чужие двойники модуль читает **только через платформу**: исходящий поток Ditto в MQTT
+  (`opentwins/twin/events/kz.bozshakol/<имя>` — подключение `mosquitto-target-connection` из
+  `deploy/compose/init` публикует события всех пространств имён, наше в том числе) или HTTP API Ditto
+  (`GET /api/2/things/<thingId>`, поиск `GET /api/2/search/things?namespaces=kz.bozshakol`).
+  Прямых связей между сервисами (общих файлов, сокетов, своих очередей) нет.
+- Общая библиотека `core/bzlib/platform.py` (владелец — координатор) умеет: публиковать признаки в MQTT,
+  получать снимок двойников через HTTP, следить за событиями по MQTT, считать модельное время.
+  Модуль копирует её в свой образ (`COPY core/bzlib ./bzlib` в Dockerfile, контекст сборки — `bozshakol/`).
+  Пользоваться ею не обязательно, но протокол выше — обязателен.
+
+## 4. Поток руды между модулями — накопительными счётчиками
+
+Получатель берёт разницу между соседними значениями счётчика; пропуск сообщения ничего не теряет.
+
+| Двойник (владелец) | Признак | Смысл |
+|---|---|---|
+| `excavator-01…06` (№2) | `loaded_total` (т), `face` | накопительные тонны, отгруженные из текущего забоя; геология уменьшает остаток забоя по разнице |
+| `excavator-*` (№2) | `passes_total`, `queue`, `state` | ковшей всего, очередь самосвалов, состояние |
+| `dispatch` (№2) | `delivered_crusher_t`, `delivered_crusher_cu_t` | привезено всего на дробилку: тонны и тонны меди |
+| `dispatch` (№2) | `delivered_clay_t`, `delivered_clay_cu_t` | привезено всего на склад глинистой руды |
+| `dispatch` (№2) | `delivered_dump_t` | вывезено всего в отвал |
+| `dispatch` (№2) | `mode`, `avg_wait_excavator` (мин), `assignments` (json), `trucks_hauling`, `trips_total` | режим и показатели диспетчеризации |
+| `dispatch` (№2) | `queue_crusher`, `queue_clay`, `queue_dump` (шт) | самосвалы в очереди на разгрузку; №4 показывает их в `crusher-01.trucks_queued` и `stockpile-clay.trucks_queued` |
+
+Обратная связь — признаками:
+
+| Двойник (владелец) | Признак | Кто читает |
+|---|---|---|
+| `crusher-01` (№4) | `accepting` (true/false) — принимает ли руду | №2: при `false` самосвалы ждут в очереди у дробилки |
+| `stockpile-clay` (№4) | `accepting` | №2 |
+| `face-01…06` (№3) | `ore_type` (sulphide/clay/waste), `cu_grade` (% Cu), `au_grade` (г/т), `clay_pct` (%), `p80` (мм), `loading_factor` (коэф. скорости погрузки, 1 = норма), `hardness`, `remaining` (т), `recommended_destination` (crusher-01 / stockpile-clay / dump-waste-1), `blasted` | №2: груз самосвала получает содержание и долю глины забоя; время погрузки делится на `loading_factor`; пункт разгрузки — по `recommended_destination` |
+| `mine` (координатор) | `sim_time`, `shift`, `shift_hour`, `temperature`, `wind`, `visibility`, `speed_limit` (км/ч) | все: `speed_limit` ограничивает скорость самосвалов (метель) |
+| `road-*` (№2) | `open`, `speed_limit` | №2 (своё), 3D-сцена |
+
+Признаки самосвала (`truck-*`, №2): `state` ∈ {queued_load, loading, hauling, queued_dump, dumping,
+returning, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
+`cargo_type` ∈ {sulphide, clay, waste, none}, `cargo_cu` (% Cu), `cargo_clay` (%), `destination`,
+`excavator`, `fuel` (%), `trips_total`.
+
+Итоговые показатели в `mine` (координатор считает по чужим двойникам через платформу):
+`ore_to_plants` (т/ч), `plan_fulfilment` (%), `feed_cu` (% Cu), `feed_clay` (%), `cu_concentrate_shift` (т),
+`trucks_hauling`. Для этого модуль №4 публикует в `plant-sulphide` и `plant-clay`: `feed_rate`, `feed_cu`,
+`feed_clay`, `plan_fulfilment`, `ore_shift_t`, `cu_concentrate_shift`.
+
+## 5. Модельное время
+
+- Все сервисы считают модельное время одинаково: `модельное = старт + (реальное − старт_реальное) × SIM_SPEEDUP`;
+  `SIM_SPEEDUP` — одна переменная окружения для всех (по умолчанию 10; задаётся в `deploy/compose/.env`).
+- Смена 12 ч; старт модели — 08:00 (дневная смена). Модельное время (`sim_time`, ISO), номер смены (`shift`)
+  и час смены (`shift_hour`) публикует `mine`; остальные берут для отображения оттуда, для расчётов —
+  свой шаг `dt` в модельных секундах.
+- Погода (`temperature`, `wind`, `visibility`) и ограничение скорости `speed_limit` — тоже в `mine`.
+
+## 6. Сценарии «что если»
+
+- Двойник `kz.bozshakol:scenarios`, по признаку на сценарий:
+  `{"properties": {"value": false, "<параметр>": ..., "owner": "<модуль>"}}`.
+- Включают и выключают сценарий **только записью одного признака** через API Ditto — кнопкой в 3D-сцене
+  или curl; никогда заменой всех признаков:
+
+```bash
+curl -u "ditto:$DITTO_PASSWORD" -X PUT -H 'Content-Type: application/json' -d true \
+  "http://localhost:$DITTO_PORT/api/2/things/kz.bozshakol:scenarios/features/crusher_stop/properties/value"
+```
+
+- Модули только читают (через события `opentwins/twin/events/kz.bozshakol/scenarios` и HTTP). Отмена = выключить (`false`).
+
+| Сценарий | Владелец реакции | Параметры | Что происходит |
+|---|---|---|---|
+| `blizzard` | координатор | `visibility_m`, `speed_limit_kmh` | метель: видимость и ограничение скорости в `mine` |
+| `dispatch_off` | №2 | — | диспетчеризация выключена: закреплённое распределение, ожидание растёт |
+| `road_closed` | №2 | `road` | дорога закрыта (`road-*.open = false`), маршруты перестраиваются |
+| `excavator_down` | №2 | `excavator` | экскаватор сломан, его самосвалы перераспределяются |
+| `clay_face` | №3 | `face`, `clay_pct` | сульфидный забой оказался глинистым: доля глины и рекомендуемый пункт разгрузки меняются |
+| `bad_blast` | №3 | `face`, `p80_mm` | неудачный взрыв: крупность растёт, скорость погрузки падает |
+| `crusher_stop` | №4 | — | дробилка стоит, `accepting = false`, очередь растёт, подача на фабрику падает |
+| `sag_maintenance` | №4 | — | мельница на ТО: фабрика не принимает со склада, склад растёт |
+
+## 7. Частота и объём
+
+- Подвижная техника (самосвалы) — не чаще 1 сообщения в секунду на двойник; остальное — раз в 5–10 с
+  или при изменении. Публикуется всегда весь набор признаков двойника.
+- Образы: одна база `python:3.12-slim`, библиотеки с закреплёнными версиями (`paho-mqtt==2.1.0`);
+  лишних загрузок не добавлять.
+
+## 8. Порты и пароли
+
+- Порты — только из `deploy/compose/.env` со значениями по умолчанию как в шаблоне (`GRAFANA_PORT=3000`,
+  `DITTO_PORT=8080`, `EXTENDED_API_PORT=8085`, `UNITY_PORT=8090`, `INFLUXDB_PORT=8086`, `MQTT_PORT=1883`);
+  наш: `BOZSHAKOL_WEB_PORT=8095` (3D-страница, слушает `127.0.0.1`; `make bozshakol` дописывает строку
+  в `.env`, если её нет). В коде номера портов напрямую не писать: внутри сети Compose сервисы обращаются
+  по именам (`mosquitto:1883`, `ditto-nginx:80`), снаружи — по переменным из `.env`.
+- Пароли берутся из `.env` через переменные окружения Compose; в код, страницу и репозиторий не попадают.
+  3D-страница ходит в Ditto через прокси nginx (`/ditto/…`), который сам добавляет заголовок авторизации.
+
+## 9. 3D-сцена и слои
+
+- Общая сцена (`web/index.html`, `web/app.js`) строит карьер, дороги, конвейер, здания, панель и карточку
+  двойника, загружает слои `web/layers/haulage.js`, `geology.js`, `processing.js` (ES-модули).
+- Интерфейс слоя: модуль экспортирует `init(ctx)` и `update(ctx, twins)`.
+  - `ctx.THREE` — three.js; `ctx.scene` — сцена; `ctx.group` — группа слоя (всё своё добавлять в неё);
+    `ctx.geometry` — `core/geometry.json`; `ctx.toScene(x, y, z)` — перевод координат рудника (м) в сцену;
+    `ctx.register(object3d, thingId)` — сделать объект кликабельным (карточка двойника);
+    `ctx.colors` — палитра (`sulphide`, `clay`, `waste`, `empty`, `down`, …); `ctx.dt` — секунды с прошлого кадра.
+  - `twins` — объект `thingId → {attributes, features}` с текущими значениями (`features.<f>.properties.value`),
+    обновляется из Ditto (SSE или опрос раз в секунду). `update` вызывается каждый кадр: слой сам
+    плавно интерполирует положение между обновлениями.
+  - Слой рисует только объекты своего модуля (техника — haulage; забои, буровые — geology;
+    дробилка, конвейер, склады, фабрики — processing). Все подписи — по-русски.
+- Цвета самосвалов: гружёный — по грузу (сульфидная руда — медно-зелёный, глинистая — рыжий, вскрыша — серый),
+  порожний — белый, авария (`down`) — красный.
+
+## 10. Данные и допущения
+
+Исходные цифры — в `data/SOURCES.md` со ссылками. Всё, чего нет в источниках, помечается «допущение»
+с обоснованием. Новые признаки модуль добавляет свободно и описывает в своём `README.md`; признаки,
+которые читают другие модули (таблицы в разделе 4), меняются только через координатора.

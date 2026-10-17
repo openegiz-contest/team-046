@@ -28,3 +28,9 @@ build/WebGL Build.loader.js
 build/WebGL Build.framework.js
 build/WebGL Build.data
 build/WebGL Build.wasm
+
+# Instructions for AI agents must never be committed
+CLAUDE.local.md
+.claude/
+# Bozshakol: marker set by `make bozshakol`
+deploy/compose/.bozshakol

@@ -1,0 +1,30 @@
+server {
+  listen 80;
+  server_name _;
+  include /etc/nginx/mime.types;
+  root /usr/share/nginx/html;
+  index index.html;
+  add_header Cache-Control "no-store" always;
+  location = /geometry.json {
+    alias /usr/share/nginx/core/geometry.json;
+    default_type application/json;
+  }
+  location = /config.json {
+    default_type application/json;
+    return 200 '{"grafanaUrl":"${GRAFANA_URL}"}';
+  }
+  # Прокси к Ditto: пароль подставляет nginx из .env, в страницу он не попадает
+  location /ditto/ {
+    proxy_pass http://ditto-nginx:80/;
+    proxy_set_header Authorization "Basic ${DITTO_BASIC_AUTH}";
+    proxy_set_header Host $http_host;
+    proxy_http_version 1.1;
+    proxy_set_header Connection '';
+    proxy_buffering off;
+    proxy_cache off;
+    chunked_transfer_encoding off;
+    proxy_read_timeout 1d;
+    proxy_send_timeout 1d;
+  }
+  location / { try_files $uri $uri/ =404; }
+}

@@ -1,0 +1,72 @@
+/* Светлый «макет-диорама»: сцена на весь экран, панель слева, карточка справа внизу */
+:root {
+  --panel-bg: rgba(252, 250, 244, 0.94);
+  --ink: #2b2620;
+  --muted: #7a7064;
+  --accent: #b5651d;
+  --ok: #3d8f6e;
+  --bad: #d32f2f;
+  --line: #e2dbcd;
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #e9e3d2; }
+
+#viewport { position: fixed; inset: 0; }
+#scene { display: block; width: 100%; height: 100%; }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.label {
+  position: absolute; transform: translate(-50%, -100%);
+  padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.82); color: var(--ink);
+  font-size: 11px; line-height: 15px; box-shadow: 0 0 2px rgba(0,0,0,0.25);
+}
+.label.small { font-size: 10px; padding: 0 4px; opacity: 0.9; }
+
+#topbar {
+  position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px; align-items: center;
+  background: var(--panel-bg); padding: 6px 10px; border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+#topbar button { font-size: 13px; padding: 4px 12px; cursor: pointer; }
+#load-status { color: var(--muted); }
+
+#panel {
+  position: fixed; top: 0; left: 0; bottom: 0; width: 300px; overflow-y: auto;
+  background: var(--panel-bg); border-right: 1px solid var(--line);
+  padding: 12px 14px; box-sizing: border-box;
+}
+#panel h1 { font-size: 15px; margin: 0 0 6px; }
+#panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin: 14px 0 4px; }
+.status-line { color: var(--muted); margin-bottom: 6px; }
+#grafana-link { color: var(--accent); font-weight: 600; }
+
+table.kv { width: 100%; border-collapse: collapse; }
+table.kv td, table.kv th { padding: 2px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.kv th { text-align: left; color: var(--muted); font-weight: 500; }
+table.kv td:first-child { color: var(--muted); width: 55%; }
+table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; }
+
+.scenario { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.scenario .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.scenario .params { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.scenario button { cursor: pointer; border: none; border-radius: 4px; padding: 3px 10px; color: #fff; font-size: 12px; }
+.scenario button.on { background: var(--bad); }
+.scenario button.off { background: var(--ok); }
+.scenario button:disabled { opacity: .5; cursor: wait; }
+
+.legend div { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.legend i { display: inline-block; width: 18px; height: 12px; border-radius: 2px; }
+
+#card {
+  position: fixed; right: 12px; bottom: 12px; width: 340px; max-height: 60vh; overflow-y: auto;
+  background: var(--panel-bg); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25); padding: 10px 12px; box-sizing: border-box;
+}
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+#card-name { font-weight: 600; font-size: 14px; }
+.muted { color: var(--muted); font-size: 11px; }
+#card-close { border: none; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); }

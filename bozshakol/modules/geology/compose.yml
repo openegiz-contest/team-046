@@ -1,0 +1,17 @@
+# Модуль «геология, качество руды, буровзрывные работы» (участник №3). Подключается из bozshakol/compose.yml.
+services:
+  bz-geology:
+    build:
+      context: ../..
+      dockerfile: modules/geology/Dockerfile
+    image: bozshakol/geology:local
+    restart: unless-stopped
+    mem_limit: 128m
+    environment:
+      MQTT_HOST: mosquitto
+      DITTO_URL: http://ditto-nginx:80
+      DITTO_PASSWORD: ${DITTO_PASSWORD}
+      SIM_SPEEDUP: ${SIM_SPEEDUP:-10}
+    depends_on:
+      bz-setup:
+        condition: service_completed_successfully
