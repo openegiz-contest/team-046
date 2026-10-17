@@ -136,6 +136,10 @@ if [ -n "${points:-}" ] && [ "${points:-0}" -gt 0 ] 2>/dev/null; then
   ok "за последние 2 минуты в InfluxDB записано $points точек $NS"
 else
   bad "в InfluxDB нет свежих точек $NS (Telegraf → InfluxDB)"
+  if docker logs --tail 20 openegiz-telegraf-1 2>&1 | grep -q "401 Unauthorized"; then
+    echo "             Telegraf получает 401 от InfluxDB: пароли в deploy/compose/.env не совпадают с томами"
+    echo "             (например, .env создан заново при сохранённых томах). Лечится: make clean, затем make bozshakol."
+  fi
 fi
 
 # 5. Grafana отвечает -----------------------------------------------------------------
