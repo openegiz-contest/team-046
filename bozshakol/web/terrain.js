@@ -42,9 +42,17 @@ export async function loadTerrain(THREE, geometry) {
     return (top * (1 - ty) + bot * ty) / 10;
   }
 
+  const EDGE_FADE = 500;   // м: у края квадрата данных рельеф плавно сходит к уровню дальней степи
+  const farLevel = meta ? meta.heights.min_m - 1 : -1;
+  function edgeWeight(x, y) {
+    const d = half - Math.max(Math.abs(x), Math.abs(y));
+    return d >= EDGE_FADE ? 0 : 1 - d / EDGE_FADE;
+  }
   function heightAt(x, y) {
     if (pit.inside(x, y)) return pit.benchHeight(x, y);
     let h = demAt(x, y);
+    const w = edgeWeight(x, y);
+    if (w > 0) h = h * (1 - w) + farLevel * w;
     // у наземных дорог поверхность подтягивается к профилю дороги (выемка/насыпь)
     let best = null;
     for (const r of roads) {
@@ -65,6 +73,7 @@ export async function loadTerrain(THREE, geometry) {
     const seg = GROUND_SEGMENTS, size = 2 * half;
     const pos = new Float32Array((seg + 1) * (seg + 1) * 3);
     const uv = new Float32Array((seg + 1) * (seg + 1) * 2);
+    const col = new Float32Array((seg + 1) * (seg + 1) * 3);
     const idx = [];
     let k = 0, u = 0;
     for (let j = 0; j <= seg; j++) {
@@ -75,6 +84,8 @@ export async function loadTerrain(THREE, geometry) {
         const z = pit.inside(x, y, 0.97) ? -(pit.depth + 40) : heightAt(x, y);
         const p = ts(x, y, z);
         pos[k++] = p.x; pos[k++] = p.y; pos[k++] = p.z;
+        const w = edgeWeight(x, y);           // у края — темнее, в тон дальней степи
+        col[(k / 3 - 1) * 3] = col[(k / 3 - 1) * 3 + 1] = col[(k / 3 - 1) * 3 + 2] = 1 - 0.35 * w;
         uv[u++] = (x + half) / size; uv[u++] = (y + half) / size;
       }
     }
@@ -87,9 +98,10 @@ export async function loadTerrain(THREE, geometry) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide, vertexColors: true });
     if (meta) {
       new THREE.TextureLoader().load(TERRAIN_URL + meta.texture.file, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
@@ -105,7 +117,8 @@ export async function loadTerrain(THREE, geometry) {
     shape.moveTo(-20000, -20000); shape.lineTo(20000, -20000); shape.lineTo(20000, 20000); shape.lineTo(-20000, 20000); shape.closePath();
     const hole = new THREE.Path(); hole.absellipse(0, 0, pit.a * 1.01, pit.b * 1.01, 0, Math.PI * 2, false, 0);
     shape.holes.push(hole);
-    const far = new THREE.Mesh(new THREE.ShapeGeometry(shape, 48), new THREE.MeshLambertMaterial({ color: 0xd9ccaa }));
+    // цвет дальней степи — средний цвет края снимка, чтобы граница квадрата не бросалась в глаза
+    const far = new THREE.Mesh(new THREE.ShapeGeometry(shape, 48), new THREE.MeshLambertMaterial({ color: 0x807a5e }));
     far.rotation.x = -Math.PI / 2;   // Y фигуры (север) → −Z сцены
     const base = ts(0, 0, meta ? meta.heights.min_m - 1 : -1);
     far.position.y = base.y;
