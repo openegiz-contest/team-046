@@ -26,7 +26,7 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
   const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
   sky.name = 'sky';
   group.add(sky);
-  const FOG_DAY = { color: 0xe3dfd3, near: 7000, far: 17000 }, FOG_BLIZZARD = { color: 0xc8cfd6, near: 300, far: 2600 };
+  const FOG_DAY = { color: 0xe3dfd3, near: 7000, far: 17000 }, FOG_BLIZZARD = { color: 0xc8cfd6, near: 350, far: 5200 };   // метель: видимость падает, но ближний план различим
   scene.fog = new THREE.Fog(FOG_DAY.color, FOG_DAY.near, FOG_DAY.far);
   scene.background = null;
 
