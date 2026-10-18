@@ -703,8 +703,25 @@ export function createModels(THREE, colors) {
     return finish(g, {}, { height: FH });
   }
 
+  // топливозаправочный пункт: два горизонтальных резервуара на опорах, навес на стойках, колонка, будка
+  function fuelStation() {
+    const g = new THREE.Group();
+    const steel = mat('fuel-steel', 0xd9dcd8), dark = mat('fuel-dark', 0x4a4a48), roof = mat('fuel-roof', 0xb9c4cf), post = mat('fuel-post', 0x8a8f94), wall = mat('fuel-wall', 0xe6e2d8);
+    for (const dz of [-6, 6]) {
+      const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 14, 12), steel);
+      tank.rotation.z = Math.PI / 2; tank.position.set(-12, 3.2, dz); g.add(tank);
+      for (const dx of [-5, 5]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 4.6), dark); leg.position.set(-12 + dx, 1, dz); g.add(leg); }
+    }
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(20, 0.6, 14), roof); canopy.position.set(6, 7, 0); g.add(canopy);
+    for (const [dx, dz] of [[-8, -6], [-8, 6], [8, -6], [8, 6]]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.6, 7, 0.6), post); p.position.set(6 + dx, 3.5, dz); p.userData.detail = true; g.add(p); }
+    const pump = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.8), dark); pump.position.set(6, 1.1, 0); g.add(pump);
+    const hut = new THREE.Mesh(new THREE.BoxGeometry(6, 3.2, 5), wall); hut.position.set(18, 1.6, -5); g.add(hut);
+    const hutRoof = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.4, 5.6), roof); hutRoof.position.set(18, 3.4, -5); g.add(hutRoof);
+    return finish(g, {}, { length: 36, width: 20, height: 7.3 });
+  }
+
   return {
-    truck, excavator, drill, crusher, conveyor, building, stockpile, dump, lightMast, powerLine, fence,
+    truck, excavator, drill, crusher, conveyor, building, stockpile, dump, lightMast, powerLine, fence, fuelStation,
     colors: C, sizes: MODEL_SIZES, materials: matCache,
   };
 }

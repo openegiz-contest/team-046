@@ -96,15 +96,15 @@ export async function loadTerrain(THREE, geometry) {
   function heightAt(x, y) {
     if (pit.inside(x, y)) return pit.benchHeight(x, y);
     let h = demAt(x, y);
-    const pad = padAt(x, y);
-    if (pad) {
-      const w = pad.d <= 0 ? 1 : 1 - pad.d / PAD_BLEND;   // площадка выровнена по уровню центра
-      h = h * (1 - w) + pad.level * w;
-    }
     const road = roadAt(x, y);
     if (road) {
       const w = road.d <= ROAD_SHOULDER ? 1 : 1 - (road.d - ROAD_SHOULDER) / (ROAD_BLEND - ROAD_SHOULDER);
       h = h * (1 - w) + road.z * w;
+    }
+    const pad = padAt(x, y);                               // выровненная площадка главнее профиля дороги
+    if (pad) {
+      const w = pad.d <= 0 ? 1 : 1 - pad.d / PAD_BLEND;   // площадка выровнена по уровню центра
+      h = h * (1 - w) + pad.level * w;
     }
     return h;
   }
@@ -308,7 +308,7 @@ function padsFrom(geometry) {
   for (const o of geometry.objects || []) {
     if (!o.position) continue;
     const [x, y] = o.position;
-    if (o.kind === 'plant' || o.kind === 'substation' || o.kind === 'crusher') {
+    if (o.kind === 'plant' || o.kind === 'substation' || o.kind === 'crusher' || o.kind === 'fuel') {
       const [l, w] = o.size || [60, 60];
       const hx = l / 2 + 60, hy = w / 2 + 60;
       out.push({ id: o.id, cx: x, cy: y, level: 0,

@@ -60,6 +60,7 @@ NODES = {
     "rim-sw": [1200, -900, 0],           # дорога от съезда 2 к отвалам
     "rim-e": [700, -900, 0],             # дорога от съезда 2 к складу глинистой руды
     "rim-ne": [-300, -800, 0],           # развилка у дробилки к складу глинистой руды
+    "fuel-station": [-480, -720, 0],     # топливозаправочный пункт у дороги к дробилке (допущение: на снимке не различим)
     "dump-waste-1": [1900, -1000, 0],    # отвалы к юго-востоку от карьера
     "stockpile-clay": [-700, -1250, 0],  # склад глинистой руды у фабрики глинистой руды
 }
@@ -93,6 +94,7 @@ EDGES = [
     ("rim-e", "rim-ne", "rim"),
     ("rim-ne", "stockpile-clay", "rim"),
     ("crusher", "rim-ne", "rim"),
+    ("rim-ne", "fuel-station", "rim"),
 ]
 
 # ---------------------------------------------------------------- объекты
@@ -107,6 +109,7 @@ OBJECTS = [
     {"id": "stockpile-clay", "kind": "stockpile", "position": [-700, -1290, 0], "radius": 50},
     {"id": "plant-clay", "kind": "plant", "position": [-300, -1060, 0], "size": [160, 100, 22]},   # ≈ 160 × 100 м по снимку (допущение)
     {"id": "power-grid", "kind": "substation", "position": [-2450, -950, 0], "size": [60, 40, 10]},
+    {"id": "fuel-station", "kind": "fuel", "position": [-500, -745, 0], "size": [40, 28, 8]},
     {"id": "dump-waste-1", "kind": "dump", "position": [2200, -1100, 0], "radius": 400},
     {"id": "face-01", "kind": "face", "position": [-1300, 130, -200], "ore_type": "sulphide"},
     {"id": "face-02", "kind": "face", "position": [-300, -170, -200], "ore_type": "sulphide"},
@@ -147,9 +150,24 @@ def apply_terrain():
     terrain = load()
     if terrain is None:
         return None
+    # выровненные площадки у объектов (как в web/terrain.js): узел внутри площадки — на её уровне
+    pads = []
+    for obj in OBJECTS:
+        if "position" not in obj:
+            continue
+        ox, oy = obj["position"][:2]
+        if obj["kind"] in ("plant", "substation", "crusher", "fuel"):
+            l, w = (obj.get("size") or [60, 60])[:2]
+            pads.append((ox, oy, lambda x, y, ox=ox, oy=oy, hx=l / 2 + 60, hy=w / 2 + 60: max(abs(x - ox) - hx, abs(y - oy) - hy)))
+        elif obj["kind"] in ("stockpile", "dump"):
+            pads.append((ox, oy, lambda x, y, ox=ox, oy=oy, r=(obj.get("radius") or 50) + 40: math.hypot(x - ox, y - oy) - r))
     for name, p in NODES.items():
         if p[2] >= 0 and not terrain.inside_pit(p[0], p[1]):
             p[2] = round(terrain.height_at(p[0], p[1]), 1)
+            for ox, oy, dist in pads:
+                if dist(p[0], p[1]) <= 0:
+                    p[2] = round(terrain.height_at(ox, oy), 1)
+                    break
     for obj in OBJECTS:
         if "position" in obj and obj["position"][2] >= 0 and not terrain.inside_pit(*obj["position"][:2]):
             obj["position"][2] = round(terrain.height_at(obj["position"][0], obj["position"][1]) + (1 if obj["kind"] != "dump" else 0), 1)

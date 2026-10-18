@@ -100,9 +100,14 @@ mine
 | `road-*` (№2) | `open`, `speed_limit` | №2 (своё), 3D-сцена |
 
 Признаки самосвала (`truck-*`, №2): `state` ∈ {queued_load, loading, hauling, queued_dump, dumping,
-returning, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
+returning, refueling, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
 `cargo_type` ∈ {sulphide, clay, waste, none}, `cargo_cu` (% Cu), `cargo_clay` (%), `destination`,
 `excavator`, `fuel` (%), `trips_total`.
+
+- `refueling` — «на заправке»: самосвал стоит у топливозаправочного пункта (узел `fuel-station` в
+  `core/geometry.json`, рядом с дорогой к дробилке; связан ребром с узлом `rim-ne`). Длительность ≈ 15 мин
+  модельного времени, примерно раз в смену (по признаку `fuel`); после заправки `fuel` = 100. В сцене
+  самосвал на заправке окрашен как порожний (белый).
 
 Итоговые показатели в `mine` (координатор считает по чужим двойникам через платформу):
 `ore_to_plants` (т/ч), `plan_fulfilment` (%), `feed_cu` (% Cu), `feed_clay` (%), `cu_concentrate_shift` (т),

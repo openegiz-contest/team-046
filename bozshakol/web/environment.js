@@ -28,7 +28,7 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
   group.add(sky);
   // Туман — по дальности видимости mine.visibility: в ясную погоду (≈ 5 км) дымка только у горизонта
   // (туман начинается за 1,4 видимости и полный на 5), в метель (300 м) — плотный туман по той же величине.
-  const FOG_CLEAR_COLOR = 0xeae6dc, FOG_BLIZZARD_COLOR = 0xc8cfd6;
+  const FOG_CLEAR_COLOR = 0xeae6dc, FOG_BLIZZARD_COLOR = 0xdfe2e5;   // метель: светлая снежная дымка
   scene.fog = new THREE.Fog(FOG_CLEAR_COLOR, 7000, 25000);
   scene.background = null;
 
@@ -144,8 +144,11 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
     const vis = Math.max(100, Number(visibility) || 5000);
     const on = !!blizzard;
     scene.fog.color.setHex(on ? FOG_BLIZZARD_COLOR : FOG_CLEAR_COLOR);
-    scene.fog.near = on ? vis * 0.4 : vis * 1.4;
-    scene.fog.far = on ? vis * 5 : vis * 5;
+    // в метель туман рисуется не плотнее, чем при видимости 1000 м (нижний предел для отображения);
+    // сама модель (mine.visibility, ограничение скорости) не меняется
+    const fogVis = on ? Math.max(vis, 1000) : vis;
+    scene.fog.near = on ? fogVis * 0.4 : fogVis * 1.4;
+    scene.fog.far = fogVis * 5;
     const zen = on ? new THREE.Color(0xc9d0d6) : zenith, hor = on ? new THREE.Color(0xd5d8dc) : horizon;
     const c = skyGeo.attributes.color;
     for (let i = 0; i < pos.count; i++) {
