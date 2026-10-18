@@ -81,8 +81,13 @@ HOME = ([1] * 6 + [2] * 5 + [3] * 6 + [4] * 4 + [5] * 3 + [6] * 4)
 CLAY_WINDOW_T = 2000.0        # т — скользящее окно, по которому считаем clay_share_crusher
 CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинистые забои, если подошли к 90 % лимита
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
-DISPATCH_AVG_SPEED_KMH = 25.0 # допущение: средняя скорость для оценки времени пути при выборе экскаватора
-                               # (сам ход считается по формуле мощности — это только эвристика диспетчера)
+DISPATCH_AVG_SPEED_KMH = 45.0 # допущение: средняя скорость ПОРОЖНЕГО самосвала для оценки времени пути
+                               # при выборе экскаватора (сам ход считается по формуле мощности — это
+                               # только эвристика диспетчера; труки, которые тут оцениваются, всегда едут
+                               # порожняком — на погрузку. Было 25 км/ч — заметно медленнее того, что
+                               # порожний самосвал реально развивает (физика хода), это искусственно
+                               # раздувало разницу в расстоянии между экскаваторами против честной очереди)
+ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г): только если вскрыша быстрее больше чем на 0,5 мин
 
 
 # ------------------------------------------------------------------ дороги
@@ -333,53 +338,110 @@ class Haulage:
         эвристика диспетчера для сравнения экскаваторов, а не точный прогноз)."""
         return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed
 
-    def _expected_wait_s(self, ex, travel_s):
-        """Ожидаемое ожидание у экскаватора: сколько он будет занят тем, что уже стоит у него
-        или едет к нему, за вычетом времени нашего пути туда (не меньше 0)."""
-        total = 0.0
+    def _load_elapsed_s(self, truck, cycle_s):
+        """Сколько из времени погрузки самосвал УЖЕ потратил (чтобы считать остаток, не всё заново)."""
+        if not truck.setup_done:
+            return truck.timer
+        return LOAD_SETUP_S + truck.buckets_done * cycle_s + truck.timer
+
+    def _remaining_path_m(self, truck):
+        """Оставшееся расстояние по ТЕКУЩЕМУ маршруту самосвала (а не «по прямой от узла»)."""
+        if not truck.path:
+            return 0.0
+        length, _grade, _road = self.roads.edge(truck.node, truck.path[0])
+        total = max(0.0, length - truck.seg_pos)
+        prev = truck.path[0]
+        for nxt in truck.path[1:]:
+            length, _grade, _road = self.roads.edge(prev, nxt)
+            total += length
+            prev = nxt
+        return total
+
+    def _eta_s(self, truck, dest_node):
+        """Оценка времени прибытия: для самосвала, уже едущего именно туда, — по остатку ЕГО
+        текущего пути; иначе — по кратчайшему пути от его текущего узла (допущенная скорость
+        диспетчера DISPATCH_AVG_SPEED_KMH — сам ход считается честно, это только эвристика выбора)."""
+        if truck.path and truck.path[-1] == dest_node:
+            dist = self._remaining_path_m(truck)
+        else:
+            dist = self.roads.path_length_m(truck.node, dest_node)
+            if dist is None:
+                return None
+        return dist / (DISPATCH_AVG_SPEED_KMH / 3.6)
+
+    def _excavator_free_at_s(self, ex):
+        """Честно смоделировать очередь экскаватора (без нашего самосвала) и найти, через
+        сколько секунд он освободится: кто уже грузится — по остатку его времени; кто стоит в
+        очереди — по порядку, каждый добавляет своё полное время; кто ещё едет — по своему ETA,
+        вставляется в очередь по времени прибытия (а не как будто уже стоит на месте)."""
+        cycle_s = BUCKET_CYCLE_S / self.face_info(ex.id)["factor"]
+        t_free = 0.0
         if ex.loading:
-            total += self._truck_load_time_s(ex.loading)
+            t_free = max(0.0, self._truck_load_time_s(ex.loading) - self._load_elapsed_s(ex.loading, cycle_s))
         for t in ex.queue:
-            total += self._truck_load_time_s(t)
+            t_free += self._truck_load_time_s(t)
+        pending = []
         for t in self.trucks:
             if t is ex.loading or t in ex.queue:
                 continue
             if t.state == "returning" and t.destination == ex.id:
-                total += self._truck_load_time_s(t)
-        return max(0.0, total - travel_s)
+                eta = self._eta_s(t, ex.node)
+                if eta is not None:
+                    pending.append((eta, self._truck_load_time_s(t)))
+        pending.sort()
+        for eta, svc in pending:
+            t_free = max(t_free, eta) + svc
+        return t_free
+
+    def _best_candidate(self, truck, ore, near_clay_limit):
+        """Экскаватор нужной руды с минимальным «прибытие + ожидание» (т.е. минимальным временем,
+        когда самосвал реально начнёт грузиться), и само это время; None, если кандидатов нет."""
+        best, best_start = None, math.inf
+        for ex in self.excavators.values():
+            if ex.down:
+                continue
+            info = self.face_info(ex.id)
+            if info["ore"] != ore:
+                continue
+            if near_clay_limit and ore == "sulphide" and info["clay"] > self.clay_limit_pct:
+                continue
+            my_eta = self._eta_s(truck, ex.node)
+            if my_eta is None:
+                continue
+            start = max(my_eta, self._excavator_free_at_s(ex))
+            if start < best_start:
+                best, best_start = ex.id, start
+        return best, best_start
 
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
         if self.mode == "manual":
             # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
             return home.id
+        home_ore = self.face_info(home.id)["ore"]
+        # crusher_stop/sag_maintenance: правило обязательное, не смягчаем «руда важнее вскрыши» —
+        # рудный пункт разгрузки сейчас физически не принимает, рудных там грузить незачем
         target_ore = self._candidate_ore(truck)
         # (в) доля глины на дробилке близка к лимиту — не грузить на неё ещё более глинистые забои
         near_clay_limit = (
-            target_ore == "sulphide" and self._clay_crusher_total_t > 0 and self.clay_limit_pct > 0
+            self._clay_crusher_total_t > 0 and self.clay_limit_pct > 0
             and (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t)
                 >= CLAY_SOFT_FACTOR * self.clay_limit_pct
         )
-        best, best_score = None, math.inf
-        for ex in self.excavators.values():
-            if ex.down:
-                continue
-            info = self.face_info(ex.id)
-            if info["ore"] != target_ore:
-                continue
-            if near_clay_limit and info["clay"] > self.clay_limit_pct:
-                continue
-            length_m = self.roads.path_length_m(truck.node, ex.node)
-            if length_m is None:
-                continue
-            travel_s = length_m / (DISPATCH_AVG_SPEED_KMH / 3.6)
-            score = travel_s + self._expected_wait_s(ex, travel_s)
-            if score < best_score:
-                best, best_score = ex.id, score
+        best, best_start = self._best_candidate(truck, target_ore, near_clay_limit)
         if best:
             return best
-        # ничего не подошло (например, все экскаваторы нужной руды сломаны) — домашний как раньше,
-        # а если и он сломан — любой работающий, лишь бы самосвал не завис совсем
+        # кандидатов нужной руды не нашлось вовсе (например, все её экскаваторы сломаны, или лимит
+        # глины исключил все сульфидные) — «руда важнее вскрыши» (г): пробуем вскрышу как запасной
+        # вариант, но только если она ощутимо (>0,5 мин) быстрее, чем просто остаться у домашнего
+        if target_ore != "waste":
+            waste_best, waste_start = self._best_candidate(truck, "waste", near_clay_limit=False)
+            if waste_best is not None:
+                home_start = math.inf if home.down else max(self._eta_s(truck, home.node) or math.inf,
+                                                              self._excavator_free_at_s(home))
+                if home_start - waste_start >= ORE_PREFERENCE_MARGIN_S:
+                    return waste_best
+        # ничего не подошло — домашний как раньше, а если и он сломан — любой работающий
         if not home.down:
             return home.id
         working = next((e.id for e in self.excavators.values() if not e.down), None)
