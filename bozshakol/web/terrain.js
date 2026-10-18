@@ -81,7 +81,7 @@ export async function loadTerrain(THREE, geometry) {
     let best = null;
     for (const p of pads) {
       const d = p.distance(x, y);                            // < 0 внутри площадки
-      if (d < PAD_BLEND && (best === null || d < best.d)) best = { d, level: p.level };
+      if (d < PAD_BLEND && (best === null || d < best.d)) best = { d, level: p.level, dump: p.dump };
     }
     return best;
   }
@@ -98,7 +98,7 @@ export async function loadTerrain(THREE, geometry) {
     let h = demAt(x, y);
     const pad = padAt(x, y);
     if (pad) {
-      const w = pad.d <= 0 ? 1 : 1 - pad.d / PAD_BLEND;
+      const w = pad.d <= 0 ? 1 : 1 - pad.d / PAD_BLEND;   // площадка выровнена по уровню центра
       h = h * (1 - w) + pad.level * w;
     }
     const road = roadAt(x, y);
@@ -111,29 +111,45 @@ export async function loadTerrain(THREE, geometry) {
   for (const p of pads) p.level = demAt(p.cx, p.cy);        // уровень площадки — рельеф в её центре
 
   // --- цвет земли ---------------------------------------------------------------------------
+  // Степь — пятна сухой травы разных оттенков (жёлто-зелёные, соломенные, бурые) двух масштабов;
+  // вокруг объектов — утоптанный тёмный грунт; дороги — светлое полотно с тёмной обочиной; отвалы — серые.
   const C = {
-    grassLow: new THREE.Color(0x8f8a56), grassHigh: new THREE.Color(0xc8b97a), grassDry: new THREE.Color(0xd3c48e),
-    soil: new THREE.Color(0x9c8c70), road: new THREE.Color(0xb3a98f), shoulder: new THREE.Color(0xa89b7e),
-    pitGround: new THREE.Color(0x8d8068), far: new THREE.Color(0xb7ab74),
+    grassLow: new THREE.Color(0x9c9a5a), grassHigh: new THREE.Color(0xd0bf7c),
+    grassGreen: new THREE.Color(0x8a9a52), grassBrown: new THREE.Color(0x9c7d50), grassStraw: new THREE.Color(0xdcc98a),
+    soil: new THREE.Color(0x6e5e44), dumpSoil: new THREE.Color(0x8f8d87),
+    road: new THREE.Color(0xd4c8a8), shoulder: new THREE.Color(0x7e6d52),
+    pitGround: new THREE.Color(0x8d8068), far: new THREE.Color(0xc2b57a),
   };
   const tmp = new THREE.Color();
   function hash(x, y) {                                      // детерминированный шум 0..1
     const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
     return s - Math.floor(s);
   }
+  function smoothNoise(x, y, cell) {                         // плавный шум: билинейная интерполяция hash на сетке
+    const gx = x / cell, gy = y / cell, x0 = Math.floor(gx), y0 = Math.floor(gy);
+    let tx = gx - x0, ty = gy - y0;
+    tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+    const a = hash(x0, y0), b = hash(x0 + 1, y0), c = hash(x0, y0 + 1), d = hash(x0 + 1, y0 + 1);
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+  }
   function colorAt(x, y, h, out) {
     const t = Math.min(1, Math.max(0, (h - (farLevel - 15)) / 45));          // низины темнее и зеленее
     out.copy(C.grassLow).lerp(C.grassHigh, t);
-    const noise = hash(Math.round(x / 60), Math.round(y / 60));
-    out.lerp(C.grassDry, noise * 0.35);
+    const n1 = smoothNoise(x, y, 520), n2 = smoothNoise(x + 3000, y - 2000, 170);
+    if (n1 > 0.55) out.lerp(C.grassBrown, (n1 - 0.55) * 1.4);                 // бурые пятна
+    else if (n1 < 0.4) out.lerp(C.grassGreen, (0.4 - n1) * 1.2);               // жёлто-зелёные пятна
+    out.lerp(C.grassStraw, (n2 - 0.5) * 0.5);                                   // мелкие соломенные пятна
     const slope = Math.hypot(demAt(x + 25, y) - demAt(x - 25, y), demAt(x, y + 25) - demAt(x, y - 25)) / 50;
-    out.multiplyScalar(1 - Math.min(0.25, slope * 1.5));                     // склоны чуть темнее
+    out.multiplyScalar(1 - Math.min(0.22, slope * 1.4));                      // склоны чуть темнее
     const pad = padAt(x, y);
-    if (pad) out.lerp(C.soil, pad.d <= 0 ? 0.9 : 0.9 * (1 - pad.d / PAD_BLEND));
+    if (pad) out.lerp(pad.dump ? C.dumpSoil : C.soil, pad.d <= 0 ? 0.92 : 0.92 * (1 - pad.d / PAD_BLEND));
+    // у края земли цвет сходит к цвету дальней степи — граница сетки не видна
+    const e = AREA_HALF - Math.max(Math.abs(x), Math.abs(y));
+    if (e < OUTER_FADE) out.lerp(C.far, 1 - Math.max(0, e / OUTER_FADE));
     const road = roadAt(x, y);
-    if (road && road.d < ROAD_SHOULDER + 20) {
-      const w = road.d <= ROAD_HALF_WIDTH ? 1 : Math.max(0, 1 - (road.d - ROAD_HALF_WIDTH) / (ROAD_SHOULDER + 20 - ROAD_HALF_WIDTH));
-      out.lerp(road.d <= ROAD_HALF_WIDTH ? C.road : C.shoulder, w);
+    if (road && road.d < ROAD_SHOULDER + 24) {
+      if (road.d <= ROAD_HALF_WIDTH) out.lerp(C.road, 0.95);                 // полотно
+      else out.lerp(C.shoulder, 0.75 * Math.max(0, 1 - (road.d - ROAD_HALF_WIDTH) / (ROAD_SHOULDER + 24 - ROAD_HALF_WIDTH)));   // обочина
     }
     return out;
   }
@@ -153,8 +169,8 @@ export async function loadTerrain(THREE, geometry) {
       for (let i = 0; i <= seg; i++) {
         const x = -AREA_HALF + size * i / seg;
         let h, color;
-        if (pit.inside(x, y)) {                              // грубый карьер под моделью уступов (на 2 м ниже)
-          h = pit.benchHeight(x, y) - 2;
+        if (pit.inside(x, y)) {                              // грубый карьер под моделью уступов: на 30 м ниже берм,
+          h = pit.benchHeight(x, y) - 30;                      // чтобы треугольники сетки не прорезали стенки
           color = tmp.copy(C.pitGround);
         } else {
           h = heightAt(x, y);
@@ -294,12 +310,12 @@ function padsFrom(geometry) {
     const [x, y] = o.position;
     if (o.kind === 'plant' || o.kind === 'substation' || o.kind === 'crusher') {
       const [l, w] = o.size || [60, 60];
-      const hx = l / 2 + 25, hy = w / 2 + 25;
+      const hx = l / 2 + 60, hy = w / 2 + 60;
       out.push({ id: o.id, cx: x, cy: y, level: 0,
         distance(px, py) { return Math.max(Math.abs(px - x) - hx, Math.abs(py - y) - hy); } });
     } else if (o.kind === 'stockpile' || o.kind === 'dump') {
-      const r = (o.radius || 50) + 20;
-      out.push({ id: o.id, cx: x, cy: y, level: 0, distance(px, py) { return Math.hypot(px - x, py - y) - r; } });
+      const r = (o.radius || 50) + 40;
+      out.push({ id: o.id, cx: x, cy: y, level: 0, dump: o.kind === 'dump', distance(px, py) { return Math.hypot(px - x, py - y) - r; } });
     }
   }
   return out;

@@ -14,7 +14,7 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
   // --- небо: купол с градиентом (зенит → дымка у горизонта), туман ---------------------------
   const skyGeo = new THREE.SphereGeometry(40000, 24, 12);
   const skyColors = [];
-  const zenith = new THREE.Color(0xa9c6e4), horizon = new THREE.Color(0xe6e2d8);
+  const zenith = new THREE.Color(0xb7d4ee), horizon = new THREE.Color(0xf3f0e9);
   const pos = skyGeo.attributes.position;
   const tmp = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
@@ -26,23 +26,31 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
   const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
   sky.name = 'sky';
   group.add(sky);
-  const FOG_DAY = { color: 0xe3dfd3, near: 7000, far: 17000 }, FOG_BLIZZARD = { color: 0xc8cfd6, near: 350, far: 5200 };   // метель: видимость падает, но ближний план различим
-  scene.fog = new THREE.Fog(FOG_DAY.color, FOG_DAY.near, FOG_DAY.far);
+  // Туман — по дальности видимости mine.visibility: в ясную погоду (≈ 5 км) дымка только у горизонта
+  // (туман начинается за 1,4 видимости и полный на 5), в метель (300 м) — плотный туман по той же величине.
+  const FOG_CLEAR_COLOR = 0xeae6dc, FOG_BLIZZARD_COLOR = 0xc8cfd6;
+  scene.fog = new THREE.Fog(FOG_CLEAR_COLOR, 7000, 25000);
   scene.background = null;
 
   // --- хвостохранилище к западу от фабрики (допущение по снимку: озеро западнее квадрата данных)
   const tailX = -4300, tailY = 150;
   const tailLevel = g(tailX, tailY);
-  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshLambertMaterial({ color: 0x4e8a88 }));
-  pond.scale.set(1100, 750, 1);
+  // пляж (светлый песок и ил) вокруг серо-голубой воды, снаружи — дамба
+  const beach = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0xd8cfb0 }));
+  beach.scale.set(1180, 820, 1);
+  beach.rotation.x = -Math.PI / 2;
+  beach.position.copy(toScene(tailX, tailY, tailLevel + 0.6));
+  group.add(beach);
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0x7f9fae }));
+  pond.scale.set(1050, 700, 1);
   pond.rotation.x = -Math.PI / 2;
-  pond.position.copy(toScene(tailX, tailY, tailLevel + 0.8));
+  pond.position.copy(toScene(tailX, tailY, tailLevel + 0.9));
   pond.name = 'tailings-pond';
   group.add(pond);
-  const dam = new THREE.Mesh(new THREE.RingGeometry(1, 1.07, 40), new THREE.MeshLambertMaterial({ color: 0x9a8c72, side: THREE.DoubleSide }));
-  dam.scale.set(1100, 750, 1);
+  const dam = new THREE.Mesh(new THREE.RingGeometry(1, 1.06, 48), new THREE.MeshLambertMaterial({ color: 0x8f8068, side: THREE.DoubleSide }));
+  dam.scale.set(1180, 820, 1);
   dam.rotation.x = -Math.PI / 2;
-  dam.position.copy(toScene(tailX, tailY, tailLevel + 1.0));
+  dam.position.copy(toScene(tailX, tailY, tailLevel + 1.2));
   group.add(dam);
 
   // --- ЛЭП: от края карты к подстанции и от подстанции к фабрике ----------------------------
@@ -132,9 +140,12 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
 
   scene.add(group);
 
-  function setBlizzard(on) {
-    const f = on ? FOG_BLIZZARD : FOG_DAY;
-    scene.fog.color.setHex(f.color); scene.fog.near = f.near; scene.fog.far = f.far;
+  function setWeather({ blizzard = false, visibility = 5000 } = {}) {
+    const vis = Math.max(100, Number(visibility) || 5000);
+    const on = !!blizzard;
+    scene.fog.color.setHex(on ? FOG_BLIZZARD_COLOR : FOG_CLEAR_COLOR);
+    scene.fog.near = on ? vis * 0.4 : vis * 1.4;
+    scene.fog.far = on ? vis * 5 : vis * 5;
     const zen = on ? new THREE.Color(0xc9d0d6) : zenith, hor = on ? new THREE.Color(0xd5d8dc) : horizon;
     const c = skyGeo.attributes.color;
     for (let i = 0; i < pos.count; i++) {
@@ -144,5 +155,6 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
     }
     c.needsUpdate = true;
   }
-  return { group, setBlizzard, update() {} };
+  function setBlizzard(on) { setWeather({ blizzard: on, visibility: on ? 300 : 5000 }); }
+  return { group, setBlizzard, setWeather, update() {} };
 }
