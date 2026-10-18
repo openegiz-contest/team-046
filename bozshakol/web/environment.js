@@ -41,7 +41,7 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
   beach.rotation.x = -Math.PI / 2;
   beach.position.copy(toScene(tailX, tailY, tailLevel + 0.6));
   group.add(beach);
-  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0x7f9fae }));
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0x8aa0aa }));   // серо-голубая вода
   pond.scale.set(1050, 700, 1);
   pond.rotation.x = -Math.PI / 2;
   pond.position.copy(toScene(tailX, tailY, tailLevel + 0.9));
