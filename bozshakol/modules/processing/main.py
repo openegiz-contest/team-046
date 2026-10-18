@@ -175,6 +175,7 @@ def main():
     clock = SimClock()
 
     c_crusher, c_crusher_cu, c_clay, c_clay_cu = Counter(), Counter(), Counter(), Counter()
+    cu_pending = {"crusher": 0.0, "clay": 0.0}
     belt = []                 # руда на ленте: [осталось ехать, с; тонны; показатели]
     blocked = False           # склад полон — конвейер и дробилка стоят
     inflow_ema = PLAN_SULPH_TPH  # сглаженный приход на склад, т/ч (старт = план, без ложного прогноза остановки)
@@ -205,15 +206,18 @@ def main():
         q_c = face_quality(watcher, "stockpile-clay", {"clay_pct": 55.0})
 
         # -- приём с самосвалов по накопительным счётчикам dispatch -----------------------------
+        # тонны и медь приходят разными признаками: медь копится, пока не придут её тонны
         t_in = c_crusher.delta(watcher.get("dispatch", "delivered_crusher_t"))
-        cu_in = c_crusher_cu.delta(watcher.get("dispatch", "delivered_crusher_cu_t"))
+        cu_pending["crusher"] += c_crusher_cu.delta(watcher.get("dispatch", "delivered_crusher_cu_t"))
         if t_in > 0:
+            cu_in, cu_pending["crusher"] = cu_pending["crusher"], 0.0
             bunker.add(t_in, {"cu": 100.0 * cu_in / t_in, "clay": q_s["clay_pct"],
                               "p80": q_s["p80"], "hardness": q_s["hardness"]})
             received_crusher += t_in
         t_cl = c_clay.delta(watcher.get("dispatch", "delivered_clay_t"))
-        cu_cl = c_clay_cu.delta(watcher.get("dispatch", "delivered_clay_cu_t"))
+        cu_pending["clay"] += c_clay_cu.delta(watcher.get("dispatch", "delivered_clay_cu_t"))
         if t_cl > 0:
+            cu_cl, cu_pending["clay"] = cu_pending["clay"], 0.0
             clay.add(t_cl, {"cu": 100.0 * cu_cl / t_cl, "clay": q_c["clay_pct"]})
 
         # -- склад полон? (гистерезис 3 %) ------------------------------------------------------
