@@ -58,7 +58,7 @@ ROLLING_RESISTANCE = 0.025            # допущение: коэффициен
 G_ACCEL = 9.81
 SPEED_DOWN_LOADED_KMH = 30.0          # допущение: тормоз-замедлитель, гружёный на спуске
 SPEED_DOWN_EMPTY_KMH = 40.0           # допущение: тормоз-замедлитель, порожний на спуске
-SPEED_VARIANCE = (0.95, 1.05)         # разброс скорости ±5 %
+# разброс скорости хода — теперь через водителя самосвала (см. блок РАЗБРОС ниже), не общий %
 
 FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (плотность топлива — допущение)
 
@@ -94,6 +94,36 @@ CRUSHER_BUNKER_T_REF = 3000.0
 CRUSHER_ACCEPT_FRACTION = 0.85  # №4 перестаёт принимать при bunker >= BUNKER_T * 0.85
 CRUSHER_OVERFLOW_MARGIN_S = 300.0  # допущение: на вскрышу из-за дробилки — только если это даёт
                                     # выигрыш больше 5 мин, короткая обычная очередь не считается
+
+# ----------------------------------------------------------------------------------
+# РАЗБРОС (допущения, заданы до сверки — числа не трогать по её результату).
+# Всё случайное — через один генератор self.rng (Random(seed)), для воспроизводимости.
+# Распределение не названо в задаче для установки/разгрузки (п.3, п.5) — взято логнормальное,
+# как явно задано для цикла ковша (п.1): время не бывает отрицательным, и так же параметризуется
+# средним и коэффициентом вариации. Источник по разбросу времени цикла экскаватора/самосвала не
+# нашёл — см. README (просьба к координатору/источник, если появится).
+# ----------------------------------------------------------------------------------
+BUCKET_CYCLE_CV = 0.15        # логнормальный разброс цикла ковша (среднее — BUCKET_CYCLE_S/factor)
+LOAD_SETUP_CV = 0.3           # логнормальный разброс установки под погрузку (среднее — LOAD_SETUP_S)
+DUMP_CV = 0.2                 # логнормальный разброс разгрузки (среднее — DUMP_S)
+EXCAVATOR_OPERATOR_MULT_RANGE = (0.90, 1.10)  # машинист экскаватора — множитель скорости погрузки на смену
+TRUCK_DRIVER_SHIFT_MULT_RANGE = (0.92, 1.05)  # водитель самосвала — множитель скорости на смену
+TRUCK_DRIVER_TRIP_STD = 0.07   # водитель самосвала — разброс на рейс, нормальный, среднее 1.0
+TRUCK_DRIVER_TRIP_CLIP = 0.15  # обрезка на ±15 %
+EXCAVATOR_SHORT_STOP_MEAN_S = 60.0 * 60.0        # экспоненциальный интервал между остановками, среднее 60 мин
+EXCAVATOR_SHORT_STOP_DURATION_S = (3.0 * 60.0, 10.0 * 60.0)  # равномерно 3-10 мин
+# состояние экскаватора на время короткой остановки (зачистка/передвижка) — в договоре нет
+# отдельного значения «не грузит, но не down» для экскаватора (есть только для состояний
+# самосвала); не стали придумывать новое — используем уже существующее "idle" (экскаватор и
+# так «не грузит» в этом состоянии между самосвалами, разница лишь в причине простоя)
+EXCAVATOR_SHORT_STOP_STATE = "idle"
+
+
+def _lognormal(rng, mean, cv):
+    """Положительная случайная величина со средним mean и коэффициентом вариации cv."""
+    sigma2 = math.log(1.0 + cv * cv)
+    mu = math.log(mean) - sigma2 / 2.0
+    return rng.lognormvariate(mu, math.sqrt(sigma2))
 
 
 # ------------------------------------------------------------------ дороги
@@ -173,7 +203,7 @@ class Truck:
         self.cargo_cu = 0.0
         self.cargo_clay = 0.0
         self.destination = ""
-        self.fuel = random.uniform(60, 100)
+        self.fuel = 100.0  # настоящее начальное значение задаёт Haulage.__init__ через self.rng
         self.trips = 0
         self.path = []
         self.seg_pos = 0.0
@@ -184,6 +214,12 @@ class Truck:
         self.buckets_done = 0
         self.refuel_timer = 0.0
         self.queue_index = 0
+        # -- разброс (водитель) --
+        self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
+        self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
+        self.setup_duration_s = LOAD_SETUP_S   # разыгрывается заново на каждую установку под погрузку
+        self.dump_duration_s = DUMP_S          # разыгрывается заново на каждую разгрузку
+        self.current_cycle_s = None            # текущий (разыгранный) цикл ковша, пока он не завершён
         # -- только для диагностики (sim_check.py): время по фазам цикла, не влияет на поведение --
         self.time_in = {"haul_loaded": 0.0, "haul_empty": 0.0, "queue_excavator": 0.0,
                          "load": 0.0, "queue_dump": 0.0, "dump": 0.0, "refuel": 0.0}
@@ -224,6 +260,10 @@ class Excavator:
         self.busy_s = 0.0          # время, когда кто-то грузился
         self.queue_integral = 0.0  # интеграл длины очереди по времени (для среднего)
         self.trucks_served = 0
+        # -- разброс (машинист, короткие остановки) --
+        self.operator_mult = 1.0       # множитель скорости погрузки на смену, равномерно 0.90-1.10
+        self.next_short_stop_at = None  # момент (модельное время, с), когда наступит следующая остановка
+        self.short_stop_until = 0.0     # до какого момента активна текущая остановка (0 — не остановлен)
 
     def features(self):
         return {
@@ -264,7 +304,10 @@ class Haulage:
         self.trips = 0
         self.waits = []            # последние ожидания у экскаватора, мин (скользящее для совместимости)
         self.road_open = {r: True for r in ("road-ramp-1", "road-ramp-2", "road-crusher")}
-        self.rng = random.Random(seed)
+        self.rng = random.Random(seed)  # единственный генератор случайности в модели (п.7 разброса)
+        for t in self.trucks:
+            t.fuel = self.rng.uniform(60, 100)
+        self._current_shift = None  # пересчитать машинистов/водителей при первом read_scenarios()
         self.clay_limit_pct = 15.0
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
@@ -314,6 +357,18 @@ class Haulage:
         self.dumps["stockpile-clay"].accepting = bool(w.get("stockpile-clay", "accepting", True))
         self.speed_limit = float(w.get("mine", "speed_limit", 50) or 50)
         self.clay_limit_pct = float(w.get("dispatch", "clay_limit", 15) or 15)
+        shift = w.get("mine", "shift", 1)
+        if shift != self._current_shift:
+            self._current_shift = shift
+            self._reroll_shift_multipliers()
+
+    def _reroll_shift_multipliers(self):
+        """Новая смена — у каждого экскаватора свой машинист, у каждого самосвала свой водитель
+        (п.2, п.4 разброса); через self.rng, чтобы прогон был воспроизводим по seed."""
+        for ex in self.excavators.values():
+            ex.operator_mult = self.rng.uniform(*EXCAVATOR_OPERATOR_MULT_RANGE)
+        for t in self.trucks:
+            t.driver_shift_mult = self.rng.uniform(*TRUCK_DRIVER_SHIFT_MULT_RANGE)
 
     # -- выбор экскаватора ---------------------------------------------------
     def _candidate_ore(self, truck):
@@ -488,6 +543,9 @@ class Haulage:
 
     def _depart(self, truck):
         """Гружёный самосвал едет на свой пункт разгрузки."""
+        # новый рейс — новый случайный множитель скорости водителя (п.4 разброса)
+        truck.trip_mult = min(1.0 + TRUCK_DRIVER_TRIP_CLIP, max(1.0 - TRUCK_DRIVER_TRIP_CLIP,
+                               self.rng.gauss(1.0, TRUCK_DRIVER_TRIP_STD)))
         dest = self.dumps[truck.destination]
         path = self.roads.path(truck.node, dest.node)
         if path is None:  # дорога закрыта — ждём на месте
@@ -544,7 +602,9 @@ class Haulage:
         return min(v_kmh, truck.top_speed_loaded_kmh, self.roads.limits.get(road, 50), self.speed_limit)
 
     def _speed(self, truck, grade_pct, road):
-        return self._mean_speed(truck, grade_pct, road) * self.rng.uniform(*SPEED_VARIANCE)
+        # разброс — водитель самосвала: множитель на смену × множитель на рейс (п.4 разброса),
+        # вместо старого общего SPEED_VARIANCE
+        return self._mean_speed(truck, grade_pct, road) * truck.driver_shift_mult * truck.trip_mult
 
     def _edge_fuel_l(self, truck, grade_pct, length_m):
         """Топливо на отрезке length_m при уклоне grade_pct; на спуске (гравитация помогает) — 0."""
@@ -695,6 +755,22 @@ class Haulage:
                     ex.queue.remove(truck)
                     self._return(truck)
             return
+        # короткие остановки (зачистка, передвижка) — п.6 разброса: интервал экспоненциальный,
+        # среднее 60 мин; длительность равномерно 3-10 мин; не трогает труков в пути, только
+        # приостанавливает начало новой погрузки (и прерывает текущую, если она шла)
+        if ex.next_short_stop_at is None:
+            ex.next_short_stop_at = self._sim_t + self.rng.expovariate(1.0 / EXCAVATOR_SHORT_STOP_MEAN_S)
+        if self._sim_t >= ex.next_short_stop_at and self._sim_t >= ex.short_stop_until:
+            duration = self.rng.uniform(*EXCAVATOR_SHORT_STOP_DURATION_S)
+            ex.short_stop_until = self._sim_t + duration
+            ex.next_short_stop_at = ex.short_stop_until + self.rng.expovariate(1.0 / EXCAVATOR_SHORT_STOP_MEAN_S)
+        if self._sim_t < ex.short_stop_until:
+            if ex.loading:
+                ex.queue.insert(0, ex.loading)
+                ex.loading.state = "queued_load"
+                ex.loading = None
+            ex.state = EXCAVATOR_SHORT_STOP_STATE
+            return
         if ex.loading is None and ex.queue:
             truck = ex.queue.pop(0)
             ex.loading = truck
@@ -702,6 +778,8 @@ class Haulage:
             truck.timer = 0.0
             truck.setup_done = False
             truck.buckets_done = 0
+            truck.setup_duration_s = _lognormal(self.rng, LOAD_SETUP_S, LOAD_SETUP_CV)  # п.3 разброса
+            truck.current_cycle_s = None  # на случай, если грузился раньше и был прерван остановкой
             truck._load_session_start_s = truck.time_in["load"]   # диагностика
             wait_min = truck.wait / 60.0
             self.waits.append(wait_min)
@@ -714,13 +792,19 @@ class Haulage:
         info = self.face_info(ex.id)
         truck.timer += dt
         if not truck.setup_done:
-            if truck.timer < LOAD_SETUP_S:
+            if truck.timer < truck.setup_duration_s:
                 return
-            truck.timer -= LOAD_SETUP_S
+            truck.timer -= truck.setup_duration_s
             truck.setup_done = True
-        cycle = BUCKET_CYCLE_S / info["factor"]
-        while truck.timer >= cycle and truck.buckets_done < truck.buckets_needed:
-            truck.timer -= cycle
+        while truck.buckets_done < truck.buckets_needed:
+            if truck.current_cycle_s is None:
+                # цикл ковша — логнормальный разброс (п.1), / loading_factor забоя, / машинист (п.2);
+                # один розыгрыш на ковш (не на каждый dt-тик) — держим, пока ковш не завершён
+                truck.current_cycle_s = _lognormal(self.rng, BUCKET_CYCLE_S, BUCKET_CYCLE_CV) / info["factor"] / ex.operator_mult
+            if truck.timer < truck.current_cycle_s:
+                break
+            truck.timer -= truck.current_cycle_s
+            truck.current_cycle_s = None
             bucket = min(EXCAVATOR_BUCKET_T * self.rng.uniform(*BUCKET_FILL_VAR), truck.capacity - truck.payload)
             if bucket <= 0:
                 truck.buckets_done = truck.buckets_needed
@@ -745,12 +829,13 @@ class Haulage:
             dump.dumping = truck
             truck.state = "dumping"
             truck.timer = 0.0
+            truck.dump_duration_s = _lognormal(self.rng, DUMP_S, DUMP_CV)  # п.5 разброса
             self._wait_dump.append((self._sim_t, truck.dump_wait / 60.0))
 
     def _dumping(self, truck, dt):
         dump = self.dumps[truck.destination]
         truck.timer += dt
-        if truck.timer >= DUMP_S:
+        if truck.timer >= truck.dump_duration_s:
             counters = self.delivered[dump.id]
             counters[0] += truck.payload
             counters[1] += truck.payload * truck.cargo_cu / 100.0
