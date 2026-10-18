@@ -32,27 +32,27 @@ PIT = {
 # Съезды выходят на южный борт (к дробилке и фабрике). Имена узлов и рёбра неизменны —
 # их читает модуль транспорта.
 NODES = {
-    # дно карьера (−200 м) и восточная площадка (−185 м)
+    # дно карьера (−200 м); высоты внутри карьера — по модели уступов (13 × 15 м, дно −200)
     "floor-w": [-1500, 0, -200],
     "floor-c": [0, 0, -200],
     "floor-e": [900, 0, -200],
-    "floor-e2": [1450, -40, -185],
+    "floor-e2": [1450, -40, -200],
     # забои (подъезд к экскаватору)
     "face-01": [-1300, 80, -200],
     "face-02": [-300, -120, -200],
     "face-03": [700, 100, -200],
-    "face-04": [1400, -60, -185],
-    "face-05": [-1500, -400, -50],
-    "face-06": [1500, -450, -50],
+    "face-04": [1400, -60, -200],
+    "face-05": [-1500, -330, -45],   # верхний уступ южного борта (3-я берма)
+    "face-06": [1500, -330, -45],
     # съезд 1 (юго-западный борт, три плеча)
     "r1-bottom": [-1600, -180, -200],
     "r1-mid1": [-400, -330, -120],
-    "r1-mid2": [-1400, -450, -50],
+    "r1-mid2": [-1400, -400, -45],
     "r1-top": [-600, -560, 0],
     # съезд 2 (юго-восточный борт, три плеча)
-    "r2-bottom": [1600, -180, -185],
+    "r2-bottom": [1600, -180, -200],
     "r2-mid1": [400, -330, -120],
-    "r2-mid2": [1400, -450, -50],
+    "r2-mid2": [1400, -400, -45],
     "r2-top": [600, -560, 0],
     # борт и поверхность (промплощадка к югу от карьера)
     "crusher": [-250, -600, 0],          # первичная дробилка у южного борта (тёмное здание на снимке), вне контура модели
@@ -111,18 +111,18 @@ OBJECTS = [
     {"id": "face-01", "kind": "face", "position": [-1300, 130, -200], "ore_type": "sulphide"},
     {"id": "face-02", "kind": "face", "position": [-300, -170, -200], "ore_type": "sulphide"},
     {"id": "face-03", "kind": "face", "position": [700, 150, -200], "ore_type": "sulphide"},
-    {"id": "face-04", "kind": "face", "position": [1400, -110, -185], "ore_type": "clay"},
-    {"id": "face-05", "kind": "face", "position": [-1500, -450, -50], "ore_type": "waste"},
-    {"id": "face-06", "kind": "face", "position": [1500, -500, -50], "ore_type": "waste"},
+    {"id": "face-04", "kind": "face", "position": [1400, -110, -200], "ore_type": "clay"},
+    {"id": "face-05", "kind": "face", "position": [-1500, -330, -45], "ore_type": "waste"},
+    {"id": "face-06", "kind": "face", "position": [1500, -330, -45], "ore_type": "waste"},
     {"id": "excavator-01", "kind": "excavator", "position": [-1300, 105, -200], "face": "face-01"},
     {"id": "excavator-02", "kind": "excavator", "position": [-300, -145, -200], "face": "face-02"},
     {"id": "excavator-03", "kind": "excavator", "position": [700, 125, -200], "face": "face-03"},
-    {"id": "excavator-04", "kind": "excavator", "position": [1400, -85, -185], "face": "face-04"},
-    {"id": "excavator-05", "kind": "excavator", "position": [-1500, -425, -50], "face": "face-05"},
-    {"id": "excavator-06", "kind": "excavator", "position": [1500, -475, -50], "face": "face-06"},
-    {"id": "drill-01", "kind": "drill", "position": [-1000, 330, -155]},
-    {"id": "drill-02", "kind": "drill", "position": [400, -380, -140]},
-    {"id": "drill-03", "kind": "drill", "position": [1200, 300, -125]},
+    {"id": "excavator-04", "kind": "excavator", "position": [1400, -85, -200], "face": "face-04"},
+    {"id": "excavator-05", "kind": "excavator", "position": [-1500, -330, -45], "face": "face-05"},
+    {"id": "excavator-06", "kind": "excavator", "position": [1500, -330, -45], "face": "face-06"},
+    {"id": "drill-01", "kind": "drill", "position": [-1000, 330, -105]},
+    {"id": "drill-02", "kind": "drill", "position": [400, -380, -105]},
+    {"id": "drill-03", "kind": "drill", "position": [1200, 300, -120]},
 ]
 
 # Пункты разгрузки: двойник → узел дороги, где самосвал разгружается
@@ -156,10 +156,43 @@ def apply_terrain():
         if "path" in obj:
             for p in obj["path"]:
                 p[2] = round(terrain.height_at(p[0], p[1]) + 3, 1)
+            # конец конвейера — на площадке склада (уровень площадки = рельеф в её центре)
+            end = obj["path"][-1]
+            for o2 in OBJECTS:
+                if o2["kind"] == "stockpile" and "position" in o2 and math.hypot(o2["position"][0] - end[0], o2["position"][1] - end[1]) < 150:
+                    end[2] = round(terrain.height_at(o2["position"][0], o2["position"][1]) + 3, 1)
     return terrain
 
 
+def bench_height(x, y):
+    """Высота бермы модели уступов в точке (как web/terrain.js): последний уровень — дно."""
+    a, b = PIT["semi_axes_top"]
+    level = 0
+    for k in range(1, PIT["bench_count"] + 1):
+        ak, bk = a - k * PIT["inset_per_bench"], b - k * PIT["inset_per_bench"]
+        if ak <= 0 or bk <= 0:
+            break
+        if (x / ak) ** 2 + (y / bk) ** 2 < 1:
+            level = k
+        else:
+            break
+    return -PIT["depth"] if level >= PIT["bench_count"] else -level * PIT["bench_height"]
+
+
+def apply_pit_levels():
+    """Забои, экскаваторы, буровые и узлы забоев внутри карьера стоят на бермах модели уступов."""
+    a, b = PIT["semi_axes_top"]
+    inside = lambda x, y: (x / a) ** 2 + (y / b) ** 2 < 1
+    for obj in OBJECTS:
+        if obj["kind"] in ("face", "excavator", "drill") and inside(*obj["position"][:2]):
+            obj["position"][2] = bench_height(*obj["position"][:2])
+    for name, p in NODES.items():
+        if name.startswith("face-") and inside(p[0], p[1]):
+            p[2] = bench_height(p[0], p[1])
+
+
 def main():
+    apply_pit_levels()
     terrain = apply_terrain()
     edges = []
     for a, b, road in EDGES:

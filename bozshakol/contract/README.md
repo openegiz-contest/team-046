@@ -196,6 +196,44 @@ curl -u "ditto:$DITTO_PASSWORD" -X PUT -H 'Content-Type: application/json' -d tr
     (`data/terrain`), у наземных дорог — профиль дороги, внутри карьера — бермы модели уступов. Высоты в
     `core/geometry.json` (узлы, объекты) и признаки `x, y, z` двойников уже абсолютные (включают рельеф), их
     ставить как есть; `heightAt` нужен только для объектов, у которых своей высоты нет.
+  - `ctx.groundAt(x, y)` — высота земли со всеми правками сцены (рельеф + выровненные площадки у зданий,
+    складов и отвалов + профиль наземных дорог; внутри карьера — бермы уступов), м. Именно на неё ставить
+    всё, что стоит на земле: `g.position.copy(ctx.toScene(x, y, ctx.groundAt(x, y)))`.
+  - `ctx.models` — общая библиотека моделей `web/models.js` (владелец — координатор): детальные
+    низкополигональные модели в метрах, низ на y = 0, «вперёд» = +Z. Фабрики:
+    `truck({cls: 135|180})` (методы `setDumping(t)`, `setLoad(type)`, `setState(state)`, `setWheels(dist)`),
+    `excavator()` (`setSwing(rad)`, `setBoom(t)`, `setState`), `drill()` (`setMast(up)`, `setState`),
+    `crusher()` (`setState('running'|'idle'|'stopped')`), `conveyor(points, {height, step})` (`setFlow(tph, dt)`),
+    `building('main'|'thickener'|'warehouse'|'substation'|'office', {size})`, `stockpile(volume_m3, {color})`
+    (`setVolume(v)`), `dump(radius, height, {tiers})`, `lightMast(h)`, `powerLine(points)`, `fence(points)`.
+    У всех — `setDetail('full'|'far')` для дальнего плана. Пример для слоя транспорта:
+
+```js
+export function init(ctx) {
+  state.trucks = {};
+  for (const id of truckIds) {
+    const g = ctx.models.truck({ cls: capacity(id) === 180 ? 180 : 135 });
+    ctx.group.add(g); ctx.register(g, id); ctx.label(g, name(id), 1);
+    state.trucks[id] = g;
+  }
+}
+export function update(ctx, twins) {
+  for (const [id, g] of Object.entries(state.trucks)) {
+    const f = twins[id] && twins[id].features; if (!f) continue;
+    const v = (k) => f[k] && f[k].properties.value;
+    g.position.copy(ctx.toScene(v('x'), v('y'), v('z')));      // x, y, z двойника уже включают рельеф
+    g.rotation.y = -v('heading') * Math.PI / 180;               // heading: 0 = север, по часовой
+    g.scale.setScalar(ctx.markerScale);                          // заметность на общем плане
+    g.setLoad(v('payload') > 0 ? v('cargo_type') : 'none');
+    g.setDumping(v('state') === 'dumping' ? 1 : 0);
+    g.setState(v('state'));
+    g.setDetail(g.position.distanceTo(ctx.camera.position) > 2500 ? 'far' : 'full');
+  }
+}
+```
+
+    Высота в сцене преувеличена ×1,5 (`ctx.verticalScale`); модели в метрах без этого множителя —
+    только положение (через `toScene`) учитывает его.
   - `ctx.verticalScale` — вертикальное преувеличение рельефа (1,5); `ctx.toScene` уже учитывает его, размеры
     собственных моделей (высота кузова, стрелы) слой оставляет в метрах без множителя.
 - Сценарии в сцене: плашка «Активные сценарии» сверху, значок «⚠ …» над объектом из параметров сценария
