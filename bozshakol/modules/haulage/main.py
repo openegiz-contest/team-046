@@ -97,6 +97,7 @@ PLAN_CRUSHER_TPH = 2850.0   # сульфидная фабрика, т/ч (25 м�
 PLAN_CLAY_TPH = 570.0       # глинистая фабрика, т/ч (5 млн т/год)
 PLAN_RECOMPUTE_S = 10.0 * 60.0   # план пересчитывается не реже, чем раз в 10 модельных минут
 TRUCK_TIE_BREAK_S = 30.0         # «близкие значения» отставания от плана — 0,5 мин
+PLAN_DEFICIT_FALLBACK_S = 1.0e6  # конечный «очень большой» запасной вариант вместо math.inf (см. _plan_deficit_time_s)
 
 # -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
 # запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
@@ -439,10 +440,14 @@ class Haulage:
         """Тонны, уже «зачтённые» экскаватору в счёт плана: фактически погруженное плюс то,
         что довезут уже закреплённые за ним самосвалы (грузится сейчас / стоит в очереди /
         едет сюда порожним) — чтобы отставание не росло у экскаватора, у которого самосвалов
-        уже достаточно, просто они пока не доехали."""
+        уже достаточно, просто они пока не доехали.
+        Для того, кто грузится сейчас — только ОСТАТОК до полной вместимости (capacity -
+        payload), не вся capacity: уже погруженные ковши этого самосвала попадают в
+        ex.loaded_total ПОКОВШОВО по ходу погрузки (_loading), так что полная capacity
+        задвоила бы их (баг, найденный проверкой части 2)."""
         total = ex.loaded_total
         if ex.loading:
-            total += ex.loading.capacity
+            total += ex.loading.capacity - ex.loading.payload
         for t in ex.queue:
             total += t.capacity
         for t in self.trucks:
@@ -453,11 +458,15 @@ class Haulage:
     def _plan_deficit_time_s(self, ex):
         """На сколько секунд экскаватор отстаёт от своего план-графика (п.3 части 2: «у кого
         по план-графику следующее обслуживание должно было начаться раньше»). Положительное —
-        отстаёт (нужен самосвал раньше), отрицательное — идёт с опережением плана."""
+        отстаёт (нужен самосвал раньше), отрицательное — идёт с опережением плана. Конечный
+        «очень большой» запасной вариант вместо math.inf (не 0 т/ч цели, но отставание есть) —
+        чтобы разность score'ов в _best_candidate никогда не давала inf-inf=nan (баг, найденный
+        проверкой части 2: при score=nan сравнение «близко к лучшему» ложно для всех кандидатов,
+        список кандидатов для выбора пустеет, и min() падает)."""
         deficit_t = ex.plan_target_cum_t - self._committed_tons(ex)
         if ex.plan_tph > 0:
             return deficit_t / (ex.plan_tph / 3600.0)
-        return math.inf if deficit_t > 0 else 0.0
+        return PLAN_DEFICIT_FALLBACK_S if deficit_t > 0 else 0.0
 
     # -- выбор экскаватора ---------------------------------------------------
     def _candidate_ore(self, truck):
@@ -588,7 +597,7 @@ class Haulage:
         if not candidates:
             return None, math.inf
         best_score = max(c[0] for c in candidates)
-        near = [c for c in candidates if best_score - c[0] < TRUCK_TIE_BREAK_S]
+        near = [c for c in candidates if best_score - c[0] < TRUCK_TIE_BREAK_S] or candidates
         chosen = min(near, key=lambda c: c[1])[2]
         # честная оценка «путь + ожидание» для сравнения с вскрышей (CRUSHER_OVERFLOW_MARGIN_S,
         # ORE_PREFERENCE_MARGIN_S в choose_excavator) — минимум по ВСЕМ кандидатам этой руды, а
