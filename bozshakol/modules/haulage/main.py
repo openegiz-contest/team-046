@@ -313,7 +313,10 @@ class Haulage:
         self.refuels_total = 0
         # скользящие окна за последний модельный час для сверки (деque из (sim_time_s, значение))
         self._wait_exc = deque()     # (t, минуты ожидания у экскаватора)
-        self._wait_dump = deque()    # (t, минуты ожидания на разгрузке)
+        self._wait_dump = deque()    # (t, минуты ожидания на разгрузке) — по всем пунктам вместе
+        # то же самое, но отдельно по пунктам — для диагностики (sim_check.py, часть 4 сверки);
+        # dispatch.avg_wait_dump (признак из договора) остаётся общим, как было
+        self._wait_dump_by_point = {did: deque() for did in ("crusher-01", "stockpile-clay", "dump-waste-1")}
         self._trips_log = deque()    # (t,) — момент завершения разгрузки (рейса)
         self._tph_log = {"crusher-01": deque(), "stockpile-clay": deque(), "dump-waste-1": deque()}  # (t, тонн)
         self._clay_crusher_log = deque()  # (тонн, тонн_глины) — последние CLAY_WINDOW_T тонн на дробилку
@@ -830,7 +833,9 @@ class Haulage:
             truck.state = "dumping"
             truck.timer = 0.0
             truck.dump_duration_s = _lognormal(self.rng, DUMP_S, DUMP_CV)  # п.5 разброса
-            self._wait_dump.append((self._sim_t, truck.dump_wait / 60.0))
+            wait_min = truck.dump_wait / 60.0
+            self._wait_dump.append((self._sim_t, wait_min))
+            self._wait_dump_by_point[dump.id].append((self._sim_t, wait_min))
 
     def _dumping(self, truck, dt):
         dump = self.dumps[truck.destination]
@@ -868,6 +873,9 @@ class Haulage:
             while dq and (dq[0][0] if isinstance(dq[0], tuple) else dq[0]) < horizon:
                 dq.popleft()
         for dq in self._tph_log.values():
+            while dq and dq[0][0] < horizon:
+                dq.popleft()
+        for dq in self._wait_dump_by_point.values():
             while dq and dq[0][0] < horizon:
                 dq.popleft()
 

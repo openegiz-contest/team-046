@@ -184,13 +184,16 @@ def collect(model):
 
     dump_stats = {}
     for did, d in model.dumps.items():
-        dump_stats[did] = dict(trips=d.trips, tph=d.received / (total_s / 3600.0))
+        wait_dq = model._wait_dump_by_point[did]
+        wait_min = statistics.mean(v for _, v in wait_dq) if wait_dq else 0.0
+        dump_stats[did] = dict(trips=d.trips, tph=d.received / (total_s / 3600.0), wait_min=wait_min)
 
     return dict(
         avg_wait_excavator=fv(disp, "avg_wait_excavator"), avg_wait_dump=fv(disp, "avg_wait_dump"),
         trips_per_hour=fv(disp, "trips_per_hour"), fleet_utilization=fv(disp, "fleet_utilization"),
         cycle_avg_min={k: v / 60.0 for k, v in cycle_avg_s.items()}, full_cycle_min=full_cycle_s / 60.0,
         ex_stats=ex_stats, group_stats=group_stats, dump_stats=dump_stats,
+        avg_bunker_t=getattr(model, "avg_bunker_t", 0.0),
     )
 
 
@@ -244,14 +247,33 @@ def report_mode(label, runs):
               f"цикл {cyc[0]:.1f}±{cyc[1]:.1f} мин, match factor {mf[0]:.2f}±{mf[1]:.2f} "
               f"(<1 — экскаваторов хватает с запасом, >1 — не хватает)")
 
-    print("  -- т/ч по пунктам разгрузки --")
+    print("  -- т/ч и ожидание на разгрузке по пунктам --")
+    names_dump = {"crusher-01": "дробилка", "stockpile-clay": "склад глины", "dump-waste-1": "отвал"}
     for did in sorted(runs[0]["dump_stats"]):
         tph = avg_spread([r["dump_stats"][did]["tph"] for r in runs])
-        print(f"    {did}: {tph[0]:.0f}±{tph[1]:.0f} т/ч")
+        wait = avg_spread([r["dump_stats"][did]["wait_min"] for r in runs])
+        print(f"    {did} ({names_dump.get(did, did)}): {tph[0]:.0f}±{tph[1]:.0f} т/ч, "
+              f"ожидание {wait[0]:.2f}±{wait[1]:.2f} мин")
+
+    crusher_tph = avg_spread([r["dump_stats"]["crusher-01"]["tph"] for r in runs])
+    clay_tph = avg_spread([r["dump_stats"]["stockpile-clay"]["tph"] for r in runs])
+    print(f"  -- руда против плана фабрик (план: дробилка 2850 + склад глины 570 = 3420 т/ч) --")
+    print(f"    дробилка: {crusher_tph[0]:.0f} т/ч ({100 * crusher_tph[0] / 2850:.0f} % от плана)")
+    print(f"    склад глины: {clay_tph[0]:.0f} т/ч ({100 * clay_tph[0] / 570:.0f} % от плана)")
+
+    bunker = avg_spread([r["avg_bunker_t"] for r in runs])
+    print(f"  Средний бункер дробилки: {bunker[0]:.0f}±{bunker[1]:.0f} т "
+          f"(ёмкость {_HM.CRUSHER_BUNKER_T_REF:.0f} т, порог приёмки "
+          f"{_HM.CRUSHER_BUNKER_T_REF * _HM.CRUSHER_ACCEPT_FRACTION:.0f} т)")
+
+
+_HM = None  # заполняется в main() — модуль main.py, используется report_mode для ссылочных констант
 
 
 def main():
+    global _HM
     hm = _load_main()
+    _HM = hm
     print(f"Прогон {MODEL_HOURS} модельных часов × {len(SEEDS)} seed, постоянные данные забоёв.")
 
     auto_runs = [collect(run(hm, dispatch_off=False, seed=s)) for s in SEEDS]
