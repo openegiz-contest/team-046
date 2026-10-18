@@ -83,7 +83,12 @@ CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинис�
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
 # оценка времени в пути для выбора экскаватора — та же формула хода (_mean_speed), что и у
 # самосвала на самом деле (без подобранной отдельной скорости диспетчера и без разброса)
-ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г): только если вскрыша быстрее больше чем на 0,5 мин
+# УДАЛЕНО (часть 2 ЭТОЙ задачи): ORE_PREFERENCE_MARGIN_S/CRUSHER_OVERFLOW_MARGIN_S — отдельная
+# надбавка «руда важнее вскрыши» в choose_excavator. Она была лишней и мешала плану: решение
+# «какую руду возить» принималось по HOME самосвала (см. удалённый _candidate_ore), а margin
+# ещё и не давал уйти на вскрышу, даже когда план рудных уже выполнен — вместе это и объясняет,
+# почему руда на дробилку/склад превышала план. Теперь _best_candidate сравнивает руду и
+# вскрышу напрямую по тому же отставанию от плана, без искусственной надбавки.
 
 # -- план-диспетчер (часть 2 текущей задачи): «план» (целевой т/ч на экскаватор) + «самосвал»
 # (к самому отставшему от плана) — как в реальных системах диспетчеризации карьеров --
@@ -99,6 +104,12 @@ ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г):
 # т. е. №4 и наш план-диспетчер ориентируются на разные числа; мы это не правим (не наш код).
 PLAN_CRUSHER_TPH = 3360.0   # сульфидная, т/ч — факт добычи 2025 (KAZ Minerals Q4 2025, см. выше)
 PLAN_CLAY_TPH = 715.0       # глинистая, т/ч — факт добычи 2025 (KAZ Minerals Q4 2025, см. выше)
+# вскрыша: «весь остаток пропускной способности парка» — НЕ собственная _possible_tph каждого
+# вскрышного экскаватора (была бы в разы больше провозной способности парка, см. _update_plan),
+# а доля от целого PLAN_WASTE_TPH, тем же способом, что и рудные группы. Величина — «вскрыша ≈
+# тоннаж руды», уже существующее допущение проекта (bozshakol/data/SOURCES.md, строка «Число и
+# типы забоев»), т.е. PLAN_WASTE_TPH = PLAN_CRUSHER_TPH + PLAN_CLAY_TPH — не наша подгонка.
+PLAN_WASTE_TPH = PLAN_CRUSHER_TPH + PLAN_CLAY_TPH
 PLAN_RECOMPUTE_S = 10.0 * 60.0   # план пересчитывается не реже, чем раз в 10 модельных минут
 TRUCK_TIE_BREAK_S = 30.0         # «близкие значения» отставания от плана — 0,5 мин
 PLAN_DEFICIT_FALLBACK_S = 1.0e6  # конечный «очень большой» запасной вариант вместо math.inf (см. _plan_deficit_time_s)
@@ -110,8 +121,6 @@ PLAN_DEFICIT_FALLBACK_S = 1.0e6  # конечный «очень большой�
 CRUSHER_THROUGHPUT_REF_TPH = 4000.0
 CRUSHER_BUNKER_T_REF = 3000.0
 CRUSHER_ACCEPT_FRACTION = 0.85  # №4 перестаёт принимать при bunker >= BUNKER_T * 0.85
-CRUSHER_OVERFLOW_MARGIN_S = 300.0  # допущение: на вскрышу из-за дробилки — только если это даёт
-                                    # выигрыш больше 5 мин, короткая обычная очередь не считается
 
 # ----------------------------------------------------------------------------------
 # РАЗБРОС (допущения, заданы до сверки — числа не трогать по её результату).
@@ -410,25 +419,31 @@ class Haulage:
         return EXCAVATOR_BUCKET_T * 3600.0 / cycle_s if cycle_s > 0 else 0.0
 
     def _update_plan(self):
-        """Целевой т/ч для дробилки/склада глины — план фабрики (0, если сейчас не
-        принимает); делится между работающими экскаваторами своей руды пропорционально их
-        возможной производительности. Вскрышным — весь остаток пропускной способности
-        парка, т.е. их собственная полная возможная производительность (их никто не
-        ограничивает планом фабрики)."""
+        """Целевой т/ч для дробилки/склада глины — план добычи (0, если сейчас не принимает);
+        делится между работающими экскаваторами своей руды пропорционально их возможной
+        производительности (`_possible_tph`). Вскрышным — тоже доля от ОБЩЕГО целевого т/ч,
+        а не собственная необузданная `_possible_tph` каждого (была настоящая ошибка части 2
+        этой задачи: `_possible_tph` — это сколько экскаватор нарубит, если самосвалы подходят
+        БЕЗ ОЧЕРЕДИ, т.е. теоретический потолок ~3700-3900 т/ч на экскаватор — в разы больше,
+        чем реально способен вывезти весь парк в 28 самосвалов; поставленный целью напрямую,
+        он делал план-накопитель вскрышных экскаваторов «бесконечно голодным», и правило
+        «кто сильнее отстал от плана» почти всегда выбирало вскрышу, а не руду — это и есть
+        причина перебора руды цели в «авто», НЕ HOME). Целевой т/ч для вскрыши — PLAN_WASTE_TPH
+        (== план руды, «вскрыша ≈ тоннаж руды» — уже существующее допущение проекта,
+        bozshakol/data/SOURCES.md), делится между работающими вскрышными экскаваторами
+        пропорционально их возможной производительности — так же, как у рудных групп."""
         self.plan_crusher_tph = PLAN_CRUSHER_TPH if self.dumps["crusher-01"].accepting else 0.0
         self.plan_clay_tph = PLAN_CLAY_TPH if self.dumps["stockpile-clay"].accepting else 0.0
-        targets = {"sulphide": self.plan_crusher_tph, "clay": self.plan_clay_tph}
+        targets = {"sulphide": self.plan_crusher_tph, "clay": self.plan_clay_tph, "waste": PLAN_WASTE_TPH}
         possible = {ex.id: (0.0 if ex.down else self._possible_tph(ex)) for ex in self.excavators.values()}
         ore_of = {ex.id: self.face_info(ex.id)["ore"] for ex in self.excavators.values()}
         for ex in self.excavators.values():
             if ex.down:
                 ex.plan_tph = 0.0
-            elif ore_of[ex.id] == "waste":
-                ex.plan_tph = possible[ex.id]
-            else:
-                group_total = sum(possible[e.id] for e in self.excavators.values()
-                                   if not e.down and ore_of[e.id] == ore_of[ex.id])
-                ex.plan_tph = targets.get(ore_of[ex.id], 0.0) * possible[ex.id] / group_total if group_total > 0 else 0.0
+                continue
+            group_total = sum(possible[e.id] for e in self.excavators.values()
+                               if not e.down and ore_of[e.id] == ore_of[ex.id])
+            ex.plan_tph = targets.get(ore_of[ex.id], 0.0) * possible[ex.id] / group_total if group_total > 0 else 0.0
 
     def _maybe_update_plan(self):
         """Пересчёт плана не реже раза в 10 модельных минут, и сразу же при смене входных
@@ -473,18 +488,6 @@ class Haulage:
         return PLAN_DEFICIT_FALLBACK_S if deficit_t > 0 else 0.0
 
     # -- выбор экскаватора ---------------------------------------------------
-    def _candidate_ore(self, truck):
-        """Какую руду должен сейчас возить самосвал — обычно как у домашнего забоя, но если
-        пункт разгрузки этой руды не принимает (crusher_stop/sag_maintenance), едем на вскрышу,
-        пока он не примет снова — выбор ниже считается заново на каждом освобождении самосвала,
-        так что возврат на руду происходит сам, без отдельного кода."""
-        home_ore = self.face_info(self.excavators[truck.home].id)["ore"]
-        if home_ore == "sulphide" and not self.dumps["crusher-01"].accepting:
-            return "waste"
-        if home_ore == "clay" and not self.dumps["stockpile-clay"].accepting:
-            return "waste"
-        return home_ore
-
     def _truck_load_time_s(self, truck):
         """Оценка полного времени погрузки самосвала (без текущего loading_factor забоя — это
         эвристика диспетчера для сравнения экскаваторов, а не точный прогноз)."""
@@ -574,78 +577,68 @@ class Haulage:
         bunker_wait_s = (fill_frac ** 3) * buffer_t / (throughput / 3600.0) if throughput > 0 else 0.0
         return t_free + bunker_wait_s
 
-    def _best_candidate(self, truck, ore, near_clay_limit):
-        """Экскаватор нужной руды, который сильнее всего отстаёт от своего план-задания к
-        моменту прибытия самосвала (часть 2 текущей задачи — «самый нуждающийся экскаватор»):
-        score = время в пути + отставание от плана сейчас (эквивалент «на сколько раньше
-        относительно прибытия должно было начаться следующее обслуживание»); при разнице
-        < 0,5 мин (TRUCK_TIE_BREAK_S) — выбор по честному «путь + ожидание», как раньше.
-        Возвращает (id экскаватора, честная оценка «путь + ожидание») — само «честное» время
-        используется ВЫШЕ (choose_excavator) для сравнения с вскрышей и ожидания у дробилки,
-        а не для выбора между экскаваторами одной руды."""
+    def _best_candidate(self, truck, ores, near_clay_limit):
+        """Экскаватор, который сильнее всего отстаёт от своего план-задания к моменту прибытия
+        самосвала, среди ВСЕХ пунктов руды, которые сейчас в принципе доступны (`ores` — набор
+        типов, не один тип: часть 2 ТЕКУЩЕЙ задачи — самосвал в «авто» сравнивает руду и вскрышу
+        напрямую по плану, а не по тому, у какого экскаватора он «домашний»; HOME здесь вообще не
+        участвует — он только для «ручного», см. `choose_excavator`). score = время в пути (+
+        честное ожидание на дробилке для сульфидных — она общее узкое место для всех сульфидных
+        экскаваторов разом) плюс отставание от плана сейчас (эквивалент «на сколько раньше
+        относительно прибытия должно было начаться следующее обслуживание»); при разнице < 0,5 мин
+        (TRUCK_TIE_BREAK_S) — выбор по честному «путь + ожидание». Так вскрышные экскаваторы (их
+        план — вся оставшаяся возможная производительность, см. `_update_plan`) сами забирают
+        излишек, когда рудным/глинистым экскаваторам по плану уже достаточно самосвалов — без
+        отдельной надбавки «руда важнее вскрыши» (та была нечестной: решала по HOME, не по плану).
+        Возвращает id экскаватора или None, если подходящих кандидатов не нашлось вовсе."""
+        crusher_wait = self._crusher_wait_s() if "sulphide" in ores else 0.0
         candidates = []
         for ex in self.excavators.values():
             if ex.down:
                 continue
             info = self.face_info(ex.id)
-            if info["ore"] != ore:
+            if info["ore"] not in ores:
                 continue
-            if near_clay_limit and ore == "sulphide" and info["clay"] > self.clay_limit_pct:
+            if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
                 continue
             my_eta = self._eta_s(truck, ex.node)
             if my_eta is None:
                 continue
-            honest_start = max(my_eta, self._excavator_free_at_s(ex))
-            score = my_eta + self._plan_deficit_time_s(ex)
+            extra = crusher_wait if info["ore"] == "sulphide" else 0.0
+            honest_start = max(my_eta, self._excavator_free_at_s(ex)) + extra
+            score = my_eta + extra + self._plan_deficit_time_s(ex)
             candidates.append((score, honest_start, ex.id))
         if not candidates:
-            return None, math.inf
+            return None
         best_score = max(c[0] for c in candidates)
         near = [c for c in candidates if best_score - c[0] < TRUCK_TIE_BREAK_S] or candidates
-        chosen = min(near, key=lambda c: c[1])[2]
-        # честная оценка «путь + ожидание» для сравнения с вскрышей (CRUSHER_OVERFLOW_MARGIN_S,
-        # ORE_PREFERENCE_MARGIN_S в choose_excavator) — минимум по ВСЕМ кандидатам этой руды, а
-        # не время у того, кого выбрали по плану: иначе «самый отставший от плана» экскаватор
-        # (у которого честная очередь может быть куда длиннее минимальной) искусственно портил
-        # бы эту оценку и без причины разворачивал самосвалы на вскрышу
-        best_start = min(c[1] for c in candidates)
-        return chosen, best_start
+        return min(near, key=lambda c: c[1])[2]
 
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
         if self.mode == "manual":
             # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
             return home.id
-        # crusher_stop/sag_maintenance: правило обязательное, не смягчаем «руда важнее вскрыши» —
-        # рудный пункт разгрузки сейчас физически не принимает, рудных там грузить незачем
-        target_ore = self._candidate_ore(truck)
         # (в) доля глины на дробилке близка к лимиту — не грузить на неё ещё более глинистые забои
         near_clay_limit = (
             self._clay_crusher_total_t > 0 and self.clay_limit_pct > 0
             and (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t)
                 >= CLAY_SOFT_FACTOR * self.clay_limit_pct
         )
-        best, best_start = self._best_candidate(truck, target_ore, near_clay_limit)
-        crusher_bound = target_ore == "sulphide" and best is not None
-        if crusher_bound:
-            # дробилка — общее узкое место для всех сульфидных экскаваторов разом: прибавляем
-            # честную оценку ожидания там к времени начала погрузки (п.4 части 2)
-            best_start = best_start + self._crusher_wait_s()
-        # «руда важнее вскрыши» (г), но не любой ценой, и ТОЛЬКО там, где вскрыша — реальная
-        # альтернатива: у дробилки (сульфидные экскаваторы) или когда своей руды не нашлось
-        # совсем. Глинистые самосвалы (единственный свой экскаватор-04, без узкого места на
-        # дробилке) на вскрышу из-за «выгоднее по времени» не переманиваем — это не их случай.
-        if target_ore != "waste" and (crusher_bound or best is None):
-            # а) кандидатов нужной руды нет совсем — сравниваем с вскрышей по обычному порогу (0,5 мин);
-            # б) дробилка перегружена — порог шире (CRUSHER_OVERFLOW_MARGIN_S): короткая обычная
-            #    очередь не должна разом разворачивать четверть парка на вскрышу
-            margin = CRUSHER_OVERFLOW_MARGIN_S if crusher_bound else ORE_PREFERENCE_MARGIN_S
-            waste_best, waste_start = self._best_candidate(truck, "waste", near_clay_limit=False)
-            if waste_best is not None and (best is None or waste_start + margin < best_start):
-                return waste_best
+        # «авто» (часть 2 ТЕКУЩЕЙ задачи): какую руду возить — решает ПЛАН (кто сильнее отстал),
+        # а не HOME/тип груза домашнего забоя самосвала — HOME здесь не участвует вовсе. Рудные
+        # пункты участвуют в сравнении только если физически принимают сейчас (crusher_stop/
+        # sag_maintenance) — это обязательное правило, не смягчается; вскрыша участвует всегда.
+        eligible = {"waste"}
+        if self.dumps["crusher-01"].accepting:
+            eligible.add("sulphide")
+        if self.dumps["stockpile-clay"].accepting:
+            eligible.add("clay")
+        best = self._best_candidate(truck, eligible, near_clay_limit)
         if best:
             return best
-        # ничего не подошло — домашний как раньше, а если и он сломан — любой работающий
+        # ничего не подошло (все экскаваторы сломаны и т.п.) — домашний, а если и он сломан —
+        # любой работающий
         if not home.down:
             return home.id
         working = next((e.id for e in self.excavators.values() if not e.down), None)
