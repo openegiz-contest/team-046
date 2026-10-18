@@ -184,6 +184,11 @@ class Truck:
         self.buckets_done = 0
         self.refuel_timer = 0.0
         self.queue_index = 0
+        # -- только для диагностики (sim_check.py): время по фазам цикла, не влияет на поведение --
+        self.time_in = {"haul_loaded": 0.0, "haul_empty": 0.0, "queue_excavator": 0.0,
+                         "load": 0.0, "queue_dump": 0.0, "dump": 0.0, "refuel": 0.0}
+        self.load_sessions_s = []  # длительности завершённых установка+погрузка, с
+        self._load_session_start_s = 0.0
 
     def features(self):
         return {
@@ -215,6 +220,10 @@ class Excavator:
         self.loaded_total = 0.0
         self.passes_total = 0
         self.down = False
+        # -- только для диагностики (sim_check.py) --
+        self.busy_s = 0.0          # время, когда кто-то грузился
+        self.queue_integral = 0.0  # интеграл длины очереди по времени (для среднего)
+        self.trucks_served = 0
 
     def features(self):
         return {
@@ -235,11 +244,12 @@ class DumpPoint:
         self.dumping = None
         self.accepting = True
         self.received = 0.0
+        self.trips = 0  # диагностика: сколько самосвалов разгрузилось здесь
 
 
 # ------------------------------------------------------------------ модель
 class Haulage:
-    def __init__(self, geometry, watcher, clock):
+    def __init__(self, geometry, watcher, clock, seed=42):
         self.geometry = geometry
         self.watcher = watcher
         self.clock = clock
@@ -254,7 +264,7 @@ class Haulage:
         self.trips = 0
         self.waits = []            # последние ожидания у экскаватора, мин (скользящее для совместимости)
         self.road_open = {r: True for r in ("road-ramp-1", "road-ramp-2", "road-crusher")}
-        self.rng = random.Random(42)
+        self.rng = random.Random(seed)
         self.clay_limit_pct = 15.0
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
@@ -532,6 +542,7 @@ class Haulage:
         for truck in self.trucks:
             self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
             if truck.refuel_timer > 0:
+                truck.time_in["refuel"] += dt
                 truck.refuel_timer = max(0.0, truck.refuel_timer - dt)
                 truck.speed = 0.0
                 if truck.refuel_timer == 0.0:
@@ -539,17 +550,28 @@ class Haulage:
                     self.refuels_total += 1
                     truck.destination = ""
                     self._return(truck)
-            elif truck.state in ("hauling", "returning"):
+            elif truck.state == "hauling":
+                truck.time_in["haul_loaded"] += dt
+                self._move(truck, dt)
+            elif truck.state == "returning":
+                truck.time_in["haul_empty"] += dt
                 self._move(truck, dt)
             elif truck.state == "queued_load":
+                truck.time_in["queue_excavator"] += dt
                 truck.wait += dt
             elif truck.state == "queued_dump":
+                truck.time_in["queue_dump"] += dt
                 truck.dump_wait += dt
             elif truck.state == "loading":
+                truck.time_in["load"] += dt
                 self._loading(truck, dt)
             elif truck.state == "dumping":
+                truck.time_in["dump"] += dt
                 self._dumping(truck, dt)
         for ex in self.excavators.values():
+            if ex.loading:
+                ex.busy_s += dt
+            ex.queue_integral += len(ex.queue) * dt
             self._excavator(ex)
         for dump in self.dumps.values():
             if not dump.accepting and dump.id != "dump-waste-1" and dump.queue:
@@ -582,6 +604,7 @@ class Haulage:
             truck.timer = 0.0
             truck.setup_done = False
             truck.buckets_done = 0
+            truck._load_session_start_s = truck.time_in["load"]   # диагностика
             wait_min = truck.wait / 60.0
             self.waits.append(wait_min)
             self.waits = self.waits[-30:]
@@ -613,6 +636,8 @@ class Haulage:
         if truck.buckets_done >= truck.buckets_needed:
             truck.cargo_type = CARGO_BY_ORE.get(info["ore"], "waste")
             truck.destination = info["dest"] if info["dest"] in self.dumps else DEST_BY_ORE.get(info["ore"], "dump-waste-1")
+            truck.load_sessions_s.append(truck.time_in["load"] - truck._load_session_start_s)  # диагностика
+            ex.trucks_served += 1
             ex.loading = None
             self._depart(truck)
 
@@ -647,6 +672,7 @@ class Haulage:
             truck.trips += 1
             self.trips += 1
             self._trips_log.append(self._sim_t)
+            dump.trips += 1
             dump.dumping = None
             if truck.fuel < REFUEL_FUEL_PCT:
                 self._start_refuel(truck)
