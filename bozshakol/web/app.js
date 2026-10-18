@@ -416,7 +416,13 @@ function renderScenarioBanner(t) {
   banner.textContent = active.length ? 'Активные сценарии: ' + active.join(' · ') : '';
   // метель — дымка на всей сцене
   const blizzard = !!val(NS + ':scenarios', 'blizzard', false);
-  if (environment) environment.setWeather({ blizzard, visibility: val(NS + ':mine', 'visibility', blizzard ? 300 : 5000) });   // туман по дальности видимости
+  const visibility = val(NS + ':mine', 'visibility', blizzard ? 300 : 5000);
+  if (environment) environment.setWeather({ blizzard, visibility });   // туман по дальности видимости
+  const wb = document.getElementById('weather-banner');
+  if (wb) {
+    wb.hidden = !blizzard;
+    if (blizzard) wb.textContent = 'Метель · видимость ' + fmt(visibility, 0) + ' м · ограничение скорости ' + fmt(val(NS + ':mine', 'speed_limit', 20), 0) + ' км/ч';
+  }
 }
 
 // ---------------------------------------------------------------- журнал событий
@@ -732,6 +738,16 @@ function frame(now) {
   updateLabels();
 }
 
+// ---------------------------------------------------------------- заправка (общая сцена)
+function buildFuelStation() {
+  const o = (geometry.objects || []).find((x) => x.kind === 'fuel');
+  if (!o || !modelsLib || !modelsLib.fuelStation) return;
+  const g = modelsLib.fuelStation();
+  g.position.copy(toScene(o.position[0], o.position[1], terrainApi.groundAt(o.position[0], o.position[1])));
+  terrain.add(g);
+  addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
+}
+
 // ---------------------------------------------------------------- переключатель «Снимок» и подписи источников
 function updateAttribution() {
   const a = document.getElementById('attribution');
@@ -760,6 +776,7 @@ function initImagery() {
     terrainGround = terrainApi.buildGround(terrain, { toScene });
     buildPit(); buildRoads();
     environment = buildEnvironment(THREE, geometry, terrainApi, toScene, scene, modelsLib);
+    buildFuelStation();
     initImagery();
     initKeys();
   } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }

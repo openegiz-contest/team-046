@@ -48,12 +48,12 @@ def main():
         if "position" not in o:
             continue
         x, y = o["position"][:2]
-        if o["kind"] in ("plant", "substation", "crusher"):
+        if o["kind"] in ("plant", "substation", "crusher", "fuel"):
             l, w = (o.get("size") or [60, 60])[:2]
-            hx, hy = l / 2 + 25, w / 2 + 25
+            hx, hy = l / 2 + 60, w / 2 + 60   # как в web/terrain.js (padsFrom)
             pads.append((o["id"], terrain.height_at(x, y), lambda px, py, x=x, y=y, hx=hx, hy=hy: max(abs(px - x) - hx, abs(py - y) - hy)))
         elif o["kind"] in ("stockpile", "dump"):
-            r = (o.get("radius") or 50) + 20
+            r = (o.get("radius") or 50) + 40
             pads.append((o["id"], terrain.height_at(x, y), lambda px, py, x=x, y=y, r=r: math.hypot(px - x, py - y) - r))
     roads = []
     for e in g["edges"]:
@@ -64,14 +64,6 @@ def main():
         if terrain.inside_pit(x, y):
             return bench(x, y)
         z = terrain.height_at(x, y)
-        best = None
-        for _, level, dist in pads:
-            d = dist(x, y)
-            if d < PAD_BLEND and (best is None or d < best[0]):
-                best = (d, level)
-        if best:
-            w = 1.0 if best[0] <= 0 else 1 - best[0] / PAD_BLEND
-            z = z * (1 - w) + best[1] * w
         bestr = None
         for A, B in roads:
             dx, dy = B[0] - A[0], B[1] - A[1]
@@ -83,6 +75,14 @@ def main():
         if bestr:
             w = 1.0 if bestr[0] <= ROAD_SHOULDER else 1 - (bestr[0] - ROAD_SHOULDER) / (ROAD_BLEND - ROAD_SHOULDER)
             z = z * (1 - w) + bestr[1] * w
+        best = None
+        for _, level, dist in pads:
+            d = dist(x, y)
+            if d < PAD_BLEND and (best is None or d < best[0]):
+                best = (d, level)
+        if best:
+            w = 1.0 if best[0] <= 0 else 1 - best[0] / PAD_BLEND
+            z = z * (1 - w) + best[1] * w
         return z
 
     bad = 0
