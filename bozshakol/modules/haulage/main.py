@@ -418,7 +418,6 @@ class Haulage:
         if self.mode == "manual":
             # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
             return home.id
-        home_ore = self.face_info(home.id)["ore"]
         # crusher_stop/sag_maintenance: правило обязательное, не смягчаем «руда важнее вскрыши» —
         # рудный пункт разгрузки сейчас физически не принимает, рудных там грузить незачем
         target_ore = self._candidate_ore(truck)
@@ -437,8 +436,8 @@ class Haulage:
         if target_ore != "waste":
             waste_best, waste_start = self._best_candidate(truck, "waste", near_clay_limit=False)
             if waste_best is not None:
-                home_start = math.inf if home.down else max(self._eta_s(truck, home.node) or math.inf,
-                                                              self._excavator_free_at_s(home))
+                home_eta = None if home.down else self._eta_s(truck, home.node)
+                home_start = math.inf if home_eta is None else max(home_eta, self._excavator_free_at_s(home))
                 if home_start - waste_start >= ORE_PREFERENCE_MARGIN_S:
                     return waste_best
         # ничего не подошло — домашний как раньше, а если и он сломан — любой работающий
