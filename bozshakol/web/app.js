@@ -15,7 +15,7 @@ const colors = {
   bench: [0xdcc08e, 0xcfae78],            // бермы (площадки) — два чередующихся светлых тона
   wall: [0x8f6a44, 0x7f5c3a],             // стенки уступов — заметно темнее берм
   benchLine: 0x4a3418, floor: 0xa8a27e,   // контуры кромок; дно карьера — серо-оливковое
-  road: 0xb9ad94, ramp: 0xd9cfae, roadEdge: 0x4a3f2e, roadClosed: 0xd32f2f,
+  road: 0xcfc3a4, ramp: 0xe8dfc3, roadEdge: 0x4a3f2e, roadClosed: 0xd32f2f,
   building: 0xd8d8d8, roof: 0xa9b8cc, conveyor: 0x6f7f95, excavator: 0xf2a21b, drill: 0x4f6d8f,
   dump: 0x9a9a9a, stockpileOre: 0x6b7a5a, stockpileClay: 0xb86f3a, label: 0x2b2620,
 };
@@ -416,7 +416,7 @@ function renderScenarioBanner(t) {
   banner.textContent = active.length ? 'Активные сценарии: ' + active.join(' · ') : '';
   // метель — дымка на всей сцене
   const blizzard = !!val(NS + ':scenarios', 'blizzard', false);
-  if (environment) environment.setBlizzard(blizzard);   // метель: туман сгущается, небо серое
+  if (environment) environment.setWeather({ blizzard, visibility: val(NS + ':mine', 'visibility', blizzard ? 300 : 5000) });   // туман по дальности видимости
 }
 
 // ---------------------------------------------------------------- журнал событий
@@ -559,7 +559,7 @@ function buildRoads() {
     const isRamp = /^road-ramp/.test(e.road);
     const pa = nodePos(a), pb = nodePos(b);
     const len = pa.distanceTo(pb);
-    const width = isRamp ? 40 : 24;
+    const width = isRamp ? 50 : 26;
     const m = new THREE.Mesh(new THREE.BoxGeometry(width, 1.2, len + width), isRamp ? roadMats.ramp : roadMats.open);
     m.position.copy(pa).add(pb).multiplyScalar(0.5);
     m.lookAt(pb);                       // ось Z коробки — вдоль ребра
@@ -597,10 +597,10 @@ function updateRoads() {
 // Координаты — рудника (м), по geometry.json: карьер в центре, дробилка на южном борту,
 // конвейер и фабрика к западу-юго-западу, отвалы к юго-востоку
 const VIEWS = {
-  all: { target: [-300, -500, 0], pos: [-300, -6200, 3400] },
-  pit: { target: [0, 0, -80], pos: [300, -2600, 1300] },
+  all: { target: [-500, -500, -40], pos: [-500, -3800, 2700] },     // косой вид ≈ 40°: карьер в полкадра, дробилка, конвейер, фабрика
+  pit: { target: [0, 0, -120], pos: [250, -2300, 1000] },           // ближе: техника на уступах и дне
   crusher: { target: [-1200, -560, 0], pos: [-1200, -2300, 900] },
-  plants: { target: [-2550, -800, 10], pos: [-2550, -2100, 900] },
+  plants: { target: [-2600, -800, 15], pos: [-2600, -1900, 700] },
 };
 let tween = null;         // {fromPos, toPos, fromTgt, toTgt, t}
 let followId = null;      // thingId самосвала, за которым идёт камера

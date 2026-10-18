@@ -101,11 +101,11 @@ OBJECTS = [
     # конвейер от дробилки вдоль южного борта к складу крупнодроблёной руды у фабрики (≈ 2,2 км по трассе)
     {"id": "conveyor-01", "kind": "conveyor", "path": [[-300, -620, 0], [-1500, -640, 0], [-2440, -700, 0]]},
     {"id": "stockpile-coarse", "kind": "stockpile", "position": [-2490, -720, 0], "radius": 60},
-    {"id": "plant-sulphide", "kind": "plant", "position": [-2700, -760, 0], "size": [260, 140, 28]},
+    {"id": "plant-sulphide", "kind": "plant", "position": [-2700, -760, 0], "size": [320, 170, 30]},   # главный корпус ≈ 320 × 170 м по снимку
     {"id": "sag-mill-01", "kind": "mill", "position": [-2780, -720, 0]},
     {"id": "flotation-01", "kind": "flotation", "position": [-2620, -800, 0]},
     {"id": "stockpile-clay", "kind": "stockpile", "position": [-700, -1290, 0], "radius": 50},
-    {"id": "plant-clay", "kind": "plant", "position": [-300, -1060, 0], "size": [140, 90, 20]},
+    {"id": "plant-clay", "kind": "plant", "position": [-300, -1060, 0], "size": [160, 100, 22]},   # ≈ 160 × 100 м по снимку (допущение)
     {"id": "power-grid", "kind": "substation", "position": [-2450, -950, 0], "size": [60, 40, 10]},
     {"id": "dump-waste-1", "kind": "dump", "position": [2200, -1100, 0], "radius": 400},
     {"id": "face-01", "kind": "face", "position": [-1300, 130, -200], "ore_type": "sulphide"},
