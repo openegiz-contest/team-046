@@ -106,3 +106,25 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; }
 .log-row { padding: 1px 0; border-bottom: 1px dotted var(--line); }
 .log-row .t { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
 .legend-title { color: var(--muted); font-size: 11px; margin-top: 6px; text-transform: uppercase; letter-spacing: .03em; }
+
+/* --- подсказка по клавишам (controls.js) --- */
+#btn-help { font-weight: 700; padding: 4px 9px !important; }
+#help-hint {
+  position: absolute; right: 10px; bottom: 28px; font-size: 11px; color: var(--muted); cursor: pointer;
+  background: rgba(255,255,255,0.7); border: 1px solid var(--line); border-radius: 3px; padding: 1px 7px;
+}
+#help-hint:hover { color: var(--ink); background: rgba(255,255,255,0.95); }
+#help {
+  position: absolute; right: 12px; top: 64px; width: 400px; max-width: calc(100% - 24px); max-height: calc(100% - 90px);
+  overflow-y: auto; box-sizing: border-box; padding: 10px 12px;
+  background: var(--panel-bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+#help .card-head b { font-size: 14px; }
+#help-close { border: none; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); }
+#help table.keys { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+#help table.keys td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#help table.keys td:first-child { white-space: nowrap; width: 40%; }
+#help kbd {
+  display: inline-block; min-width: 14px; text-align: center; padding: 0 5px; font: 11px/16px "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--ink); background: #fff; border: 1px solid #bbb; border-bottom-width: 2px; border-radius: 3px;
+}

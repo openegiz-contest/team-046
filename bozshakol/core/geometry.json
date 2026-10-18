@@ -38,7 +38,7 @@
   "floor-e2": [
    1450,
    -40,
-   -185
+   -200
   ],
   "face-01": [
    -1300,
@@ -58,17 +58,17 @@
   "face-04": [
    1400,
    -60,
-   -185
+   -200
   ],
   "face-05": [
    -1500,
-   -400,
-   -50
+   -330,
+   -45
   ],
   "face-06": [
    1500,
-   -450,
-   -50
+   -330,
+   -45
   ],
   "r1-bottom": [
    -1600,
@@ -82,8 +82,8 @@
   ],
   "r1-mid2": [
    -1400,
-   -450,
-   -50
+   -400,
+   -45
   ],
   "r1-top": [
    -600,
@@ -93,7 +93,7 @@
   "r2-bottom": [
    1600,
    -180,
-   -185
+   -200
   ],
   "r2-mid1": [
    400,
@@ -102,8 +102,8 @@
   ],
   "r2-mid2": [
    1400,
-   -450,
-   -50
+   -400,
+   -45
   ],
   "r2-top": [
    600,
@@ -165,8 +165,8 @@
    "from": "floor-e",
    "to": "floor-e2",
    "road": "floor",
-   "length_m": 551.7,
-   "grade_pct": 2.7
+   "length_m": 551.5,
+   "grade_pct": 0.0
   },
   {
    "from": "face-01",
@@ -221,49 +221,49 @@
    "from": "r1-mid1",
    "to": "r1-mid2",
    "road": "road-ramp-1",
-   "length_m": 1009.6,
-   "grade_pct": 7.0
+   "length_m": 1005.2,
+   "grade_pct": 7.5
   },
   {
    "from": "r1-mid2",
    "to": "r1-top",
    "road": "road-ramp-1",
-   "length_m": 809.0,
-   "grade_pct": 6.0
+   "length_m": 817.0,
+   "grade_pct": 5.3
   },
   {
    "from": "face-05",
    "to": "r1-mid2",
    "road": "floor",
-   "length_m": 111.8,
+   "length_m": 122.1,
    "grade_pct": 0.0
   },
   {
    "from": "r2-bottom",
    "to": "r2-mid1",
    "road": "road-ramp-2",
-   "length_m": 1211.1,
-   "grade_pct": 5.4
+   "length_m": 1212.0,
+   "grade_pct": 6.6
   },
   {
    "from": "r2-mid1",
    "to": "r2-mid2",
    "road": "road-ramp-2",
-   "length_m": 1009.6,
-   "grade_pct": 7.0
+   "length_m": 1005.2,
+   "grade_pct": 7.5
   },
   {
    "from": "r2-mid2",
    "to": "r2-top",
    "road": "road-ramp-2",
-   "length_m": 808.9,
-   "grade_pct": 5.9
+   "length_m": 816.9,
+   "grade_pct": 5.2
   },
   {
    "from": "face-06",
    "to": "r2-mid2",
    "road": "floor",
-   "length_m": 100.0,
+   "length_m": 122.1,
    "grade_pct": 0.0
   },
   {
@@ -393,7 +393,7 @@
     [
      -2440,
      -700,
-     21.7
+     20.4
     ]
    ]
   },
@@ -523,7 +523,7 @@
    "position": [
     1400,
     -110,
-    -185
+    -200
    ],
    "ore_type": "clay"
   },
@@ -532,8 +532,8 @@
    "kind": "face",
    "position": [
     -1500,
-    -450,
-    -50
+    -330,
+    -45
    ],
    "ore_type": "waste"
   },
@@ -542,8 +542,8 @@
    "kind": "face",
    "position": [
     1500,
-    -500,
-    -50
+    -330,
+    -45
    ],
    "ore_type": "waste"
   },
@@ -583,7 +583,7 @@
    "position": [
     1400,
     -85,
-    -185
+    -200
    ],
    "face": "face-04"
   },
@@ -592,8 +592,8 @@
    "kind": "excavator",
    "position": [
     -1500,
-    -425,
-    -50
+    -330,
+    -45
    ],
    "face": "face-05"
   },
@@ -602,8 +602,8 @@
    "kind": "excavator",
    "position": [
     1500,
-    -475,
-    -50
+    -330,
+    -45
    ],
    "face": "face-06"
   },
@@ -613,7 +613,7 @@
    "position": [
     -1000,
     330,
-    -155
+    -105
    ]
   },
   {
@@ -622,7 +622,7 @@
    "position": [
     400,
     -380,
-    -140
+    -105
    ]
   },
   {
@@ -631,7 +631,7 @@
    "position": [
     1200,
     300,
-    -125
+    -120
    ]
   }
  ]

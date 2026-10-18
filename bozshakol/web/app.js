@@ -3,6 +3,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { loadTerrain } from './terrain.js';
+import { initKeyboard } from './controls.js';
+import { buildPit as buildPitModel } from './pit.js';
+import { buildEnvironment } from './environment.js';
+import { createModels } from './models.js';
 
 // ---------------------------------------------------------------- палитра
 const colors = {
@@ -34,6 +38,7 @@ const STOPPED = ['stopped', 'stop', 'down', 'maintenance', 'off', 'failed'];
 const twins = {};            // thingId -> {attributes, features}
 let geometry = null;
 let terrainApi = null;       // результат loadTerrain
+let modelsLib = null;        // библиотека моделей (models.js), отдаётся слоям как ctx.models
 const layers = [];           // {name, mod, ctx, errors}
 const clickable = [];        // объекты с userData.thingId
 const labels = [];           // {obj, el, dy, importance, last, w, h}
@@ -56,9 +61,10 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPrefer
 renderer.setPixelRatio(1);
 renderer.shadowMap.enabled = false;
 const scene = new THREE.Scene();
-const SKY = 0xdde8f0, SKY_BLIZZARD = 0xc6ced6;
-scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 14000, 30000);
+const SKY = 0xdde8f0;
+scene.background = new THREE.Color(SKY);   // до загрузки окружения (environment.js ставит небо и туман)
+let environment = null;      // небо, туман, хвостохранилище, ЛЭП, ограждение, мачты (environment.js)
+let terrainGround = null;    // группа земли (terrain.js), у неё setImagery(on)
 
 const perspCam = new THREE.PerspectiveCamera(50, 1, 2, 30000);
 perspCam.position.copy(toScene(0, -5200, 2800));
@@ -239,7 +245,8 @@ function updateHover() {
 // ---------------------------------------------------------------- карточка двойника
 const card = document.getElementById('card');
 const cardBody = document.querySelector('#card-table tbody');
-document.getElementById('card-close').addEventListener('click', () => { openedThing = null; card.hidden = true; updateFollowButton(); });
+function clearSelection() { openedThing = null; card.hidden = true; updateFollowButton(); }   // снять выбор (и слежение)
+document.getElementById('card-close').addEventListener('click', clearSelection);
 function openCard(thingId) { openedThing = thingId; card.hidden = false; renderCard(); updateFollowButton(); }
 function renderCard() {
   if (!openedThing) return;
@@ -409,9 +416,7 @@ function renderScenarioBanner(t) {
   banner.textContent = active.length ? 'Активные сценарии: ' + active.join(' · ') : '';
   // метель — дымка на всей сцене
   const blizzard = !!val(NS + ':scenarios', 'blizzard', false);
-  scene.fog.near = blizzard ? 1200 : 14000; scene.fog.far = blizzard ? 9000 : 30000;   // метель: лёгкая дымка, объекты различимы
-  scene.fog.color.setHex(blizzard ? SKY_BLIZZARD : SKY);
-  scene.background.setHex(blizzard ? SKY_BLIZZARD : SKY);
+  if (environment) environment.setBlizzard(blizzard);   // метель: туман сгущается, небо серое
 }
 
 // ---------------------------------------------------------------- журнал событий
@@ -516,52 +521,20 @@ setInterval(() => { if (panelDirty) { panelDirty = false; renderPanel(); } }, 10
 // ---------------------------------------------------------------- степь и карьер
 const terrain = new THREE.Group();
 scene.add(terrain);
-function ellipsePts(a, b, n) {
-  const pts = [];
-  for (let i = 0; i < n; i++) { const t = (i / n) * Math.PI * 2; pts.push([a * Math.cos(t), b * Math.sin(t)]); }
-  return pts;
-}
-// Кольцо (площадка) или стенка между двумя эллипсами; outer/inner — массивы [x, y] рудника, высоты — м рудника
-function ringMesh(outer, inner, zOut, zIn, color) {
-  const n = outer.length, pos = [], idx = [];
-  for (let i = 0; i < n; i++) {
-    pos.push(outer[i][0], zOut * VZ, -outer[i][1]);
-    pos.push(inner[i][0], zIn * VZ, -inner[i][1]);
-  }
-  for (let i = 0; i < n; i++) {
-    const a = 2 * i, b = 2 * i + 1, c = (2 * (i + 1)) % (2 * n), d = (2 * (i + 1) + 1) % (2 * n);
-    idx.push(a, b, c, b, d, c);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx); g.computeVertexNormals();
-  return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, flatShading: true }));
-}
-function contour(pts, z, color) {
-  const lp = pts.map(([x, y]) => new THREE.Vector3(x, z * VZ + 0.6, -y));
-  return new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(lp), new THREE.LineBasicMaterial({ color }));
-}
+// Карьер рисует pit.js (уступы, бермы, оттенки руды, отбойные валы); здесь — клик и подписи
 function buildPit() {
-  const pit = geometry.pit, A = pit.semi_axes_top[0], B = pit.semi_axes_top[1], N = 64;
-  const h = pit.bench_height, inset = pit.inset_per_bench, count = pit.bench_count;
-  let prev = ellipsePts(A, B, N);
-  for (let k = 0; k < count; k++) {
-    const next = ellipsePts(A - (k + 1) * inset, B - (k + 1) * inset, N);
-    const zTop = -k * h, zBot = (k === count - 1) ? -pit.depth : -(k + 1) * h;
-    terrain.add(ringMesh(prev, next, zTop, zTop, colors.bench[k % 2]));   // берма (площадка)
-    terrain.add(ringMesh(next, next, zTop, zBot, colors.wall[k % 2]));    // стенка уступа
-    terrain.add(contour(prev, zTop, colors.benchLine));                   // кромка уступа
-    prev = next;
-  }
-  // дно — отдельный тон; на него же вешаем подпись и клик карьера
+  const faces = (geometry.objects || []).filter((o) => o.kind === 'face')
+    .map((o) => ({ x: o.position[0], y: o.position[1], ore: o.ore_type }));
+  terrain.add(buildPitModel(THREE, geometry, terrainApi, toScene, colors, faces));
+  const pit = geometry.pit, A = pit.semi_axes_top[0], B = pit.semi_axes_top[1], inset = pit.inset_per_bench, count = pit.bench_count;
+  // невидимое дно — цель клика и подписи карьера
   const fShape = new THREE.Shape(); fShape.absellipse(0, 0, A - count * inset, B - count * inset, 0, Math.PI * 2, false, 0);
-  const floor = new THREE.Mesh(new THREE.ShapeGeometry(fShape, 32), new THREE.MeshLambertMaterial({ color: colors.floor, flatShading: true }));
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -pit.depth * VZ;
+  const floor = new THREE.Mesh(new THREE.ShapeGeometry(fShape, 32), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -pit.depth * VZ + 1;
   terrain.add(floor);
-  terrain.add(contour(prev, -pit.depth, colors.benchLine));
   register(floor, NS + ':pit-central', { hitRadius: 0 });
   addLabel(floor, 'Карьер · дно −' + pit.depth + ' м', { importance: 3, dy: 4 });
-  const rimAnchor = new THREE.Object3D(); rimAnchor.position.copy(toScene(0, B, 0)); terrain.add(rimAnchor);
+  const rimAnchor = new THREE.Object3D(); rimAnchor.position.copy(toScene(0, B, terrainApi.demAt(0, B))); terrain.add(rimAnchor);
   addLabel(rimAnchor, 'Карьер Бозшаколь · ' + fmt(2 * A / 1000, 1) + ' × ' + fmt(2 * B / 1000, 1) + ' км', { importance: 3, dy: 6 });
 }
 
@@ -644,18 +617,20 @@ function flyTo(pos, target) {
 function markViewButton(name) {
   for (const b of document.querySelectorAll('#topbar button[data-view]')) b.classList.toggle('active', b.dataset.view === name);
 }
+// Переход к виду по имени (кнопки сверху и клавиши 1–5)
+function setView(name) {
+  if (name !== 'top' && !VIEWS[name]) return;
+  followId = null; updateFollowButton();
+  if (name === 'top') {
+    camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
+  } else {
+    const v = VIEWS[name];
+    flyTo(toScene(...v.pos), toScene(...v.target));
+  }
+  markViewButton(name);
+}
 for (const b of document.querySelectorAll('#topbar button[data-view]')) {
-  b.addEventListener('click', () => {
-    const name = b.dataset.view;
-    followId = null; updateFollowButton();
-    if (name === 'top') {
-      camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
-    } else {
-      const v = VIEWS[name];
-      flyTo(toScene(...v.pos), toScene(...v.target));
-    }
-    markViewButton(name);
-  });
+  b.addEventListener('click', () => setView(b.dataset.view));
 }
 function updateFollowButton() {
   const canFollow = !!(openedThing && openedThing.startsWith(NS + ':truck-'));
@@ -665,7 +640,8 @@ function updateFollowButton() {
   btnFollow.classList.toggle('active', !!followId);
   btnFollow.textContent = followId ? 'Следую: ' + nameOf(followId) : 'Следовать за самосвалом';
 }
-btnFollow.addEventListener('click', () => {
+// Следовать за выбранным самосвалом / отпустить (кнопка и Пробел)
+function toggleFollow() {
   if (followId) { followId = null; updateFollowButton(); return; }
   const obj = openedThing && byThing(openedThing);
   if (!obj) return;
@@ -674,7 +650,8 @@ btnFollow.addEventListener('click', () => {
   flyTo(_v.clone().add(new THREE.Vector3(-160, 110, 160)), _v.clone());
   markViewButton('');
   updateFollowButton();
-});
+}
+btnFollow.addEventListener('click', toggleFollow);
 const _d = new THREE.Vector3();
 function updateCamera(dt) {
   if (tween) {
@@ -703,7 +680,8 @@ async function loadLayers() {
     const group = new THREE.Group(); group.name = 'layer-' + name; scene.add(group);
     const ctx = {
       THREE, scene, group, geometry, toScene, register, colors, dt: 0, camera, label: addLabel,
-      markerScale, hover: null, selected: null, heightAt: terrainApi.heightAt, verticalScale: VZ,
+      markerScale, hover: null, selected: null, heightAt: terrainApi.heightAt, groundAt: terrainApi.groundAt,
+      models: modelsLib, verticalScale: VZ,
     };
     try {
       const mod = await import('./layers/' + name + '.js');
@@ -715,6 +693,23 @@ async function loadLayers() {
   }
 }
 
+// ---------------------------------------------------------------- клавиатура (controls.js)
+let keyboard = null;
+function initKeys() {
+  const half = (terrainApi && terrainApi.meta && terrainApi.meta.half_m) || 3000;   // квадрат рельефа, м
+  const area = (terrainApi && terrainApi.areaHalf) || 3000;   // земля 10 × 10 км
+  keyboard = initKeyboard({
+    camera: () => camera,
+    controls: () => (camera === perspCam ? controls : topControls),
+    isTop: () => camera === orthoCam,
+    setView, goHome: () => setView('all'), toggleFollow, clearSelection,
+    stopFly: () => { tween = null; },
+    groundAt: (x, y) => terrainApi.heightAt(x, y),
+    toScene,
+    bounds: { minX: -area, maxX: area, minY: -area, maxY: area },
+  });
+}
+
 // ---------------------------------------------------------------- цикл
 let last = performance.now(), lastFrame = 0, frameNo = 0;
 function frame(now) {
@@ -722,6 +717,7 @@ function frame(now) {
   if (now - lastFrame < 33) return;          // не чаще 30 кадров/с
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now; lastFrame = now; frameNo++;
+  if (keyboard) keyboard.update(dt);      // клавиатура: движение камеры до перелётов и рендера
   updateCamera(dt);
   if (frameNo % 4 === 0) updateHover();      // наведение — ~8 раз в секунду
   for (const L of layers) {
@@ -731,7 +727,26 @@ function frame(now) {
     catch (e) { if (L.errors++ % 300 === 0) console.error('Слой ' + L.name + ': ошибка в update', e); }
   }
   renderer.render(scene, camera);
+  window.__sceneFrames = (window.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
+  window.__renderInfo = renderer.info.render;
   updateLabels();
+}
+
+// ---------------------------------------------------------------- переключатель «Снимок» и подписи источников
+function updateAttribution() {
+  const a = document.getElementById('attribution');
+  if (!terrainApi || !terrainApi.attribution) { a.hidden = true; return; }
+  const on = terrainGround && terrainGround.imageryEnabled && terrainGround.imageryEnabled();
+  a.textContent = terrainApi.attribution.dem + (on ? ' ' + terrainApi.attribution.image : '');
+  a.hidden = !a.textContent;
+}
+function initImagery() {
+  const box = document.getElementById('imagery-toggle');
+  if (box) {
+    box.checked = false;
+    box.addEventListener('change', () => { if (terrainGround) terrainGround.setImagery(box.checked); updateAttribution(); });
+  }
+  updateAttribution();
 }
 
 // ---------------------------------------------------------------- запуск
@@ -741,9 +756,12 @@ function frame(now) {
     const r = await fetch('/geometry.json'); if (!r.ok) throw new Error('HTTP ' + r.status);
     geometry = await r.json();
     terrainApi = await loadTerrain(THREE, geometry);
-    terrainApi.buildGround(terrain, { toScene, color: colors.steppe });
-    if (terrainApi.attribution) { const a = document.getElementById('attribution'); a.textContent = terrainApi.attribution; a.hidden = false; }
+    modelsLib = createModels(THREE, colors);   // библиотека моделей для слоёв (ctx.models) и окружения
+    terrainGround = terrainApi.buildGround(terrain, { toScene });
     buildPit(); buildRoads();
+    environment = buildEnvironment(THREE, geometry, terrainApi, toScene, scene, modelsLib);
+    initImagery();
+    initKeys();
   } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {
