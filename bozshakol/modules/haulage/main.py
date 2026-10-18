@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""bz-haulage — транспорт и диспетчеризация (заглушка, участник №2 заменит логику).
+"""bz-haulage — транспорт и диспетчеризация (участник №2).
 
-Самосвалы ездят по дорогам из core/geometry.json между экскаваторами и пунктами
-разгрузки (дробилка, склад глинистой руды, отвал). Гружёный и на подъёме — медленнее.
-Очереди у экскаваторов и на разгрузке, погрузка по ковшам, разгрузка. Закреплённое
-распределение; в режиме auto при поломке экскаватора или закрытой дороге самосвал
-переходит к другому экскаватору с тем же типом груза.
+Цикл самосвала по паспортам техники: погрузка ковшами экскаватора, ход по мощности
+и массе своего паспорта, разгрузка, топливо и заправка. Диспетчер (выбор экскаватора,
+показатели в dispatch) — пока как в заглушке, дорабатывается следующим шагом.
 
 Чужие двойники читаются только через платформу (TwinWatcher): забои face-*
 (содержание, глина, скорость погрузки, пункт разгрузки), crusher-01.accepting,
@@ -22,19 +20,53 @@ from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_
 
 log = setup_logging("bz-haulage")
 
-# Допущения (см. data/SOURCES.md)
-SPEED_EMPTY = 40.0       # км/ч, ровная дорога
-SPEED_LOADED = 30.0
-SPEED_LOADED_UP = 12.0   # гружёный на подъёме > 3 %
-SPEED_EMPTY_UP = 25.0
-SPEED_DOWN_LOADED = 20.0
-BUCKET_T = 40.0          # ковш 22 м³ ≈ 40 т
-PASS_S = 35.0            # секунд на ковш
-DUMP_S = {"crusher-01": 60.0, "stockpile-clay": 50.0, "dump-waste-1": 45.0}
-FUEL_PER_KM = {"loaded": 0.9, "empty": 0.5}  # % бака на км
-QUEUE_GAP_M = 22.0
-TRUCK_PUBLISH_S = 1.0    # реальных секунд
+# ----------------------------------------------------------------------------------
+# Паспорта техники (источники и допущения — см. bozshakol/modules/haulage/README.md,
+# таблица «параметр — значение — источник»). Класс самосвала — по capacity_t.
+# ----------------------------------------------------------------------------------
+TRUCK_PASSPORT = {
+    135: dict(  # источник: CAT 785D, cat.com (specalog 18089285) — масса, мощность, скорость, бак
+        model="785 (135 т)", capacity_t=135.0, gross_weight_t=249.5, empty_weight_t=114.5,
+        power_kw=1082, top_speed_loaded_kmh=54.8, tank_l=1893.0,
+        idle_lph=25.0,  # допущение: расход на холостом ходу
+    ),
+    180: dict(  # источник: CAT 789D, cat.com (specalog 18107706) — масса, мощность, скорость, бак
+        model="789D (180 т)", capacity_t=180.0, gross_weight_t=324.3, empty_weight_t=144.3,
+        power_kw=1566, top_speed_loaded_kmh=57.2, tank_l=2082.0,
+        idle_lph=35.0,  # допущение: расход на холостом ходу
+    ),
+}
+
+EXCAVATOR_BUCKET_M3 = 22.0            # источник: Hitachi EX3600-7 (модель экскаватора — допущение)
+EXCAVATOR_BUCKET_FILL = 0.9           # допущение: коэффициент наполнения ковша
+EXCAVATOR_LOOSE_DENSITY_T_M3 = 1.8    # допущение: насыпная плотность разрыхлённой горной массы
+EXCAVATOR_BUCKET_T = round(EXCAVATOR_BUCKET_M3 * EXCAVATOR_BUCKET_FILL * EXCAVATOR_LOOSE_DENSITY_T_M3, 1)  # 35.6 т
+
+LOAD_SETUP_S = 30.0                   # допущение: установка самосвала под погрузку перед первым ковшом
+BUCKET_CYCLE_S = 32.0                 # допущение: цикл одного ковша; делится на loading_factor забоя
+BUCKET_FILL_VAR = (0.92, 1.05)        # разброс фактической массы ковша вокруг EXCAVATOR_BUCKET_T
+
+DUMP_S = 60.0                         # допущение: подъём кузова по паспорту 15-20 с + манёвр у пункта разгрузки
+DUMP_POINTS_CONCURRENT = 1            # мест одновременной разгрузки на пункт — как было в заглушке
+
+EFFICIENCY = 0.75                     # допущение: КПД трансмиссии/трансформатора
+ROLLING_RESISTANCE = 0.025            # допущение: коэффициент сопротивления качению
+G_ACCEL = 9.81
+SPEED_DOWN_LOADED_KMH = 30.0          # допущение: тормоз-замедлитель, гружёный на спуске
+SPEED_DOWN_EMPTY_KMH = 40.0           # допущение: тормоз-замедлитель, порожний на спуске
+SPEED_VARIANCE = (0.95, 1.05)         # разброс скорости ±5 %
+
+FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (плотность топлива — допущение)
+
+REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
+REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке (временная реализация)
+# ВРЕМЕННО, пока у координатора нет состояния truck-*.state = "refueling" (запрос в договор отправлен):
+# заправка сделана как простой с destination="заправка" при текущем state. Когда состояние появится,
+# переключить достаточно в одном месте — см. _start_refuel().
+
+TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
 SLOW_PUBLISH_S = 5.0
+QUEUE_GAP_M = 22.0
 
 CARGO_BY_ORE = {"sulphide": "sulphide", "clay": "clay", "waste": "waste"}
 DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dump-waste-1"}
@@ -95,7 +127,17 @@ class Roads:
 class Truck:
     def __init__(self, index, roads, home):
         self.id = f"truck-{index:02d}"
-        self.capacity = 135.0 if index <= 22 else 180.0
+        cls = 135 if index <= 22 else 180
+        p = TRUCK_PASSPORT[cls]
+        self.cls = cls
+        self.capacity = p["capacity_t"]
+        self.empty_weight_t = p["empty_weight_t"]
+        self.power_kw = p["power_kw"]
+        self.top_speed_loaded_kmh = p["top_speed_loaded_kmh"]
+        self.tank_l = p["tank_l"]
+        self.idle_lph = p["idle_lph"]
+        self.buckets_needed = round(self.capacity / EXCAVATOR_BUCKET_T)
+
         self.roads = roads
         self.home = home            # домашний экскаватор
         self.excavator = home
@@ -115,7 +157,9 @@ class Truck:
         self.seg_pos = 0.0
         self.timer = 0.0
         self.wait = 0.0
-        self.passes = 0
+        self.setup_done = False
+        self.buckets_done = 0
+        self.refuel_timer = 0.0
         self.queue_index = 0
 
     def features(self):
@@ -188,6 +232,8 @@ class Haulage:
         self.waits = []
         self.road_open = {r: True for r in ("road-ramp-1", "road-ramp-2", "road-crusher")}
         self.rng = random.Random(42)
+        self.fuel_used_l_total = 0.0
+        self.refuels_total = 0
         # начальное положение: часть самосвалов уже в пути, чтобы сцена была живой
         for t in self.trucks[::3]:
             ex = self.excavators[t.excavator]
@@ -281,17 +327,47 @@ class Haulage:
         truck.state = "returning"
         truck.destination = ex.id
 
+    def _start_refuel(self, truck):
+        # ВРЕМЕННО: пока в договоре нет truck.state = "refueling" — стоим под видом "returning".
+        # Когда координатор добавит состояние, здесь достаточно поменять truck.state на "refueling".
+        truck.state = "returning"
+        truck.speed = 0.0
+        truck.path = []
+        truck.destination = "заправка"
+        truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+
     # -- движение ------------------------------------------------------------
-    def _speed(self, truck, grade, road):
+    def _speed(self, truck, grade_pct, road):
         loaded = truck.payload > 0
-        if grade > 3:
-            v = SPEED_LOADED_UP if loaded else SPEED_EMPTY_UP
-        elif grade < -3:
-            v = SPEED_DOWN_LOADED if loaded else SPEED_EMPTY
+        grade_frac = grade_pct / 100.0
+        if grade_frac < 0:
+            # на спуске мощность не ограничивает скорость — работает тормоз-замедлитель (допущение)
+            v_kmh = SPEED_DOWN_LOADED_KMH if loaded else SPEED_DOWN_EMPTY_KMH
         else:
-            v = SPEED_LOADED if loaded else SPEED_EMPTY
-        v = min(v, self.roads.limits.get(road, 50), self.speed_limit)
-        return v * self.rng.uniform(0.92, 1.05)
+            mass_kg = (truck.empty_weight_t + truck.payload) * 1000.0
+            resistance = grade_frac + ROLLING_RESISTANCE
+            v_ms = EFFICIENCY * truck.power_kw * 1000.0 / (mass_kg * G_ACCEL * resistance)
+            v_kmh = v_ms * 3.6
+        # паспортный максимум по факту один (не разделён на гружёный/порожний) — применяем к обоим состояниям
+        v_kmh = min(v_kmh, truck.top_speed_loaded_kmh, self.roads.limits.get(road, 50), self.speed_limit)
+        return v_kmh * self.rng.uniform(*SPEED_VARIANCE)
+
+    def _edge_fuel_l(self, truck, grade_pct, length_m):
+        """Топливо на отрезке length_m при уклоне grade_pct; на спуске (гравитация помогает) — 0."""
+        grade_frac = grade_pct / 100.0
+        resistance = grade_frac + ROLLING_RESISTANCE
+        if resistance <= 0 or length_m <= 0:
+            return 0.0
+        mass_kg = (truck.empty_weight_t + truck.payload) * 1000.0
+        energy_j = mass_kg * G_ACCEL * resistance * length_m / EFFICIENCY
+        energy_kwh = energy_j / 3_600_000.0
+        return energy_kwh * FUEL_L_PER_KWH
+
+    def _consume_fuel(self, truck, liters):
+        if liters <= 0:
+            return
+        truck.fuel = max(0.0, truck.fuel - liters / truck.tank_l * 100.0)
+        self.fuel_used_l_total += liters
 
     def _move(self, truck, dt):
         while dt > 0 and truck.path:
@@ -313,10 +389,10 @@ class Haulage:
             if step < remaining:
                 truck.seg_pos += step
                 self._place(truck, nxt, truck.seg_pos / length)
-                truck.fuel -= step / 1000 * FUEL_PER_KM["loaded" if truck.payload > 0 else "empty"]
+                self._consume_fuel(truck, self._edge_fuel_l(truck, grade, step))
                 return
             dt -= remaining / (v / 3.6)
-            truck.fuel -= remaining / 1000 * FUEL_PER_KM["loaded" if truck.payload > 0 else "empty"]
+            self._consume_fuel(truck, self._edge_fuel_l(truck, grade, remaining))
             truck.node = nxt
             truck.path.pop(0)
             truck.seg_pos = 0.0
@@ -344,7 +420,16 @@ class Haulage:
     def step(self, dt):
         self.read_scenarios()
         for truck in self.trucks:
-            if truck.state in ("hauling", "returning"):
+            self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
+            if truck.refuel_timer > 0:
+                truck.refuel_timer = max(0.0, truck.refuel_timer - dt)
+                truck.speed = 0.0
+                if truck.refuel_timer == 0.0:
+                    truck.fuel = 100.0
+                    self.refuels_total += 1
+                    truck.destination = ""
+                    self._return(truck)
+            elif truck.state in ("hauling", "returning"):
                 self._move(truck, dt)
             elif truck.state == "queued_load":
                 truck.wait += dt
@@ -352,8 +437,6 @@ class Haulage:
                 self._loading(truck, dt)
             elif truck.state == "dumping":
                 self._dumping(truck, dt)
-            if truck.fuel < 0:
-                truck.fuel = 0.0
         for ex in self.excavators.values():
             self._excavator(ex)
         for dump in self.dumps.values():
@@ -377,7 +460,8 @@ class Haulage:
             ex.loading = truck
             truck.state = "loading"
             truck.timer = 0.0
-            truck.passes = 0
+            truck.setup_done = False
+            truck.buckets_done = 0
             self.waits.append(truck.wait / 60.0)
             self.waits = self.waits[-30:]
         ex.state = "loading" if ex.loading else "idle"
@@ -386,16 +470,25 @@ class Haulage:
         ex = self.excavators[truck.excavator]
         info = self.face_info(ex.id)
         truck.timer += dt
-        pass_time = PASS_S / info["factor"]
-        while truck.timer >= pass_time and truck.payload < truck.capacity - 1:
-            truck.timer -= pass_time
-            bucket = min(BUCKET_T * self.rng.uniform(0.9, 1.05), truck.capacity - truck.payload)
+        if not truck.setup_done:
+            if truck.timer < LOAD_SETUP_S:
+                return
+            truck.timer -= LOAD_SETUP_S
+            truck.setup_done = True
+        cycle = BUCKET_CYCLE_S / info["factor"]
+        while truck.timer >= cycle and truck.buckets_done < truck.buckets_needed:
+            truck.timer -= cycle
+            bucket = min(EXCAVATOR_BUCKET_T * self.rng.uniform(*BUCKET_FILL_VAR), truck.capacity - truck.payload)
+            if bucket <= 0:
+                truck.buckets_done = truck.buckets_needed
+                break
             truck.cargo_cu = (truck.cargo_cu * truck.payload + info["cu"] * bucket) / (truck.payload + bucket)
             truck.cargo_clay = (truck.cargo_clay * truck.payload + info["clay"] * bucket) / (truck.payload + bucket)
             truck.payload += bucket
+            truck.buckets_done += 1
             ex.passes_total += 1
             ex.loaded_total += bucket
-        if truck.payload >= truck.capacity - 1:
+        if truck.buckets_done >= truck.buckets_needed:
             truck.cargo_type = CARGO_BY_ORE.get(info["ore"], "waste")
             truck.destination = info["dest"] if info["dest"] in self.dumps else DEST_BY_ORE.get(info["ore"], "dump-waste-1")
             ex.loading = None
@@ -411,7 +504,7 @@ class Haulage:
     def _dumping(self, truck, dt):
         dump = self.dumps[truck.destination]
         truck.timer += dt
-        if truck.timer >= DUMP_S.get(dump.id, 60.0):
+        if truck.timer >= DUMP_S:
             counters = self.delivered[dump.id]
             counters[0] += truck.payload
             counters[1] += truck.payload * truck.cargo_cu / 100.0
@@ -421,10 +514,11 @@ class Haulage:
             truck.cargo_cu = truck.cargo_clay = 0.0
             truck.trips += 1
             self.trips += 1
-            if truck.fuel < 15:
-                truck.fuel = 100.0  # заправка (допущение: мгновенно)
             dump.dumping = None
-            self._return(truck)
+            if truck.fuel < REFUEL_FUEL_PCT:
+                self._start_refuel(truck)
+            else:
+                self._return(truck)
 
     def _queue_positions(self):
         """Стоящие самосвалы выстраиваются цепочкой от точки — очередь видна в 3D."""
