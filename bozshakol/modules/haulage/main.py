@@ -81,12 +81,8 @@ HOME = ([1] * 6 + [2] * 5 + [3] * 6 + [4] * 4 + [5] * 3 + [6] * 4)
 CLAY_WINDOW_T = 2000.0        # т — скользящее окно, по которому считаем clay_share_crusher
 CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинистые забои, если подошли к 90 % лимита
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
-DISPATCH_AVG_SPEED_KMH = 45.0 # допущение: средняя скорость ПОРОЖНЕГО самосвала для оценки времени пути
-                               # при выборе экскаватора (сам ход считается по формуле мощности — это
-                               # только эвристика диспетчера; труки, которые тут оцениваются, всегда едут
-                               # порожняком — на погрузку. Было 25 км/ч — заметно медленнее того, что
-                               # порожний самосвал реально развивает (физика хода), это искусственно
-                               # раздувало разницу в расстоянии между экскаваторами против честной очереди)
+# оценка времени в пути для выбора экскаватора — та же формула хода (_mean_speed), что и у
+# самосвала на самом деле (без подобранной отдельной скорости диспетчера и без разброса)
 ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г): только если вскрыша быстрее больше чем на 0,5 мин
 
 
@@ -131,17 +127,6 @@ class Roads:
         while out[-1] != start:
             out.append(prev[out[-1]])
         return out[::-1]
-
-    def path_length_m(self, start, goal):
-        """Длина кратчайшего пути в метрах (без утяжеления) — для оценки времени в пути диспетчером."""
-        path = self.path(start, goal)
-        if path is None:
-            return None
-        total = 0.0
-        for a, b in zip(path, path[1:]):
-            length, _grade, _road = self.edge(a, b)
-            total += length
-        return total
 
     def edge(self, a, b):
         for m, length, grade, road in self.adj[a]:
@@ -344,30 +329,33 @@ class Haulage:
             return truck.timer
         return LOAD_SETUP_S + truck.buckets_done * cycle_s + truck.timer
 
-    def _remaining_path_m(self, truck):
-        """Оставшееся расстояние по ТЕКУЩЕМУ маршруту самосвала (а не «по прямой от узла»)."""
-        if not truck.path:
-            return 0.0
-        length, _grade, _road = self.roads.edge(truck.node, truck.path[0])
-        total = max(0.0, length - truck.seg_pos)
-        prev = truck.path[0]
-        for nxt in truck.path[1:]:
-            length, _grade, _road = self.roads.edge(prev, nxt)
-            total += length
+    def _path_time_s(self, truck, start_node, nodes):
+        """Время в пути по списку узлов (от start_node через nodes), той же формулой хода
+        (_mean_speed), что и реальное движение, — без случайного разброса (средние значения)."""
+        total = 0.0
+        prev = start_node
+        for nxt in nodes:
+            length, grade, road = self.roads.edge(prev, nxt)
+            v_kmh = self._mean_speed(truck, grade, road)
+            if v_kmh > 0:
+                total += length / (v_kmh / 3.6)
             prev = nxt
         return total
 
     def _eta_s(self, truck, dest_node):
-        """Оценка времени прибытия: для самосвала, уже едущего именно туда, — по остатку ЕГО
-        текущего пути; иначе — по кратчайшему пути от его текущего узла (допущенная скорость
-        диспетчера DISPATCH_AVG_SPEED_KMH — сам ход считается честно, это только эвристика выбора)."""
+        """Оценка времени прибытия честной формулой хода (та же, что и реальное движение, без
+        разброса): для самосвала, уже едущего именно туда, — по остатку ЕГО текущего пути
+        (первое недоехавшее ребро + остальные); иначе — по кратчайшему маршруту от текущего узла."""
         if truck.path and truck.path[-1] == dest_node:
-            dist = self._remaining_path_m(truck)
-        else:
-            dist = self.roads.path_length_m(truck.node, dest_node)
-            if dist is None:
-                return None
-        return dist / (DISPATCH_AVG_SPEED_KMH / 3.6)
+            length, grade, road = self.roads.edge(truck.node, truck.path[0])
+            remaining = max(0.0, length - truck.seg_pos)
+            v_kmh = self._mean_speed(truck, grade, road)
+            total = remaining / (v_kmh / 3.6) if v_kmh > 0 else 0.0
+            return total + self._path_time_s(truck, truck.path[0], truck.path[1:])
+        path = self.roads.path(truck.node, dest_node)
+        if path is None:
+            return None
+        return self._path_time_s(truck, truck.node, path[1:])  # path включает truck.node первым элементом
 
     def _excavator_free_at_s(self, ex):
         """Честно смоделировать очередь экскаватора (без нашего самосвала) и найти, через
@@ -494,7 +482,11 @@ class Haulage:
         truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
 
     # -- движение ------------------------------------------------------------
-    def _speed(self, truck, grade_pct, road):
+    def _mean_speed(self, truck, grade_pct, road):
+        """Средняя скорость по формуле мощности/паспорта, БЕЗ случайного разброса — та же
+        физика, что и в _speed(), используется и для реального хода (там поверх неё добавляется
+        разброс водителя), и диспетчером для честной оценки времени в пути (без допущенной
+        отдельной скорости — ровно то же самое, чем едет самосвал)."""
         loaded = truck.payload > 0
         grade_frac = grade_pct / 100.0
         if grade_frac < 0:
@@ -506,8 +498,10 @@ class Haulage:
             v_ms = EFFICIENCY * truck.power_kw * 1000.0 / (mass_kg * G_ACCEL * resistance)
             v_kmh = v_ms * 3.6
         # паспортный максимум по факту один (не разделён на гружёный/порожний) — применяем к обоим состояниям
-        v_kmh = min(v_kmh, truck.top_speed_loaded_kmh, self.roads.limits.get(road, 50), self.speed_limit)
-        return v_kmh * self.rng.uniform(*SPEED_VARIANCE)
+        return min(v_kmh, truck.top_speed_loaded_kmh, self.roads.limits.get(road, 50), self.speed_limit)
+
+    def _speed(self, truck, grade_pct, road):
+        return self._mean_speed(truck, grade_pct, road) * self.rng.uniform(*SPEED_VARIANCE)
 
     def _edge_fuel_l(self, truck, grade_pct, length_m):
         """Топливо на отрезке length_m при уклоне grade_pct; на спуске (гравитация помогает) — 0."""
