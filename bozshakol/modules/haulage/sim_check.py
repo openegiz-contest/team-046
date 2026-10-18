@@ -64,8 +64,14 @@ class FakeWatcher:
         self.speed_limit = speed_limit
         self.clay_limit = clay_limit
         self.dispatch_off = dispatch_off
+        self.crusher_bunker = 0.0       # т — заполняется эмуляцией бункера в run()
+        self.crusher_throughput = 0.0   # т/ч — заполняется эмуляцией бункера в run()
 
     def get(self, name, feature_name, default=None):
+        if name == "crusher-01" and feature_name == "bunker":
+            return self.crusher_bunker
+        if name == "crusher-01" and feature_name == "throughput":
+            return self.crusher_throughput
         if name in self.faces:
             return self.faces[name].get(feature_name, default)
         if name in self.accepting and feature_name == "accepting":
@@ -94,15 +100,37 @@ CONST_ACCEPTING = {"crusher-01": True, "stockpile-clay": True}
 
 
 def run(hm, dispatch_off, seed):
+    """Прогон модели; бункер дробилки эмулируется ЗДЕСЬ (не в main.py) ровно по логике и
+    цифрам модуля №4 (bozshakol/modules/processing/main.py, только читали, не меняли):
+    бункер пополняется разницей dispatch.delivered_crusher_t, срабатывает throughput
+    т/ч (CRUSHER_THROUGHPUT_REF_TPH), accepting=false при заполнении >= 85 % ёмкости
+    (CRUSHER_BUNKER_T_REF) — те же константы, что main.py использует в _crusher_wait_s,
+    единый источник (hm.CRUSHER_*), не продублированные числа."""
     random.seed(seed)
     with open(GEOMETRY_PATH, encoding="utf-8") as f:
         geometry = json.load(f)
-    watcher = FakeWatcher(CONST_FACES, CONST_ACCEPTING, dispatch_off=dispatch_off)
+    watcher = FakeWatcher(CONST_FACES, dict(CONST_ACCEPTING), dispatch_off=dispatch_off)
     model = hm.Haulage(geometry, watcher, clock=None, seed=seed)
     model.speed_limit = 50.0
     steps = int(MODEL_HOURS * 3600 / STEP_S)
+
+    bunker_stock = 0.0
+    last_delivered = 0.0
+    bunker_integral = 0.0
+    cap = hm.CRUSHER_BUNKER_T_REF * hm.CRUSHER_ACCEPT_FRACTION
     for _ in range(steps):
         model.step(STEP_S)
+        delivered = model.delivered["crusher-01"][0]
+        bunker_stock += max(0.0, delivered - last_delivered)
+        last_delivered = delivered
+        crushed = min(bunker_stock, hm.CRUSHER_THROUGHPUT_REF_TPH * STEP_S / 3600.0)
+        bunker_stock -= crushed
+        watcher.crusher_bunker = bunker_stock
+        watcher.crusher_throughput = crushed / STEP_S * 3600.0
+        watcher.accepting["crusher-01"] = bunker_stock < cap
+        bunker_integral += bunker_stock * STEP_S
+
+    model.avg_bunker_t = bunker_integral / (MODEL_HOURS * 3600.0)  # для отчёта (часть 4)
     return model
 
 

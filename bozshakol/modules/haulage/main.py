@@ -85,6 +85,16 @@ WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для av
 # самосвала на самом деле (без подобранной отдельной скорости диспетчера и без разброса)
 ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г): только если вскрыша быстрее больше чем на 0,5 мин
 
+# -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
+# запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
+# совпадают с CRUSHER_TPH/BUNKER_T у №4 (его допущение, см. bozshakol/data/SOURCES.md:
+# «запас ≈1.4 к средней подаче 2850 т/ч; бункер вмещает ≈20 самосвалов»), а не наша подгонка
+CRUSHER_THROUGHPUT_REF_TPH = 4000.0
+CRUSHER_BUNKER_T_REF = 3000.0
+CRUSHER_ACCEPT_FRACTION = 0.85  # №4 перестаёт принимать при bunker >= BUNKER_T * 0.85
+CRUSHER_OVERFLOW_MARGIN_S = 300.0  # допущение: на вскрышу из-за дробилки — только если это даёт
+                                    # выигрыш больше 5 мин, короткая обычная очередь не считается
+
 
 # ------------------------------------------------------------------ дороги
 class Roads:
@@ -381,6 +391,32 @@ class Haulage:
             t_free = max(t_free, eta) + svc
         return t_free
 
+    def _crusher_wait_s(self):
+        """Ожидаемое ожидание на дробилке для ещё одного гружёного самосвала — по очереди
+        (честно, как у экскаватора) и по бункеру. Бункер и пропускную способность берём из
+        признаков crusher-01 (bunker/throughput), которые публикует модуль №4 — читаем через
+        платформу, его код не трогаем. Порог приёмки (85 % ёмкости) и ёмкость/пропускная
+        способность по умолчанию — те же цифры, что у №4 (его допущение, source см. README):
+        CRUSHER_BUNKER_T_REF/CRUSHER_THROUGHPUT_REF_TPH ниже."""
+        dump = self.dumps["crusher-01"]
+        t_free = max(0.0, DUMP_S - dump.dumping.timer) if dump.dumping else 0.0
+        t_free += len(dump.queue) * DUMP_S
+        bunker = self.watcher.get("crusher-01", "bunker", None)
+        throughput = self.watcher.get("crusher-01", "throughput", None)
+        if bunker is None:
+            return t_free
+        throughput = throughput or CRUSHER_THROUGHPUT_REF_TPH
+        cap = CRUSHER_BUNKER_T_REF * CRUSHER_ACCEPT_FRACTION
+        fill_frac = min(1.0, max(0.0, bunker) / cap) if cap > 0 else 0.0
+        # чем ближе бункер к порогу приёмки, тем дольше реально придётся ждать — оценка:
+        # время, за которое дробилка освобождает «буферную» часть бункера (от порога до верха)
+        # нелинейно (куб): почти не штрафуем, пока бункер не заполнен всерьёз — резкий рост
+        # только у самого порога приёмки, иначе лишние самосвалы уходят на вскрышу раньше,
+        # чем дробилка реально испытывает недостаток руды
+        buffer_t = CRUSHER_BUNKER_T_REF * (1.0 - CRUSHER_ACCEPT_FRACTION)
+        bunker_wait_s = (fill_frac ** 3) * buffer_t / (throughput / 3600.0) if throughput > 0 else 0.0
+        return t_free + bunker_wait_s
+
     def _best_candidate(self, truck, ore, near_clay_limit):
         """Экскаватор нужной руды с минимальным «прибытие + ожидание» (т.е. минимальным временем,
         когда самосвал реально начнёт грузиться), и само это время; None, если кандидатов нет."""
@@ -416,18 +452,25 @@ class Haulage:
                 >= CLAY_SOFT_FACTOR * self.clay_limit_pct
         )
         best, best_start = self._best_candidate(truck, target_ore, near_clay_limit)
+        crusher_bound = target_ore == "sulphide" and best is not None
+        if crusher_bound:
+            # дробилка — общее узкое место для всех сульфидных экскаваторов разом: прибавляем
+            # честную оценку ожидания там к времени начала погрузки (п.4 части 2)
+            best_start = best_start + self._crusher_wait_s()
+        # «руда важнее вскрыши» (г), но не любой ценой, и ТОЛЬКО там, где вскрыша — реальная
+        # альтернатива: у дробилки (сульфидные экскаваторы) или когда своей руды не нашлось
+        # совсем. Глинистые самосвалы (единственный свой экскаватор-04, без узкого места на
+        # дробилке) на вскрышу из-за «выгоднее по времени» не переманиваем — это не их случай.
+        if target_ore != "waste" and (crusher_bound or best is None):
+            # а) кандидатов нужной руды нет совсем — сравниваем с вскрышей по обычному порогу (0,5 мин);
+            # б) дробилка перегружена — порог шире (CRUSHER_OVERFLOW_MARGIN_S): короткая обычная
+            #    очередь не должна разом разворачивать четверть парка на вскрышу
+            margin = CRUSHER_OVERFLOW_MARGIN_S if crusher_bound else ORE_PREFERENCE_MARGIN_S
+            waste_best, waste_start = self._best_candidate(truck, "waste", near_clay_limit=False)
+            if waste_best is not None and (best is None or waste_start + margin < best_start):
+                return waste_best
         if best:
             return best
-        # кандидатов нужной руды не нашлось вовсе (например, все её экскаваторы сломаны, или лимит
-        # глины исключил все сульфидные) — «руда важнее вскрыши» (г): пробуем вскрышу как запасной
-        # вариант, но только если она ощутимо (>0,5 мин) быстрее, чем просто остаться у домашнего
-        if target_ore != "waste":
-            waste_best, waste_start = self._best_candidate(truck, "waste", near_clay_limit=False)
-            if waste_best is not None:
-                home_eta = None if home.down else self._eta_s(truck, home.node)
-                home_start = math.inf if home_eta is None else max(home_eta, self._excavator_free_at_s(home))
-                if home_start - waste_start >= ORE_PREFERENCE_MARGIN_S:
-                    return waste_best
         # ничего не подошло — домашний как раньше, а если и он сломан — любой работающий
         if not home.down:
             return home.id
