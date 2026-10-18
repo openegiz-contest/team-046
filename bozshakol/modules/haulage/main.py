@@ -85,6 +85,19 @@ WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для av
 # самосвала на самом деле (без подобранной отдельной скорости диспетчера и без разброса)
 ORE_PREFERENCE_MARGIN_S = 30.0  # «руда важнее вскрыши» (г): только если вскрыша быстрее больше чем на 0,5 мин
 
+# -- план-диспетчер (часть 2 текущей задачи): «план» (целевой т/ч на экскаватор) + «самосвал»
+# (к самому отставшему от плана) — как в реальных системах диспетчеризации карьеров --
+# plant-sulphide/plant-clay (модуль №4, bozshakol/modules/processing/main.py) публикуют
+# только feed_rate (факт) и plan_fulfilment (%, факт/план) — самого значения плана (т/ч)
+# нет ни одного признака на платформе, поэтому берём константами: совпадают с собственными
+# SAG_TPH/CLAY_TPH модуля №4 и с bozshakol/data/SOURCES.md («Мощность фабрик» — источник
+# mining-technology.com, 25 и 5 млн т/год; «Производительность фабрик по часам» — расчёт
+# 25 и 5 млн т/год при ≈8770 ч работы) — проектная мощность, не наша подгонка.
+PLAN_CRUSHER_TPH = 2850.0   # сульфидная фабрика, т/ч (25 млн т/год)
+PLAN_CLAY_TPH = 570.0       # глинистая фабрика, т/ч (5 млн т/год)
+PLAN_RECOMPUTE_S = 10.0 * 60.0   # план пересчитывается не реже, чем раз в 10 модельных минут
+TRUCK_TIE_BREAK_S = 30.0         # «близкие значения» отставания от плана — 0,5 мин
+
 # -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
 # запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
 # совпадают с CRUSHER_TPH/BUNKER_T у №4 (его допущение, см. bozshakol/data/SOURCES.md:
@@ -264,6 +277,9 @@ class Excavator:
         self.operator_mult = 1.0       # множитель скорости погрузки на смену, равномерно 0.90-1.10
         self.next_short_stop_at = None  # момент (модельное время, с), когда наступит следующая остановка
         self.short_stop_until = 0.0     # до какого момента активна текущая остановка (0 — не остановлен)
+        # -- план-диспетчер (часть 2) --
+        self.plan_tph = 0.0             # текущая целевая производительность, т/ч (пересчёт — см. _update_plan)
+        self.plan_target_cum_t = 0.0    # накопленный план (интеграл plan_tph по времени), т — для «отставания»
 
     def features(self):
         return {
@@ -311,6 +327,11 @@ class Haulage:
         self.clay_limit_pct = 15.0
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
+        # -- план-диспетчер (часть 2) --
+        self.plan_crusher_tph = 0.0
+        self.plan_clay_tph = 0.0
+        self._last_plan_update_t = -math.inf  # форсируем расчёт плана на первом же шаге
+        self._plan_inputs = None
         # скользящие окна за последний модельный час для сверки (деque из (sim_time_s, значение))
         self._wait_exc = deque()     # (t, минуты ожидания у экскаватора)
         self._wait_dump = deque()    # (t, минуты ожидания на разгрузке) — по всем пунктам вместе
@@ -372,6 +393,71 @@ class Haulage:
             ex.operator_mult = self.rng.uniform(*EXCAVATOR_OPERATOR_MULT_RANGE)
         for t in self.trucks:
             t.driver_shift_mult = self.rng.uniform(*TRUCK_DRIVER_SHIFT_MULT_RANGE)
+
+    # -- план (часть 2 текущей задачи: «план» → целевой т/ч на каждый экскаватор) -------
+    def _possible_tph(self, ex):
+        """Собственная возможная производительность экскаватора, т/ч — если бы самосвалы
+        подходили без очереди: с учётом loading_factor забоя (платформа) и множителя
+        машиниста на смену (операнд operator_mult, п.2 разброса — не трогаем сам разброс,
+        только читаем текущее значение)."""
+        info = self.face_info(ex.id)
+        cycle_s = BUCKET_CYCLE_S / info["factor"] / ex.operator_mult
+        return EXCAVATOR_BUCKET_T * 3600.0 / cycle_s if cycle_s > 0 else 0.0
+
+    def _update_plan(self):
+        """Целевой т/ч для дробилки/склада глины — план фабрики (0, если сейчас не
+        принимает); делится между работающими экскаваторами своей руды пропорционально их
+        возможной производительности. Вскрышным — весь остаток пропускной способности
+        парка, т.е. их собственная полная возможная производительность (их никто не
+        ограничивает планом фабрики)."""
+        self.plan_crusher_tph = PLAN_CRUSHER_TPH if self.dumps["crusher-01"].accepting else 0.0
+        self.plan_clay_tph = PLAN_CLAY_TPH if self.dumps["stockpile-clay"].accepting else 0.0
+        targets = {"sulphide": self.plan_crusher_tph, "clay": self.plan_clay_tph}
+        possible = {ex.id: (0.0 if ex.down else self._possible_tph(ex)) for ex in self.excavators.values()}
+        ore_of = {ex.id: self.face_info(ex.id)["ore"] for ex in self.excavators.values()}
+        for ex in self.excavators.values():
+            if ex.down:
+                ex.plan_tph = 0.0
+            elif ore_of[ex.id] == "waste":
+                ex.plan_tph = possible[ex.id]
+            else:
+                group_total = sum(possible[e.id] for e in self.excavators.values()
+                                   if not e.down and ore_of[e.id] == ore_of[ex.id])
+                ex.plan_tph = targets.get(ore_of[ex.id], 0.0) * possible[ex.id] / group_total if group_total > 0 else 0.0
+
+    def _maybe_update_plan(self):
+        """Пересчёт плана не реже раза в 10 модельных минут, и сразу же при смене входных
+        данных плана (поломка экскаватора, дробилка/склад перестали принимать)."""
+        inputs = (self.dumps["crusher-01"].accepting, self.dumps["stockpile-clay"].accepting,
+                  tuple(ex.down for ex in self.excavators.values()))
+        if self._sim_t - self._last_plan_update_t >= PLAN_RECOMPUTE_S or inputs != self._plan_inputs:
+            self._update_plan()
+            self._last_plan_update_t = self._sim_t
+            self._plan_inputs = inputs
+
+    def _committed_tons(self, ex):
+        """Тонны, уже «зачтённые» экскаватору в счёт плана: фактически погруженное плюс то,
+        что довезут уже закреплённые за ним самосвалы (грузится сейчас / стоит в очереди /
+        едет сюда порожним) — чтобы отставание не росло у экскаватора, у которого самосвалов
+        уже достаточно, просто они пока не доехали."""
+        total = ex.loaded_total
+        if ex.loading:
+            total += ex.loading.capacity
+        for t in ex.queue:
+            total += t.capacity
+        for t in self.trucks:
+            if t.state == "returning" and t.destination == ex.id and t is not ex.loading and t not in ex.queue:
+                total += t.capacity
+        return total
+
+    def _plan_deficit_time_s(self, ex):
+        """На сколько секунд экскаватор отстаёт от своего план-графика (п.3 части 2: «у кого
+        по план-графику следующее обслуживание должно было начаться раньше»). Положительное —
+        отстаёт (нужен самосвал раньше), отрицательное — идёт с опережением плана."""
+        deficit_t = ex.plan_target_cum_t - self._committed_tons(ex)
+        if ex.plan_tph > 0:
+            return deficit_t / (ex.plan_tph / 3600.0)
+        return math.inf if deficit_t > 0 else 0.0
 
     # -- выбор экскаватора ---------------------------------------------------
     def _candidate_ore(self, truck):
@@ -476,9 +562,15 @@ class Haulage:
         return t_free + bunker_wait_s
 
     def _best_candidate(self, truck, ore, near_clay_limit):
-        """Экскаватор нужной руды с минимальным «прибытие + ожидание» (т.е. минимальным временем,
-        когда самосвал реально начнёт грузиться), и само это время; None, если кандидатов нет."""
-        best, best_start = None, math.inf
+        """Экскаватор нужной руды, который сильнее всего отстаёт от своего план-задания к
+        моменту прибытия самосвала (часть 2 текущей задачи — «самый нуждающийся экскаватор»):
+        score = время в пути + отставание от плана сейчас (эквивалент «на сколько раньше
+        относительно прибытия должно было начаться следующее обслуживание»); при разнице
+        < 0,5 мин (TRUCK_TIE_BREAK_S) — выбор по честному «путь + ожидание», как раньше.
+        Возвращает (id экскаватора, честная оценка «путь + ожидание») — само «честное» время
+        используется ВЫШЕ (choose_excavator) для сравнения с вскрышей и ожидания у дробилки,
+        а не для выбора между экскаваторами одной руды."""
+        candidates = []
         for ex in self.excavators.values():
             if ex.down:
                 continue
@@ -490,10 +582,21 @@ class Haulage:
             my_eta = self._eta_s(truck, ex.node)
             if my_eta is None:
                 continue
-            start = max(my_eta, self._excavator_free_at_s(ex))
-            if start < best_start:
-                best, best_start = ex.id, start
-        return best, best_start
+            honest_start = max(my_eta, self._excavator_free_at_s(ex))
+            score = my_eta + self._plan_deficit_time_s(ex)
+            candidates.append((score, honest_start, ex.id))
+        if not candidates:
+            return None, math.inf
+        best_score = max(c[0] for c in candidates)
+        near = [c for c in candidates if best_score - c[0] < TRUCK_TIE_BREAK_S]
+        chosen = min(near, key=lambda c: c[1])[2]
+        # честная оценка «путь + ожидание» для сравнения с вскрышей (CRUSHER_OVERFLOW_MARGIN_S,
+        # ORE_PREFERENCE_MARGIN_S в choose_excavator) — минимум по ВСЕМ кандидатам этой руды, а
+        # не время у того, кого выбрали по плану: иначе «самый отставший от плана» экскаватор
+        # (у которого честная очередь может быть куда длиннее минимальной) искусственно портил
+        # бы эту оценку и без причины разворачивал самосвалы на вскрышу
+        best_start = min(c[1] for c in candidates)
+        return chosen, best_start
 
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
@@ -700,6 +803,9 @@ class Haulage:
         self.read_scenarios()
         self._sim_t += dt
         self._trim_windows()
+        self._maybe_update_plan()
+        for ex in self.excavators.values():
+            ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
         for truck in self.trucks:
             self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
             if truck.refuel_timer > 0:
@@ -948,6 +1054,8 @@ class Haulage:
             "refuels_total": feature(self.refuels_total, "шт"),
             "clay_share_crusher": feature(round(clay_share, 2), "%"),
             "clay_limit": feature(self.clay_limit_pct, "%"),
+            "plan_crusher_tph": feature(round(self.plan_crusher_tph, 1), "т/ч"),
+            "plan_clay_tph": feature(round(self.plan_clay_tph, 1), "т/ч"),
         }
 
     def road_features(self, road):
