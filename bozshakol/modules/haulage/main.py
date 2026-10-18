@@ -664,8 +664,6 @@ class Haulage:
     def dispatch_features(self):
         hauling = sum(1 for t in self.trucks if t.state in ("hauling", "returning"))
         queued = sum(1 for t in self.trucks if t.state in ("queued_load", "queued_dump"))
-        down = sum(1 for t in self.trucks if self.excavators.get(t.excavator) and self.excavators[t.excavator].down
-                   and t.state == "queued_load")
         assignments = {t.id: t.excavator for t in self.trucks}
         hours = min(1.0, self._sim_t / WAIT_WINDOW_MODEL_S) if self._sim_t > 0 else 0.0
         window_h = max(hours, 1e-6)
@@ -673,8 +671,10 @@ class Haulage:
         avg_wait_dump = (sum(v for _, v in self._wait_dump) / len(self._wait_dump)) if self._wait_dump else 0.0
         trips_per_hour = len(self._trips_log) / window_h
         tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
-        not_down_or_queued_issue = len(self.trucks) - queued - down
-        fleet_utilization = 100.0 * max(0, not_down_or_queued_issue) / len(self.trucks)
+        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке); у грузовиков нет
+        # отдельного state="down" (ломаются только экскаваторы) — простой у сломанного экскаватора
+        # уже учтён через queued_load, отдельно вычитать не нужно (было задвоение).
+        fleet_utilization = 100.0 * max(0, len(self.trucks) - queued) / len(self.trucks)
         clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
                       if self._clay_crusher_total_t > 0 else 0.0)
         return {
