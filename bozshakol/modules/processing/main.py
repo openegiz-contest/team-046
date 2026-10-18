@@ -41,6 +41,7 @@ BELT_SPEED = 2.5        # м/с — как в библиотеке моделе�
 COARSE_CAP = 40000.0    # ≈ 12 ч питания сульфидной фабрики (допущение)
 CLAY_CAP = 120000.0     # склад глинистой руды — долговременный (допущение)
 BULK_DENSITY = 1.6      # т/м³ насыпная плотность дроблёной руды (допущение) — для объёма штабеля
+STOP_WARN_H = 24.0      # stop_expected = true, если фабрика встанет раньше чем через сутки
 
 # -- извлечение меди (простые формулы, калибровка — в README) --------------------------------
 # сульфидная: 75,5 % при 0,41 % Cu и 5 % глины; +2 п.п. на каждые 0,1 % Cu; −0,4 п.п. на 1 % глины сверх 5 %
@@ -176,7 +177,7 @@ def main():
     c_crusher, c_crusher_cu, c_clay, c_clay_cu = Counter(), Counter(), Counter(), Counter()
     belt = []                 # руда на ленте: [осталось ехать, с; тонны; показатели]
     blocked = False           # склад полон — конвейер и дробилка стоят
-    inflow_ema = 0.0          # сглаженный приход на склад, т/ч
+    inflow_ema = PLAN_SULPH_TPH  # сглаженный приход на склад, т/ч (старт = план, без ложного прогноза остановки)
     received_crusher = 0.0
     energy_shift = 0.0
     cu_total = {"s": 0.0, "c": 0.0}
@@ -333,7 +334,7 @@ def main():
             "volume": feature(r(coarse.stock / BULK_DENSITY, 0), "м³"),
             "hours_left": feature(r(hours_left, 2), "ч"),
             "stop_forecast": feature(forecast),
-            "stop_expected": feature(h_stop is not None),
+            "stop_expected": feature(h_stop is not None and h_stop < STOP_WARN_H),
             "inflow": feature(r(inflow_ema, 1), "т/ч"), "outflow": feature(r(feed_tph, 1), "т/ч"),
             "full": feature(blocked),
             "received_total": feature(r(coarse.received, 1), "т"),

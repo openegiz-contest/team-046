@@ -11,7 +11,10 @@
    "plan_mtpa": 29.44,
    "plan_tph": 3360,
    "plan_note": "план = факт 2025 г.: 35,7 млн т переработано всего − 6,26 млн т глинистой руды (KAZ Minerals Q4 2025); раздельной переработки по фабрикам в отчёте нет — допущение",
-   "recovery_cu_2025_pct": 73.4
+   "recovery_cu_2025_pct": 73.4,
+   "design_tph": 3360,
+   "design_tph_note": "план по факту 2025 г. (поле читает общая панель 3D-сцены как «план»); проектная — design_capacity_tph",
+   "design_capacity_tph": 2854
   },
   "features": {
    "feed_rate": {
@@ -86,7 +89,10 @@
    "capacity_note": "проектная мощность (Mining Technology, KAZ Minerals)",
    "plan_mtpa": 6.26,
    "plan_tph": 715,
-   "plan_note": "план = добыча глинистой руды 2025 г. 6,26 млн т (KAZ Minerals Q4 2025), среднее за 8 760 ч"
+   "plan_note": "план = добыча глинистой руды 2025 г. 6,26 млн т (KAZ Minerals Q4 2025), среднее за 8 760 ч",
+   "design_tph": 715,
+   "design_tph_note": "план по факту 2025 г. (поле читает общая панель 3D-сцены как «план»); проектная — design_capacity_tph",
+   "design_capacity_tph": 571
   },
   "features": {
    "feed_rate": {
