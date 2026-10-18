@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """bz-haulage — транспорт и диспетчеризация (участник №2).
 
-Цикл самосвала по паспортам техники: погрузка ковшами экскаватора, ход по мощности
-и массе своего паспорта, разгрузка, топливо и заправка. Диспетчер (выбор экскаватора,
-показатели в dispatch) — пока как в заглушке, дорабатывается следующим шагом.
+Самосвалы ездят по дорогам из core/geometry.json между экскаваторами и пунктами
+разгрузки (дробилка, склад глинистой руды, отвал) циклом «погрузка ковшами по
+паспорту экскаватора → ход по мощности и массе своего паспорта → разгрузка →
+обратно». Очереди у экскаваторов и на разгрузке. Закреплённое распределение;
+в режиме auto диспетчер выбирает экскаватор по ожидаемому времени в пути и
+ожидании, с учётом того, принимают ли дробилка/склад и лимита доли глины.
 
 Чужие двойники читаются только через платформу (TwinWatcher): забои face-*
 (содержание, глина, скорость погрузки, пункт разгрузки), crusher-01.accepting,
@@ -15,6 +18,7 @@ import json
 import math
 import random
 import time
+from collections import deque
 
 from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging
 
@@ -60,7 +64,7 @@ FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (пло
 
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
 REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке (временная реализация)
-# ВРЕМЕННО, пока у координатора нет состояния truck-*.state = "refueling" (запрос в договор отправлен):
+# ВРЕМЕННО, пока у координатора нет состояния truck-*.state = "refueling" (см. запрос в договор):
 # заправка сделана как простой с destination="заправка" при текущем state. Когда состояние появится,
 # переключить достаточно в одном месте — см. _start_refuel().
 
@@ -72,6 +76,13 @@ CARGO_BY_ORE = {"sulphide": "sulphide", "clay": "clay", "waste": "waste"}
 DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dump-waste-1"}
 # домашние экскаваторы: 6+5+6 на сульфидные забои, 4 на глинистый, 3+4 на вскрышу
 HOME = ([1] * 6 + [2] * 5 + [3] * 6 + [4] * 4 + [5] * 3 + [6] * 4)
+
+# -- диспетчер: лимит доли глины в руде, привезённой на дробилку (§4 договора, clay_limit) --
+CLAY_WINDOW_T = 2000.0        # т — скользящее окно, по которому считаем clay_share_crusher
+CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинистые забои, если подошли к 90 % лимита
+WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
+DISPATCH_AVG_SPEED_KMH = 25.0 # допущение: средняя скорость для оценки времени пути при выборе экскаватора
+                               # (сам ход считается по формуле мощности — это только эвристика диспетчера)
 
 
 # ------------------------------------------------------------------ дороги
@@ -89,7 +100,7 @@ class Roads:
         self.closed = set()
 
     def path(self, start, goal):
-        """Кратчайший путь по открытым дорогам (Дейкстра); None — недостижимо."""
+        """Кратчайший путь по открытым дорогам (Дейкстра, вес — «утяжелённая на подъёме» длина); None — недостижимо."""
         if start == goal:
             return [start]
         dist = {start: 0.0}
@@ -104,7 +115,7 @@ class Roads:
             for m, length, grade, road in self.adj[n]:
                 if road in self.closed:
                     continue
-                nd = d + length * (1.0 + max(0.0, grade) / 10.0)  # подъём дороже
+                nd = d + length * (1.0 + max(0.0, grade) / 10.0)
                 if nd < dist.get(m, math.inf):
                     dist[m] = nd
                     prev[m] = n
@@ -115,6 +126,17 @@ class Roads:
         while out[-1] != start:
             out.append(prev[out[-1]])
         return out[::-1]
+
+    def path_length_m(self, start, goal):
+        """Длина кратчайшего пути в метрах (без утяжеления) — для оценки времени в пути диспетчером."""
+        path = self.path(start, goal)
+        if path is None:
+            return None
+        total = 0.0
+        for a, b in zip(path, path[1:]):
+            length, _grade, _road = self.edge(a, b)
+            total += length
+        return total
 
     def edge(self, a, b):
         for m, length, grade, road in self.adj[a]:
@@ -156,7 +178,8 @@ class Truck:
         self.path = []
         self.seg_pos = 0.0
         self.timer = 0.0
-        self.wait = 0.0
+        self.wait = 0.0                 # ожидание в очереди у экскаватора (с прибытия)
+        self.dump_wait = 0.0            # ожидание в очереди на разгрузке
         self.setup_done = False
         self.buckets_done = 0
         self.refuel_timer = 0.0
@@ -229,11 +252,21 @@ class Haulage:
         self.mode = "auto"
         self.delivered = {"crusher-01": [0.0, 0.0], "stockpile-clay": [0.0, 0.0], "dump-waste-1": [0.0, 0.0]}
         self.trips = 0
-        self.waits = []
+        self.waits = []            # последние ожидания у экскаватора, мин (скользящее для совместимости)
         self.road_open = {r: True for r in ("road-ramp-1", "road-ramp-2", "road-crusher")}
         self.rng = random.Random(42)
+        self.clay_limit_pct = 15.0
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
+        # скользящие окна за последний модельный час для сверки (деque из (sim_time_s, значение))
+        self._wait_exc = deque()     # (t, минуты ожидания у экскаватора)
+        self._wait_dump = deque()    # (t, минуты ожидания на разгрузке)
+        self._trips_log = deque()    # (t,) — момент завершения разгрузки (рейса)
+        self._tph_log = {"crusher-01": deque(), "stockpile-clay": deque(), "dump-waste-1": deque()}  # (t, тонн)
+        self._clay_crusher_log = deque()  # (тонн, тонн_глины) — последние CLAY_WINDOW_T тонн на дробилку
+        self._clay_crusher_total_t = 0.0
+        self._clay_crusher_total_clay_t = 0.0
+        self._sim_t = 0.0
         # начальное положение: часть самосвалов уже в пути, чтобы сцена была живой
         for t in self.trucks[::3]:
             ex = self.excavators[t.excavator]
@@ -270,24 +303,77 @@ class Haulage:
         self.dumps["crusher-01"].accepting = bool(w.get("crusher-01", "accepting", True))
         self.dumps["stockpile-clay"].accepting = bool(w.get("stockpile-clay", "accepting", True))
         self.speed_limit = float(w.get("mine", "speed_limit", 50) or 50)
+        self.clay_limit_pct = float(w.get("dispatch", "clay_limit", 15) or 15)
 
     # -- выбор экскаватора ---------------------------------------------------
+    def _candidate_ore(self, truck):
+        """Какую руду должен сейчас возить самосвал — обычно как у домашнего забоя, но если
+        пункт разгрузки этой руды не принимает (crusher_stop/sag_maintenance), едем на вскрышу,
+        пока он не примет снова — выбор ниже считается заново на каждом освобождении самосвала,
+        так что возврат на руду происходит сам, без отдельного кода."""
+        home_ore = self.face_info(self.excavators[truck.home].id)["ore"]
+        if home_ore == "sulphide" and not self.dumps["crusher-01"].accepting:
+            return "waste"
+        if home_ore == "clay" and not self.dumps["stockpile-clay"].accepting:
+            return "waste"
+        return home_ore
+
+    def _truck_load_time_s(self, truck):
+        """Оценка полного времени погрузки самосвала (без текущего loading_factor забоя — это
+        эвристика диспетчера для сравнения экскаваторов, а не точный прогноз)."""
+        return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed
+
+    def _expected_wait_s(self, ex, travel_s):
+        """Ожидаемое ожидание у экскаватора: сколько он будет занят тем, что уже стоит у него
+        или едет к нему, за вычетом времени нашего пути туда (не меньше 0)."""
+        total = 0.0
+        if ex.loading:
+            total += self._truck_load_time_s(ex.loading)
+        for t in ex.queue:
+            total += self._truck_load_time_s(t)
+        for t in self.trucks:
+            if t is ex.loading or t in ex.queue:
+                continue
+            if t.state == "returning" and t.destination == ex.id:
+                total += self._truck_load_time_s(t)
+        return max(0.0, total - travel_s)
+
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
         if self.mode == "manual":
+            # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
             return home.id
-        home_ore = self.face_info(home.id)["ore"]
+        target_ore = self._candidate_ore(truck)
+        # (в) доля глины на дробилке близка к лимиту — не грузить на неё ещё более глинистые забои
+        near_clay_limit = (
+            target_ore == "sulphide" and self._clay_crusher_total_t > 0 and self.clay_limit_pct > 0
+            and (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t)
+                >= CLAY_SOFT_FACTOR * self.clay_limit_pct
+        )
         best, best_score = None, math.inf
         for ex in self.excavators.values():
-            if ex.down or self.face_info(ex.id)["ore"] != home_ore:
+            if ex.down:
                 continue
-            path = self.roads.path(truck.node, ex.node)
-            if path is None:
+            info = self.face_info(ex.id)
+            if info["ore"] != target_ore:
                 continue
-            score = len(ex.queue) + (1 if ex.loading else 0) + (0 if ex.id == truck.home else 0.5)
+            if near_clay_limit and info["clay"] > self.clay_limit_pct:
+                continue
+            length_m = self.roads.path_length_m(truck.node, ex.node)
+            if length_m is None:
+                continue
+            travel_s = length_m / (DISPATCH_AVG_SPEED_KMH / 3.6)
+            score = travel_s + self._expected_wait_s(ex, travel_s)
             if score < best_score:
                 best, best_score = ex.id, score
-        return best or home.id
+        if best:
+            return best
+        # ничего не подошло (например, все экскаваторы нужной руды сломаны) — домашний как раньше,
+        # а если и он сломан — любой работающий, лишь бы самосвал не завис совсем
+        if not home.down:
+            return home.id
+        working = next((e.id for e in self.excavators.values() if not e.down), None)
+        return working or home.id
 
     # -- погрузка ------------------------------------------------------------
     def _load_instantly(self, truck, ex):
@@ -410,6 +496,7 @@ class Haulage:
         if truck.state == "hauling":
             truck.state = "queued_dump"
             truck.timer = 0.0
+            truck.dump_wait = 0.0
             self.dumps[truck.destination].queue.append(truck)
         elif truck.state == "returning":
             truck.state = "queued_load"
@@ -419,6 +506,8 @@ class Haulage:
     # -- шаг модели ----------------------------------------------------------
     def step(self, dt):
         self.read_scenarios()
+        self._sim_t += dt
+        self._trim_windows()
         for truck in self.trucks:
             self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
             if truck.refuel_timer > 0:
@@ -433,6 +522,8 @@ class Haulage:
                 self._move(truck, dt)
             elif truck.state == "queued_load":
                 truck.wait += dt
+            elif truck.state == "queued_dump":
+                truck.dump_wait += dt
             elif truck.state == "loading":
                 self._loading(truck, dt)
             elif truck.state == "dumping":
@@ -462,8 +553,10 @@ class Haulage:
             truck.timer = 0.0
             truck.setup_done = False
             truck.buckets_done = 0
-            self.waits.append(truck.wait / 60.0)
+            wait_min = truck.wait / 60.0
+            self.waits.append(wait_min)
             self.waits = self.waits[-30:]
+            self._wait_exc.append((self._sim_t, wait_min))
         ex.state = "loading" if ex.loading else "idle"
 
     def _loading(self, truck, dt):
@@ -500,6 +593,7 @@ class Haulage:
             dump.dumping = truck
             truck.state = "dumping"
             truck.timer = 0.0
+            self._wait_dump.append((self._sim_t, truck.dump_wait / 60.0))
 
     def _dumping(self, truck, dt):
         dump = self.dumps[truck.destination]
@@ -509,16 +603,35 @@ class Haulage:
             counters[0] += truck.payload
             counters[1] += truck.payload * truck.cargo_cu / 100.0
             dump.received += truck.payload
+            self._tph_log[dump.id].append((self._sim_t, truck.payload))
+            if dump.id == "crusher-01":
+                self._clay_crusher_total_t += truck.payload
+                self._clay_crusher_total_clay_t += truck.payload * truck.cargo_clay / 100.0
+                self._clay_crusher_log.append((truck.payload, truck.payload * truck.cargo_clay / 100.0))
+                while self._clay_crusher_total_t > CLAY_WINDOW_T and len(self._clay_crusher_log) > 1:
+                    t, ct = self._clay_crusher_log.popleft()
+                    self._clay_crusher_total_t -= t
+                    self._clay_crusher_total_clay_t -= ct
             truck.payload = 0.0
             truck.cargo_type = "none"
             truck.cargo_cu = truck.cargo_clay = 0.0
             truck.trips += 1
             self.trips += 1
+            self._trips_log.append(self._sim_t)
             dump.dumping = None
             if truck.fuel < REFUEL_FUEL_PCT:
                 self._start_refuel(truck)
             else:
                 self._return(truck)
+
+    def _trim_windows(self):
+        horizon = self._sim_t - WAIT_WINDOW_MODEL_S
+        for dq in (self._wait_exc, self._wait_dump, self._trips_log):
+            while dq and (dq[0][0] if isinstance(dq[0], tuple) else dq[0]) < horizon:
+                dq.popleft()
+        for dq in self._tph_log.values():
+            while dq and dq[0][0] < horizon:
+                dq.popleft()
 
     def _queue_positions(self):
         """Стоящие самосвалы выстраиваются цепочкой от точки — очередь видна в 3D."""
@@ -550,10 +663,24 @@ class Haulage:
     # -- публикация ----------------------------------------------------------
     def dispatch_features(self):
         hauling = sum(1 for t in self.trucks if t.state in ("hauling", "returning"))
+        queued = sum(1 for t in self.trucks if t.state in ("queued_load", "queued_dump"))
+        down = sum(1 for t in self.trucks if self.excavators.get(t.excavator) and self.excavators[t.excavator].down
+                   and t.state == "queued_load")
         assignments = {t.id: t.excavator for t in self.trucks}
+        hours = min(1.0, self._sim_t / WAIT_WINDOW_MODEL_S) if self._sim_t > 0 else 0.0
+        window_h = max(hours, 1e-6)
+        avg_wait_exc = (sum(v for _, v in self._wait_exc) / len(self._wait_exc)) if self._wait_exc else 0.0
+        avg_wait_dump = (sum(v for _, v in self._wait_dump) / len(self._wait_dump)) if self._wait_dump else 0.0
+        trips_per_hour = len(self._trips_log) / window_h
+        tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
+        not_down_or_queued_issue = len(self.trucks) - queued - down
+        fleet_utilization = 100.0 * max(0, not_down_or_queued_issue) / len(self.trucks)
+        clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
+                      if self._clay_crusher_total_t > 0 else 0.0)
         return {
             "mode": feature(self.mode),
-            "avg_wait_excavator": feature(round(sum(self.waits) / len(self.waits), 2) if self.waits else 0.0, "мин"),
+            "avg_wait_excavator": feature(round(avg_wait_exc, 2), "мин"),
+            "avg_wait_dump": feature(round(avg_wait_dump, 2), "мин"),
             "trucks_hauling": feature(hauling, "шт"),
             "trucks_down": feature(sum(1 for t in self.trucks if t.state == "down"), "шт"),
             "assignments": feature(json.dumps(assignments), "json"),
@@ -566,6 +693,15 @@ class Haulage:
             "queue_crusher": feature(len(self.dumps["crusher-01"].queue), "шт"),
             "queue_clay": feature(len(self.dumps["stockpile-clay"].queue), "шт"),
             "queue_dump": feature(len(self.dumps["dump-waste-1"].queue), "шт"),
+            "trips_per_hour": feature(round(trips_per_hour, 1), "рейсов/ч"),
+            "tph_crusher": feature(round(tph["crusher-01"], 1), "т/ч"),
+            "tph_clay": feature(round(tph["stockpile-clay"], 1), "т/ч"),
+            "tph_dump": feature(round(tph["dump-waste-1"], 1), "т/ч"),
+            "fleet_utilization": feature(round(fleet_utilization, 1), "%"),
+            "fuel_used_l": feature(round(self.fuel_used_l_total, 1), "л"),
+            "refuels_total": feature(self.refuels_total, "шт"),
+            "clay_share_crusher": feature(round(clay_share, 2), "%"),
+            "clay_limit": feature(self.clay_limit_pct, "%"),
         }
 
     def road_features(self, road):
