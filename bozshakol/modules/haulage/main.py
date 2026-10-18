@@ -494,6 +494,8 @@ class Haulage:
 
     def _arrived(self, truck):
         if truck.state == "hauling":
+            if self._reroute_if_not_accepting(truck):
+                return  # переадресован на отвал — продолжает ехать, в очередь пока не встаёт
             truck.state = "queued_dump"
             truck.timer = 0.0
             truck.dump_wait = 0.0
@@ -502,6 +504,25 @@ class Haulage:
             truck.state = "queued_load"
             truck.wait = 0.0
             self.excavators[truck.excavator].queue.append(truck)
+
+    def _reroute_if_not_accepting(self, truck):
+        """Пункт разгрузки перестал принимать (crusher_stop/sag_maintenance) — везём на отвал
+        вскрыши вместо того, чтобы встать в очередь, которая никогда не продвинется."""
+        dump = self.dumps[truck.destination]
+        if dump.accepting or truck.destination == "dump-waste-1":
+            return False
+        return self._reroute_to_dest(truck, "dump-waste-1")
+
+    def _reroute_to_dest(self, truck, dest_id):
+        dest = self.dumps[dest_id]
+        path = self.roads.path(truck.node, dest.node)
+        if path is None:
+            return False
+        truck.destination = dest_id
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
+        truck.state = "hauling"
+        return True
 
     # -- шаг модели ----------------------------------------------------------
     def step(self, dt):
@@ -531,6 +552,14 @@ class Haulage:
         for ex in self.excavators.values():
             self._excavator(ex)
         for dump in self.dumps.values():
+            if not dump.accepting and dump.id != "dump-waste-1" and dump.queue:
+                # уже стоявшие в очереди, когда пункт перестал принимать — тоже на отвал,
+                # иначе будут ждать бесконечно (дробилка/склад снова начнут принимать не скоро)
+                stuck = dump.queue
+                dump.queue = []
+                for truck in stuck:
+                    if not self._reroute_to_dest(truck, "dump-waste-1"):
+                        dump.queue.append(truck)  # пути нет совсем — только ждать на месте
             self._dump_point(dump)
         self._queue_positions()
 
