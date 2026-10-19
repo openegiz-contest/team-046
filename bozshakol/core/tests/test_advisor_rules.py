@@ -118,6 +118,11 @@ class Rules(unittest.TestCase):
         self.assertEqual(a[0]["priority"], "important")
         # привоз в норме — совета нет
         self.assertEqual(R.advise(s, history(3360.7, inflow=4200.0)), [])
+        # авария устранена, последние 15 мин привоз в норме — совет снят, хотя среднее за час ещё 84 %
+        s["excavator-02"]["state"] = "loading"
+        h = history(3360.7, inflow=2800.0)
+        h = [(t, f, p, 4100.0 if t >= h[-1][0] - 900 else i) for (t, f, p, i) in h]
+        self.assertEqual(R.advise(s, h), [])
 
     def test_fleet_wait_too_long(self):
         s = base_snap()

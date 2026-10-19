@@ -18,6 +18,7 @@ RECOVERY_PER_CLAY = 0.4
 PLAN_LIMIT_PCT = 95.0        # выполнение плана за последний модельный час, ниже — совет в)
 PLAN_WINDOW_S = 3600         # окно «последний модельный час»
 PLAN_MIN_SPAN_S = 2700       # минимум данных в окне (45 мин), иначе совет не даётся
+RECOVER_WINDOW_S = 900       # последние 15 мин: если привоз уже в норме, совет по привозу снимается
 WAIT_LIMIT_MIN = 2.0         # ожидание у экскаватора в «авто», выше — совет г)
 WAIT_TARGET_MIN = 1.25       # ориентир Бозшаколя 1–1,5 мин
 BASE_SPEED_KMH = 50          # ограничение без метели (mine.speed_limit)
@@ -222,6 +223,9 @@ def rule_inflow(snap, history):
     pct = inflow / plan * 100
     if pct >= PLAN_LIMIT_PCT:
         return None
+    recent = [h[3] for h in window if window[-1][0] - h[0] <= RECOVER_WINDOW_S]
+    if recent and sum(recent) / len(recent) / plan * 100 >= PLAN_LIMIT_PCT:
+        return None            # привоз уже восстановился, среднее за час ещё догоняет — совет снимаем
     sp = snap.get("stockpile-coarse") or {}
     hours = _f(sp, "hours_left")
     causes, target = _bottlenecks(snap)
