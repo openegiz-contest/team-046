@@ -790,15 +790,17 @@ class Haulage:
                 # ребру, — вплоть до сотен метров за один шаг (настоящий баг части 3 этой
                 # задачи, найден на проверке road_closed, не только в местах из описания)
                 if truck.seg_pos > 0:
-                    v = self._speed(truck, grade, road)
+                    # едем НАЗАД по тому же ребру — уклон обратный (подъём вперёд = спуск назад)
+                    back_grade = -grade
+                    v = self._speed(truck, back_grade, road)
                     step = v / 3.6 * dt
                     if step < truck.seg_pos:
                         truck.seg_pos -= step
                         self._place(truck, nxt, truck.seg_pos / length)
-                        self._consume_fuel(truck, self._edge_fuel_l(truck, grade, step))
+                        self._consume_fuel(truck, self._edge_fuel_l(truck, back_grade, step))
                         return
                     dt -= truck.seg_pos / (v / 3.6)
-                    self._consume_fuel(truck, self._edge_fuel_l(truck, grade, truck.seg_pos))
+                    self._consume_fuel(truck, self._edge_fuel_l(truck, back_grade, truck.seg_pos))
                     truck.seg_pos = 0.0
                     self._place(truck, truck.node, 1.0)
                 goal = truck.path[-1]
