@@ -657,32 +657,40 @@ class Haulage:
         # новый рейс — новый случайный множитель скорости водителя (п.4 разброса)
         truck.trip_mult = min(1.0 + TRUCK_DRIVER_TRIP_CLIP, max(1.0 - TRUCK_DRIVER_TRIP_CLIP,
                                self.rng.gauss(1.0, TRUCK_DRIVER_TRIP_STD)))
+        truck.state = "hauling"
         dest = self.dumps[truck.destination]
         path = self.roads.path(truck.node, dest.node)
-        if path is None:  # дорога закрыта — ждём на месте
-            truck.state = "queued_dump"
-            truck.speed = 0.0
+        if path is None:
+            # дороги к пункту разгрузки нет (road_closed) — ждём на месте и пробуем снова
+            # каждый шаг (часть 3 задачи по проверке координатора), никуда не переадресуем
+            truck.travel_pending = True
+            truck.travel_kind = "depart"
             truck.path = []
+            truck.speed = 0.0
             return
+        truck.travel_pending = False
         truck.path = path[1:]
         truck.seg_pos = 0.0
-        truck.state = "hauling"
 
     def _return(self, truck):
         truck.excavator = self.choose_excavator(truck)
         ex = self.excavators[truck.excavator]
-        path = self.roads.path(truck.node, ex.node)
-        if path is None:
-            truck.state = "queued_load"
-            truck.speed = 0.0
-            truck.path = []
-            if truck not in ex.queue:
-                ex.queue.append(truck)
-            return
-        truck.path = path[1:]
-        truck.seg_pos = 0.0
         truck.state = "returning"
         truck.destination = ex.id
+        path = self.roads.path(truck.node, ex.node)
+        if path is None:
+            # дороги к экскаватору нет — ждём на месте и пробуем снова каждый шаг; НЕ встаём
+            # в очередь экскаватора заранее (иначе самосвал «телепортировался» бы туда на
+            # сцене — очередь позиционируется по узлу экскаватора, а самосвал там физически
+            # ещё не был) и не перемещаемся мгновенно (часть 3 задачи по проверке координатора)
+            truck.travel_pending = True
+            truck.travel_kind = "return"
+            truck.path = []
+            truck.speed = 0.0
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
 
     def _start_refuel(self, truck):
         """Топливо < REFUEL_FUEL_PCT после разгрузки — самосвал едет по дорогам на fuel-station
@@ -705,11 +713,18 @@ class Haulage:
         """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
         ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
         чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора)."""
-        if truck.travel_kind == "refuel":
+        if truck.travel_kind == "return" and self.mode == "auto":
+            # «авто»: если прежний экскаватор всё ещё отрезан, пробуем выбрать другой —
+            # choose_excavator сам исключает недостижимые (честный ETA = None у таких кандидатов)
+            truck.excavator = self.choose_excavator(truck)
+            truck.destination = truck.excavator
+        if truck.travel_kind == "depart":
+            dest_node = self.dumps[truck.destination].node
+        elif truck.travel_kind == "return":
+            dest_node = self.excavators[truck.excavator].node
+        elif truck.travel_kind == "refuel":
             dest_node = "fuel-station"
         else:
-            dest_node = None  # другие виды — часть 3
-        if dest_node is None:
             return
         path = self.roads.path(truck.node, dest_node)
         if path is None:
@@ -764,7 +779,26 @@ class Haulage:
             nxt = truck.path[0]
             length, grade, road = self.roads.edge(truck.node, nxt)
             if road in self.roads.closed:
-                # дорога закрылась под колёсами — перестроить маршрут
+                # дорога закрылась под колёсами — не телепортируемся ни вперёд, ни назад:
+                # если самосвал уже проехал часть ребра (seg_pos > 0), сначала честно
+                # возвращаем его по той же дороге к truck.node (тому узлу, который он уже
+                # реально проезжал), расходуя настоящие dt и топливо, и только оттуда ищем
+                # новый маршрут. Без этого (просто сброс seg_pos=0 и путь от truck.node)
+                # самосвал визуально прыгает на расстояние, которое уже проехал по закрытому
+                # ребру, — вплоть до сотен метров за один шаг (настоящий баг части 3 этой
+                # задачи, найден на проверке road_closed, не только в местах из описания)
+                if truck.seg_pos > 0:
+                    v = self._speed(truck, grade, road)
+                    step = v / 3.6 * dt
+                    if step < truck.seg_pos:
+                        truck.seg_pos -= step
+                        self._place(truck, nxt, truck.seg_pos / length)
+                        self._consume_fuel(truck, self._edge_fuel_l(truck, grade, step))
+                        return
+                    dt -= truck.seg_pos / (v / 3.6)
+                    self._consume_fuel(truck, self._edge_fuel_l(truck, grade, truck.seg_pos))
+                    truck.seg_pos = 0.0
+                    self._place(truck, truck.node, 1.0)
                 goal = truck.path[-1]
                 path = self.roads.path(truck.node, goal)
                 if path is None:
