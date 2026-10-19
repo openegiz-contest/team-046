@@ -97,12 +97,12 @@ def rule_clay(snap):
     if clay <= CLAY_LIMIT_PCT:
         return None
     faces = []
-    for name, f in snap.items():
+    for name, f in sorted(snap.items()):
         if not name.startswith("face-") or not isinstance(f, dict):
             continue
         if f.get("ore_type") == "sulphide" and _f(f, "clay_pct") > CLAY_LIMIT_PCT:
             faces.append((name, _f(f, "clay_pct"), f.get("recommended_destination") or ""))
-    faces.sort(key=lambda x: -x[1])
+    faces.sort(key=lambda x: (-x[1], x[0]))
     gain = RECOVERY_PER_CLAY * (clay - CLAY_NORM_PCT)
     if faces:
         face, pct, dest = faces[0]
@@ -135,6 +135,17 @@ def _hour_window(history):
     return window
 
 
+def _busiest_excavator(snap):
+    """Работающий экскаватор с самой длинной очередью (объект для советов по парку самосвалов)."""
+    best = None
+    for name, f in sorted(snap.items()):
+        if name.startswith("excavator-") and isinstance(f, dict) and f.get("state") != "down":
+            q = _f(f, "queue")
+            if best is None or q > best[1]:
+                best = (name, q)
+    return best[0] if best else "excavator-01"
+
+
 def _bottlenecks(snap):
     """Узкие места по состояниям двойников: список причин с действием и объект первого из них."""
     mine = snap.get("mine") or {}
@@ -155,12 +166,16 @@ def _bottlenecks(snap):
     if _f(sp, "hours_left", 1.0) < 0.25 or _f(sp, "stock", 1.0) <= 0:
         causes.append(f"склад крупнодроблёной руды пуст ({_f(sp, 'stock'):.0f} т) — увеличить привоз руды на дробилку")
         target = target or "stockpile-coarse"
+    ps = snap.get("plant-sulphide") or {}
+    if _f(mine, "scenario_sag_maintenance") >= 1 or str(ps.get("state", "")) == "maintenance":
+        causes.append("мельница на ремонте — фабрика не берёт руду со склада; после ремонта подача восстановится сама")
+        target = target or "sag-mill-01"
     if _f(mine, "scenario_dispatch_off") >= 1:
         causes.append("диспетчеризация выключена — включить автоматический режим")
-        target = target or "dispatch"
+        target = target or _busiest_excavator(snap)
     if _f(mine, "scenario_blizzard") >= 1:
         causes.append(f"метель, ограничение {_f(mine, 'speed_limit', BASE_SPEED_KMH):.0f} км/ч — см. совет по метели")
-        target = target or "mine"
+        target = target or "stockpile-coarse"
     if not causes:
         causes.append("причина по двойникам не определена: привоз руды на дробилку ниже плана — проверить забои и очереди")
         target = "plant-sulphide"
@@ -250,7 +265,7 @@ def rule_fleet(snap):
                    f"dispatch.avg_wait_excavator = {wait:.1f} мин > {WAIT_LIMIT_MIN:.0f} мин в режиме auto; {how}" +
                    (f"; экскаваторы в аварии: {', '.join(downs)}" if downs else ""),
                    f"ожидание у экскаватора снизится к {WAIT_TARGET_MIN:.1f} мин, расход топлива и износ — меньше на ≈ {k} машин",
-                   "dispatch", {"dispatch.avg_wait_excavator": wait, "dispatch.trucks_hauling": hauling,
+                   _busiest_excavator(snap), {"dispatch.avg_wait_excavator": wait, "dispatch.trucks_hauling": hauling,
                                 "excavator_queue_total": queued, "excavators_working": working, "reserve_estimate": k})
 
 
@@ -271,7 +286,7 @@ def rule_blizzard(snap):
                    f"mine.scenario_blizzard = 1, mine.speed_limit = {limit:.0f} км/ч (обычно {BASE_SPEED_KMH}); видимость "
                    f"{_f(mine, 'visibility'):.0f} м; доля хода в цикле самосвала {BLIZZARD_TRAVEL_SHARE:.0%} (допущение)",
                    "фабрика переживёт просадку привоза за счёт склада; при запасе ниже порога — сократить вскрышу в пользу руды",
-                   "mine", {"mine.speed_limit": limit, "haul_drop_pct": round(drop, 1), "stockpile-coarse.hours_left": hours,
+                   "stockpile-coarse", {"mine.speed_limit": limit, "haul_drop_pct": round(drop, 1), "stockpile-coarse.hours_left": hours,
                             "reserve_hours": BLIZZARD_RESERVE_H})
 
 

@@ -430,7 +430,8 @@ const ADVICE_CLS = { critical: 'crit', important: 'imp', info: 'info' };
 const ADVICE_PRI = { critical: 'критично', important: 'важно', info: 'к сведению' };
 const adviceBadges = {};   // id совета -> значок над объектом
 let adviceShown = [];      // последний список советов (для кликов)
-let prevAdviceIds = null;  // для журнала событий
+let prevAdvicePri = null;  // id совета -> приоритет (для журнала событий)
+let lastAdviceRaw = null;  // последняя отрисованная строка advice (перерисовка только при изменении)
 function adviceList() {
   const raw = val(NS + ':advisor', 'advice', null);
   if (raw === null) return null;
@@ -439,7 +440,7 @@ function adviceList() {
 // Камера летит к объекту совета, карточка открывается
 function flyToThing(thingId) {
   const obj = thingId && byThing(thingId);
-  if (!obj) return;
+  if (!obj) { if (thingId && twins[thingId]) openCard(thingId); return; }   // объекта в сцене нет — хотя бы карточка
   followId = null; updateFollowButton();
   obj.getWorldPosition(_v);
   const size = (obj.userData.size && obj.userData.size.length) || 60;
@@ -457,6 +458,9 @@ function adviceHtml(a, i, top) {
 }
 function renderAdvice() {
   const root = document.getElementById('advice');
+  const raw = val(NS + ':advisor', 'advice', null);
+  if (raw === lastAdviceRaw) return;                 // ничего не изменилось — не трогаем DOM (иначе теряются клики)
+  lastAdviceRaw = raw;
   const list = adviceList();
   if (list === null) { root.innerHTML = '<div class="advice none">нет данных</div>'; return; }
   adviceShown = list;
@@ -478,14 +482,17 @@ function renderAdvice() {
     if (b) { b.enabled = true; b.el.classList.toggle('crit', a.priority === 'critical'); b.el.textContent = '💡 ' + (a.title || 'совет'); }
   }
   for (const [id, b] of Object.entries(adviceBadges)) if (!ids.has(id)) b.enabled = false;
-  // журнал: новые и снятые советы
-  const key = list.map((a) => a.id).join(',');
-  if (prevAdviceIds !== null && key !== prevAdviceIds) {
-    const was = prevAdviceIds ? prevAdviceIds.split(',') : [];
-    for (const a of list) if (!was.includes(a.id)) logEvent('Совет (' + (ADVICE_PRI[a.priority] || a.priority) + '): ' + a.text);
-    for (const id of was) if (id && !ids.has(id)) logEvent('Совет снят: ' + id);
+  // журнал: новые, снятые советы и смена приоритета
+  const pri = {};
+  for (const a of list) pri[a.id] = a.priority;
+  if (prevAdvicePri !== null) {
+    for (const a of list) {
+      if (!(a.id in prevAdvicePri)) logEvent('Совет (' + (ADVICE_PRI[a.priority] || a.priority) + '): ' + a.text);
+      else if (prevAdvicePri[a.id] !== a.priority) logEvent('Совет теперь «' + (ADVICE_PRI[a.priority] || a.priority) + '»: ' + (a.title || a.id));
+    }
+    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + id);
   }
-  prevAdviceIds = key;
+  prevAdvicePri = pri;
 }
 
 // ---------------------------------------------------------------- журнал событий

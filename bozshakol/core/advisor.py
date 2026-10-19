@@ -45,11 +45,23 @@ def main():
     history = []          # (модельное время, с; plant-sulphide.feed_rate; plan_rate; stockpile-coarse.inflow) за последний час
     last_ids = None
     while True:
+        try:
+            history, last_ids = step(watcher, telemetry, history, last_ids)
+        except Exception:                       # любая ошибка правила или публикации не должна ронять сервис
+            log.exception("ошибка цикла советника")
+        time.sleep(PERIOD_S)
+
+
+def step(watcher, telemetry, history, last_ids):
+    """Один цикл: снимок двойников -> история -> советы -> публикация. Возвращает (history, last_ids)."""
+    if True:
         snap = snapshot(watcher)
         t = model_seconds((snap.get("mine") or {}).get("sim_time"))
         ps = snap.get("plant-sulphide") or {}
         sp = snap.get("stockpile-coarse") or {}
         if t is not None and ps:
+            if history and t < history[-1][0]:
+                history = []                    # модельное время пошло заново (перезапуск bz-core)
             try:
                 history.append((t, float(ps.get("feed_rate") or 0.0), float(ps.get("plan_rate") or 0.0),
                                 float(sp.get("inflow") or 0.0)))
@@ -72,7 +84,7 @@ def main():
             if not advice:
                 log.info("советов нет")
             last_ids = ids
-        time.sleep(PERIOD_S)
+        return history, last_ids
 
 
 if __name__ == "__main__":

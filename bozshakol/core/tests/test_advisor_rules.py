@@ -89,6 +89,11 @@ class Rules(unittest.TestCase):
         self.assertIn("86 % плана (2900 из 3360 т/ч)", a[0]["text"])
         self.assertIn("excavator-02 в аварии", a[0]["text"])
         self.assertEqual(a[0]["target"], "kz.bozshakol:excavator-02")
+        # ремонт мельницы распознаётся как причина
+        s2 = base_snap(); s2["mine"]["scenario_sag_maintenance"] = 1
+        a2 = R.advise(s2, history(0.0))
+        self.assertIn("мельница на ремонте", a2[0]["text"])
+        self.assertEqual(a2[0]["target"], "kz.bozshakol:sag-mill-01")
         # мало данных (30 мин) — совета нет
         self.assertEqual(R.advise(s, history(2900.0, minutes=30)), [])
         # план выполняется — совета нет
@@ -121,6 +126,7 @@ class Rules(unittest.TestCase):
             s[f"excavator-{i:02d}"]["queue"] = 3
         a = R.advise(s)
         self.assertEqual(a[0]["id"], "fleet")
+        self.assertEqual(a[0]["target"], "kz.bozshakol:excavator-01")   # объект в сцене: экскаватор с очередью
         self.assertIn("3.2 мин", a[0]["text"])
         self.assertIn("≈ 3", a[0]["text"])                  # 9 в очередях − 6 экскаваторов
         s["dispatch"]["trucks_needed"] = 20
@@ -133,6 +139,7 @@ class Rules(unittest.TestCase):
         s["mine"].update(scenario_blizzard=1, speed_limit=20, visibility=300)
         a = R.advise(s)
         self.assertEqual(a[0]["id"], "blizzard")
+        self.assertEqual(a[0]["target"], "kz.bozshakol:stockpile-coarse")
         self.assertIn("до 20 км/ч", a[0]["text"])
         self.assertIn("на 47 %", a[0]["text"])               # 1 − 1/(0,4 + 0,6·50/20)
         self.assertIn("не меньше 4 ч (сейчас 4.5 ч)", a[0]["text"])
