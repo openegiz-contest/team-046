@@ -425,6 +425,76 @@ function renderScenarioBanner(t) {
   }
 }
 
+// ---------------------------------------------------------------- советы диспетчеру (двойник advisor)
+const ADVICE_CLS = { critical: 'crit', important: 'imp', info: 'info' };
+const ADVICE_PRI = { critical: 'критично', important: 'важно', info: 'к сведению' };
+const adviceBadges = {};   // id совета -> значок над объектом
+let adviceShown = [];      // последний список советов (для кликов)
+let prevAdvicePri = null;  // id совета -> приоритет (для журнала событий)
+let lastAdviceRaw = null;  // последняя отрисованная строка advice (перерисовка только при изменении)
+function adviceList() {
+  const raw = val(NS + ':advisor', 'advice', null);
+  if (raw === null) return null;
+  try { const a = typeof raw === 'string' ? JSON.parse(raw) : raw; return Array.isArray(a) ? a : []; } catch (e) { return []; }
+}
+// Камера летит к объекту совета, карточка открывается
+function flyToThing(thingId) {
+  const obj = thingId && byThing(thingId);
+  if (!obj) { if (thingId && twins[thingId]) openCard(thingId); return; }   // объекта в сцене нет — хотя бы карточка
+  followId = null; updateFollowButton();
+  obj.getWorldPosition(_v);
+  const size = (obj.userData.size && obj.userData.size.length) || 60;
+  const d = Math.max(250, size * 4);
+  flyTo(_v.clone().add(new THREE.Vector3(-d * 0.7, d * 0.7, d * 0.9)), _v.clone());
+  markViewButton('');
+  openCard(thingId);
+}
+function adviceHtml(a, i, top) {
+  const cls = ADVICE_CLS[a.priority] || 'info';
+  return '<div class="advice ' + cls + (top ? ' top' : '') + '" data-i="' + i + '" title="Показать объект в сцене">' +
+    '<div class="pri">' + esc(ADVICE_PRI[a.priority] || a.priority) + (a.title ? ' · ' + esc(a.title) : '') + '</div>' +
+    '<div class="text">' + esc(a.text || '') + '</div>' +
+    (top ? '<div class="why">' + esc(a.reason || '') + (a.effect ? ' · Ожидаемый эффект: ' + esc(a.effect) : '') + '</div>' : '') + '</div>';
+}
+function renderAdvice() {
+  const root = document.getElementById('advice');
+  const raw = val(NS + ':advisor', 'advice', null);
+  if (raw === lastAdviceRaw) return;                 // ничего не изменилось — не трогаем DOM (иначе теряются клики)
+  lastAdviceRaw = raw;
+  const list = adviceList();
+  if (list === null) { root.innerHTML = '<div class="advice none">нет данных</div>'; return; }
+  adviceShown = list;
+  root.innerHTML = list.length
+    ? list.map((a, i) => adviceHtml(a, i, i === 0)).join('')
+    : '<div class="advice none">Отклонений нет — советов пока нет</div>';
+  for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', () => flyToThing(adviceShown[+el.dataset.i].target));
+  // значок над объектом совета
+  const ids = new Set(list.map((a) => a.id));
+  for (const a of list) {
+    let b = adviceBadges[a.id];
+    if (!b) {
+      const obj = a.target && byThing(a.target);
+      if (obj) {
+        const base = labels.find((L) => L.obj === obj || (L.obj.parent === obj && !L.el.classList.contains('warn')));
+        b = adviceBadges[a.id] = addLabel(obj, '💡 совет', { importance: 3.5, cls: 'advice', dy: (base ? base.dy : 20) + 30 * markerScale });
+      }
+    }
+    if (b) { b.enabled = true; b.el.classList.toggle('crit', a.priority === 'critical'); b.el.textContent = '💡 ' + (a.title || 'совет'); }
+  }
+  for (const [id, b] of Object.entries(adviceBadges)) if (!ids.has(id)) b.enabled = false;
+  // журнал: новые, снятые советы и смена приоритета
+  const pri = {};
+  for (const a of list) pri[a.id] = a.priority;
+  if (prevAdvicePri !== null) {
+    for (const a of list) {
+      if (!(a.id in prevAdvicePri)) logEvent('Совет (' + (ADVICE_PRI[a.priority] || a.priority) + '): ' + a.text);
+      else if (prevAdvicePri[a.id] !== a.priority) logEvent('Совет теперь «' + (ADVICE_PRI[a.priority] || a.priority) + '»: ' + (a.title || a.id));
+    }
+    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + id);
+  }
+  prevAdvicePri = pri;
+}
+
 // ---------------------------------------------------------------- журнал событий
 const LOG_MAX = 50;
 const logEntries = [];
@@ -472,6 +542,7 @@ function diffEvents() {
 function renderPanel() {
   renderDispatcher();
   renderScenarios();
+  renderAdvice();
   diffEvents();
   document.getElementById('conn').textContent = connState;
   updateRoads();

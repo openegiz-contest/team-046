@@ -68,6 +68,15 @@ core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios
     "crusher_stop": feat(False, owner="processing"),
     "sag_maintenance": feat(False, owner="processing"),
 })
+core[tid("advisor")] = twin("Советник диспетчера", "advisor", "mine", attrs={
+    "rules": "crusher, clay, plan, inflow, fleet, blizzard", "service": "bz-advisor",
+}, features={
+    "advice": feat("[]", "json"),
+    "advice_count": feat(0, "шт"),
+    "top_advice": feat("Отклонений нет"),
+    "level": feat(0),
+    "advice_ids": feat(""),
+})
 core[tid("pit-central")] = twin("Центральный карьер", "pit", "mine", attrs={
     "length_m": 4400, "width_m": 1100, "depth_m": 200, "bench_height_m": 15, "bench_face_angle_deg": 58,
 }, features={

@@ -132,3 +132,19 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; }
   display: inline-block; min-width: 14px; text-align: center; padding: 0 5px; font: 11px/16px "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--ink); background: #fff; border: 1px solid #bbb; border-bottom-width: 2px; border-radius: 3px;
 }
+
+/* Советы диспетчеру (двойник advisor): главный крупно, цвет по приоритету; клик — камера к объекту */
+#advice .advice { border-left: 4px solid var(--muted); border-radius: 4px; padding: 5px 8px; margin: 4px 0;
+  background: rgba(255,255,255,0.6); cursor: pointer; }
+#advice .advice:hover { background: #fff; }
+#advice .advice.crit { border-color: var(--bad); }
+#advice .advice.imp { border-color: #d9a400; }
+#advice .advice.info { border-color: var(--ok); }
+#advice .advice.none { color: var(--muted); cursor: default; border-color: var(--line); }
+#advice .advice .pri { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+#advice .advice.crit .pri { color: var(--bad); font-weight: 700; }
+#advice .advice.imp .pri { color: #a07400; font-weight: 700; }
+#advice .advice.top .text { font-size: 14px; font-weight: 600; line-height: 1.3; }
+#advice .advice .why { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.label.advice { background: #e3f2ea; color: #1f5c43; border: 1px solid #3d8f6e; font-weight: 600; }
+.label.advice.crit { background: #fde7e7; color: #8a1c1c; border-color: #d32f2f; }
