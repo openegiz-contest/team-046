@@ -211,7 +211,7 @@
    "kind": "advisor",
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
-   "rules": "crusher, clay, plan, fleet, blizzard",
+   "rules": "crusher, clay, plan, inflow, fleet, blizzard",
    "service": "bz-advisor"
   },
   "features": {

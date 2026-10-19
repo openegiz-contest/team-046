@@ -42,15 +42,17 @@ def main():
     ditto = DittoClient()
     watcher = TwinWatcher(ditto, names=WATCH, client_id="bz-advisor-watch").start()
     telemetry = Telemetry(client_id="bz-advisor").connect()
-    history = []          # (модельное время, с; plant-sulphide.feed_rate; plan_rate) за последний час
+    history = []          # (модельное время, с; plant-sulphide.feed_rate; plan_rate; stockpile-coarse.inflow) за последний час
     last_ids = None
     while True:
         snap = snapshot(watcher)
         t = model_seconds((snap.get("mine") or {}).get("sim_time"))
         ps = snap.get("plant-sulphide") or {}
+        sp = snap.get("stockpile-coarse") or {}
         if t is not None and ps:
             try:
-                history.append((t, float(ps.get("feed_rate") or 0.0), float(ps.get("plan_rate") or 0.0)))
+                history.append((t, float(ps.get("feed_rate") or 0.0), float(ps.get("plan_rate") or 0.0),
+                                float(sp.get("inflow") or 0.0)))
             except (TypeError, ValueError):
                 pass
             history = [h for h in history if t - h[0] <= PLAN_WINDOW_S]

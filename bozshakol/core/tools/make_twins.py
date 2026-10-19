@@ -69,7 +69,7 @@ core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios
     "sag_maintenance": feat(False, owner="processing"),
 })
 core[tid("advisor")] = twin("Советник диспетчера", "advisor", "mine", attrs={
-    "rules": "crusher, clay, plan, fleet, blizzard", "service": "bz-advisor",
+    "rules": "crusher, clay, plan, inflow, fleet, blizzard", "service": "bz-advisor",
 }, features={
     "advice": feat("[]", "json"),
     "advice_count": feat(0, "шт"),

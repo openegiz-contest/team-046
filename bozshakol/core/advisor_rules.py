@@ -2,7 +2,7 @@
 core/tests/test_advisor_rules.py подменой данных.
 
 advise(snap, history) -> список советов, главный первым. snap — {короткое имя двойника: {признак: значение}},
-history — список (модельное время, с; feed_rate; plan_rate) сульфидной фабрики за последний модельный час.
+history — список (модельное время, с; feed_rate; plan_rate; inflow склада) за последний модельный час.
 
 Каждый совет: id, priority (critical / important / info), level (2 / 1 / 0), title, text (что сделать, с числами),
 reason (почему, по каким двойникам), effect (ожидаемый эффект), target (thingId объекта), data (использованные значения).
@@ -111,22 +111,19 @@ def rule_clay(snap):
 
 
 # ---------------------------------------------------------------- в) план ниже 95 % за час
-def rule_plan(snap, history):
+def _hour_window(history):
+    """Окно «последний модельный час» или None, если данных меньше 45 мин."""
     if not history:
         return None
     t_last = history[-1][0]
     window = [h for h in history if t_last - h[0] <= PLAN_WINDOW_S]
     if len(window) < 2 or t_last - window[0][0] < PLAN_MIN_SPAN_S:
         return None
-    feeds = [h[1] for h in window]
-    plans = [h[2] for h in window if h[2]]
-    if not plans:
-        return None
-    plan = sum(plans) / len(plans)
-    feed = sum(feeds) / len(feeds)
-    pct = feed / plan * 100 if plan else 100.0
-    if pct >= PLAN_LIMIT_PCT:
-        return None
+    return window
+
+
+def _bottlenecks(snap):
+    """Узкие места по состояниям двойников: список причин с действием и объект первого из них."""
     mine = snap.get("mine") or {}
     cr = snap.get("crusher-01") or {}
     sp = snap.get("stockpile-coarse") or {}
@@ -154,6 +151,23 @@ def rule_plan(snap, history):
     if not causes:
         causes.append("причина по двойникам не определена: привоз руды на дробилку ниже плана — проверить забои и очереди")
         target = "plant-sulphide"
+    return causes, target
+
+
+def rule_plan(snap, history):
+    """Подача на сульфидную фабрику за последний модельный час ниже 95 % плана."""
+    window = _hour_window(history)
+    if not window:
+        return None
+    plans = [h[2] for h in window if h[2]]
+    if not plans:
+        return None
+    plan = sum(plans) / len(plans)
+    feed = sum(h[1] for h in window) / len(window)
+    pct = feed / plan * 100 if plan else 100.0
+    if pct >= PLAN_LIMIT_PCT:
+        return None
+    causes, target = _bottlenecks(snap)
     text = (f"Сульфидная фабрика за последний час — {pct:.0f} % плана ({feed:.0f} из {plan:.0f} т/ч). "
             f"Узкое место: {causes[0]}.")
     return _advice("plan", "critical" if pct < 80 else "important", "План фабрики ниже 95 %", text,
@@ -161,6 +175,36 @@ def rule_plan(snap, history):
                    "; ".join(causes),
                    f"устранение узкого места возвращает подачу к плану {plan:.0f} т/ч",
                    target, {"plan_pct_hour": round(pct, 1), "feed_avg": round(feed, 1), "plan_rate": round(plan, 1), "causes": causes})
+
+
+def rule_inflow(snap, history):
+    """Фабрика пока идёт по плану со склада, но привоз руды на дробилку за последний час ниже 95 % плана —
+    склад тает; раннее предупреждение с тем же поиском узкого места."""
+    window = _hour_window(history)
+    if not window or len(window[0]) < 4:
+        return None
+    plans = [h[2] for h in window if h[2]]
+    if not plans:
+        return None
+    plan = sum(plans) / len(plans)
+    feed = sum(h[1] for h in window) / len(window)
+    inflow = sum(h[3] for h in window) / len(window)
+    if plan <= 0 or feed / plan * 100 < PLAN_LIMIT_PCT:
+        return None            # фабрика уже ниже плана — работает rule_plan
+    pct = inflow / plan * 100
+    if pct >= PLAN_LIMIT_PCT:
+        return None
+    sp = snap.get("stockpile-coarse") or {}
+    hours = _f(sp, "hours_left")
+    causes, target = _bottlenecks(snap)
+    text = (f"Привоз руды на дробилку за последний час — {pct:.0f} % плана ({inflow:.0f} из {plan:.0f} т/ч); "
+            f"фабрика идёт со склада, его хватит на {hours:.1f} ч. Узкое место: {causes[0]}.")
+    return _advice("inflow", "critical" if hours < STOCK_CRIT_H else "important", "Привоз руды ниже плана", text,
+                   "среднее stockpile-coarse.inflow за последний модельный час против plant-sulphide.plan_rate; " +
+                   "; ".join(causes),
+                   f"привоз вернётся к плану {plan:.0f} т/ч, склад перестанет таять",
+                   target, {"inflow_pct_hour": round(pct, 1), "inflow_avg": round(inflow, 1), "plan_rate": round(plan, 1),
+                            "stockpile-coarse.hours_left": hours, "causes": causes})
 
 
 # ---------------------------------------------------------------- г) ожидание у экскаватора
@@ -221,7 +265,8 @@ def rule_blizzard(snap):
 def advise(snap, history=None):
     """Все правила; главный совет первым (по уровню, затем по порядку правил)."""
     out = []
-    for rule in (rule_crusher, rule_clay, lambda s: rule_plan(s, history or []), rule_fleet, rule_blizzard):
+    hist = history or []
+    for rule in (rule_crusher, rule_clay, lambda s: rule_plan(s, hist), lambda s: rule_inflow(s, hist), rule_fleet, rule_blizzard):
         a = rule(snap)
         if a:
             out.append(a)

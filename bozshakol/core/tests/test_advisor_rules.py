@@ -27,9 +27,9 @@ def base_snap():
     return snap
 
 
-def history(feed, plan=3360.0, minutes=60):
+def history(feed, plan=3360.0, minutes=60, inflow=None):
     t0 = 1_000_000.0
-    return [(t0 + m * 60, feed, plan) for m in range(0, minutes + 1, 5)]
+    return [(t0 + m * 60, feed, plan, feed if inflow is None else inflow) for m in range(0, minutes + 1, 5)]
 
 
 class Rules(unittest.TestCase):
@@ -90,6 +90,19 @@ class Rules(unittest.TestCase):
         a = R.advise(s, history(2000.0))
         self.assertEqual(a[0]["priority"], "critical")      # 60 % < 80 %
         self.assertIn("дорога road-ramp-2 закрыта", a[0]["text"])
+
+    def test_inflow_below_plan_while_plant_on_stockpile(self):
+        # экскаватор в аварии: фабрика ещё идёт по плану со склада, но привоз на дробилку упал
+        s = base_snap()
+        s["excavator-02"]["state"] = "down"
+        a = R.advise(s, history(3360.7, inflow=2800.0))
+        self.assertEqual([x["id"] for x in a], ["inflow"])
+        self.assertIn("83 % плана (2800 из 3360 т/ч)", a[0]["text"])
+        self.assertIn("хватит на 4.5 ч", a[0]["text"])
+        self.assertIn("excavator-02 в аварии", a[0]["text"])
+        self.assertEqual(a[0]["priority"], "important")
+        # привоз в норме — совета нет
+        self.assertEqual(R.advise(s, history(3360.7, inflow=4200.0)), [])
 
     def test_fleet_wait_too_long(self):
         s = base_snap()

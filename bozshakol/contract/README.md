@@ -283,7 +283,7 @@ export function update(ctx, twins) {
 | `level` | уровень главного совета: 2 — критично, 1 — важно, 0 — к сведению или нет советов |
 | `advice_ids` | идентификаторы советов через запятую (для журнала событий в сцене) |
 
-Поля одного совета в `advice`: `id` (crusher / clay / plan / fleet / blizzard), `priority` (critical / important / info),
+Поля одного совета в `advice`: `id` (crusher / clay / plan / inflow / fleet / blizzard), `priority` (critical / important / info),
 `level` (2 / 1 / 0), `title`, `text` (что сделать, с числами), `reason` (почему: какие двойники и значения),
 `effect` (ожидаемый эффект), `target` (thingId объекта, к которому относится совет), `data` (использованные значения).
 
@@ -295,6 +295,7 @@ export function update(ctx, twins) {
 | `crusher` | `crusher-01.accepting = false` | `crusher-01.stop_reason`, `stockpile-coarse.hours_left`, `stop_forecast`, `dispatch.queue_crusher` | «Фабрика встанет в ЧЧ:ММ (запас N ч). У дробилки K гружёных самосвалов — перевести на вскрышу или в резерв; разгрузку руды возобновить, когда дробилка примет». Критично при запасе < 2 ч |
 | `clay` | `plant-sulphide.feed_clay` > 10 % | `face-*.ore_type`, `clay_pct`, `recommended_destination` | «Забой face-0X даёт глину Y % — направлять его руду на склад глинистой руды»; эффект — прирост извлечения ≈ 0,4 % на 1 % глины сверх 5 % |
 | `plan` | среднее `plant-sulphide.feed_rate` за последний модельный час < 95 % `plan_rate` (нужно ≥ 45 мин данных) | `excavator-*.state`, `road-*.open`, `crusher-01`, `stockpile-coarse`, `mine.scenario_*` | «Фабрика за час — P % плана. Узкое место: …» (экскаватор в аварии, закрытая дорога, дробилка, пустой склад, выключенная диспетчеризация, метель). Критично при < 80 % |
+| `inflow` | фабрика идёт по плану, но среднее `stockpile-coarse.inflow` за последний час < 95 % `plan_rate` | те же, что у `plan`, и `stockpile-coarse.hours_left` | «Привоз руды на дробилку за час — P % плана; фабрика идёт со склада, его хватит на N ч. Узкое место: …» — раннее предупреждение. Критично при запасе < 2 ч |
 | `fleet` | `dispatch.mode = auto` и `avg_wait_excavator` > 2 мин (ориентир Бозшаколя 1–1,5 мин) | `dispatch.trucks_hauling`, `trucks_needed` (если модуль №2 публикует), `excavator-*.queue` | «Лишних самосвалов ≈ K — поставить в резерв (`reserve`)»; K = `trucks_hauling − trucks_needed`, иначе очередь у экскаваторов минус число работающих экскаваторов |
 | `blizzard` | `mine.scenario_blizzard = 1` | `mine.speed_limit`, `stockpile-coarse.hours_left` | «Скорость ограничена до N км/ч — привоз руды упадёт ≈ на X %; держать запас склада не меньше 4 ч»; X = 1 − 1 / (0,4 + 0,6·50/N). Критично при запасе < 4 ч |
 
