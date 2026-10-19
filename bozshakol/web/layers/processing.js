@@ -1,8 +1,14 @@
 // Слой «переработка»: дробилка, конвейер, склады, фабрики, подстанция, отвал.
-// Объекты строятся по core/geometry.json, состояние — из двойников модуля processing.
+// Модели — из общей библиотеки ctx.models (web/models.js); положение и размеры — только из
+// ctx.geometry (core/geometry.json); состояние — из двойников модуля processing.
+// Цвет фонаря над объектом: зелёный — работает, жёлтый — простой, красный — остановка / авария / ремонт.
 const NS = 'kz.bozshakol';
-const objs = {};     // thingId -> {group, kind, ...}
-let mats = null;
+const FAR_M = 2500;          // дальше — упрощённые модели (setDetail('far'))
+const BULK_DENSITY = 1.6;    // т/м³ — как в main.py: тонны склада → объём штабеля
+const DUMP_HEIGHT_M = 40;    // высоты отвала нет в geometry.json — условная (допущение)
+const CONVEYOR_STEP_M = 40;  // шаг уплотнения трассы конвейера, чтобы лента шла над рельефом
+const objs = {};             // thingId -> {kind, g, anchor, lamp, ...}
+let lampMats = null, lampGeo = null;
 
 function fv(twin, f, d) {
   const p = twin && twin.features && twin.features[f] && twin.features[f].properties;
@@ -11,124 +17,144 @@ function fv(twin, f, d) {
 function fmtNum(v, digits) {
   return Number(v || 0).toLocaleString('ru-RU', { maximumFractionDigits: digits });
 }
+// состояние → цвет фонаря
+function level(state) {
+  if (['stopped', 'stop', 'down', 'failed', 'off', 'maintenance'].includes(state)) return 'red';
+  if (['idle', 'starved'].includes(state)) return 'amber';
+  return 'green';
+}
+const STATE_RU = { running: '', idle: ' · простой', stopped: ' · стоит', maintenance: ' · ремонт' };
 
 export function init(ctx) {
-  const THREE = ctx.THREE, c = ctx.colors;
-  const lam = (col) => new THREE.MeshLambertMaterial({ color: col });
-  mats = {
-    building: lam(c.building), roof: lam(c.roof), conveyor: lam(c.conveyor), dark: lam(0x5c5c5c),
-    crusher: lam(0x7d8692), crusherStop: lam(c.down), dump: lam(c.dump),
-    pileOre: lam(c.stockpileOre), pileClay: lam(c.stockpileClay), substation: lam(0xc9c3b5), mill: lam(0x9aa5b3),
+  const THREE = ctx.THREE, M = ctx.models;
+  const lam = (col) => new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.9 });
+  lampMats = { green: lam(0x43b36a), amber: lam(0xf2c94c), red: lam(ctx.colors.down || 0xd32f2f) };
+  lampGeo = new THREE.SphereGeometry(3, 12, 8);
+  // высота объекта: своя из geometry.json, иначе — земля сцены
+  const zOf = (o) => (o.position.length > 2 && typeof o.position[2] === 'number' ? o.position[2] : ctx.groundAt(o.position[0], o.position[1]));
+  const place = (g, o) => g.position.copy(ctx.toScene(o.position[0], o.position[1], zOf(o)));
+  const addLamp = (parent, y) => {
+    const m = new THREE.Mesh(lampGeo, lampMats.green); m.position.y = y; parent.add(m); return m;
   };
-  const P = (o) => ctx.toScene(o.position[0], o.position[1], o.position[2]);
+  const add = (id, rec, labelText, importance, dy) => {
+    ctx.group.add(rec.g);
+    ctx.register(rec.anchor || rec.g, id, rec.hit !== undefined ? { hitRadius: rec.hit } : undefined);
+    if (rec.anchor) ctx.register(rec.g, id, { hitRadius: 0 });   // клик по самой модели — та же карточка
+    rec.label = ctx.label(rec.anchor || rec.g, labelText, { importance, dy });
+    objs[id] = rec;
+  };
 
   for (const o of ctx.geometry.objects || []) {
     const id = NS + ':' + o.id;
-    let g = null, rec = { kind: o.kind };
-    if (o.kind === 'conveyor' && o.path && o.path.length >= 2) {
-      const a = ctx.toScene(...o.path[0]), b = ctx.toScene(...o.path[o.path.length - 1]);
-      const len = a.distanceTo(b);
-      const m = new THREE.Mesh(new THREE.BoxGeometry(8, 3, len), mats.conveyor);
-      m.position.copy(a).add(b).multiplyScalar(0.5).add(new THREE.Vector3(0, 6, 0));
-      m.lookAt(b.clone().add(new THREE.Vector3(0, 6, 0)));
-      g = new THREE.Group(); g.add(m);
-      rec.belt = m;
-      const mid = a.clone().lerp(b, 0.5); mid.y += 8;
-      const anchor = new THREE.Object3D(); anchor.position.copy(mid); g.add(anchor);
-      rec.labelObj = anchor;
-    } else if (o.kind === 'crusher') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const body = new THREE.Mesh(new THREE.BoxGeometry(40, 24, 30), mats.crusher); body.position.y = 12;
-      const funnel = new THREE.Mesh(new THREE.ConeGeometry(18, 18, 20, 1, true), mats.dark);
-      funnel.position.y = 33; funnel.rotation.x = Math.PI;      // воронка остриём вниз
-      g.add(body, funnel);
-      rec.body = body; rec.labelObj = g; rec.dy = 48;
-    } else if (o.kind === 'stockpile') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const r = o.radius || 50;
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, 40, 28), o.id.includes('clay') ? mats.pileClay : mats.pileOre);
-      cone.position.y = 20;
-      g.add(cone);
-      rec.cone = cone; rec.radius = r; rec.labelObj = g; rec.dy = 90;
-    } else if (o.kind === 'plant') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const [l, w, h] = o.size || [100, 60, 20];
-      const body = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), mats.building); body.position.y = h / 2;
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(l + 4, 2, w + 4), mats.roof); roof.position.y = h + 1;
-      g.add(body, roof);
-      rec.body = body; rec.labelObj = g; rec.dy = h + 16;
-    } else if (o.kind === 'mill') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const drum = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 14, 16), mats.mill);
-      drum.rotation.z = Math.PI / 2; drum.position.y = 36;   // над фабрикой, чтобы было видно
-      g.add(drum);
-      rec.body = drum; rec.labelObj = g; rec.dy = 48; rec.small = true;
-    } else if (o.kind === 'flotation') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      for (let i = 0; i < 4; i++) {
-        const cell = new THREE.Mesh(new THREE.BoxGeometry(8, 6, 8), mats.mill);
-        cell.position.set(i * 10 - 15, 33, 0); g.add(cell);
+    if (o.kind === 'crusher') {
+      const g = M.crusher();
+      place(g, o); g.rotation.y = -(o.yaw_deg || 0) * Math.PI / 180;
+      add(id, { kind: o.kind, g, model: g, lamp: null }, o.id, 3, 36);
+    } else if (o.kind === 'conveyor' && o.path && o.path.length >= 2) {
+      // трасса из geometry.json, уплотнённая через CONVEYOR_STEP_M: высота — по точкам трассы,
+      // но не ниже земли сцены (иначе лента уходит под рельеф между опорными точками)
+      const pts = [];
+      for (let i = 0; i + 1 < o.path.length; i++) {
+        const [x0, y0, z0] = o.path[i], [x1, y1, z1] = o.path[i + 1];
+        const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / CONVEYOR_STEP_M));
+        for (let k = 0; k < n; k++) {
+          const t = k / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+          pts.push(ctx.toScene(x, y, Math.max(z0 + (z1 - z0) * t, ctx.groundAt(x, y))));
+        }
       }
-      rec.labelObj = g; rec.dy = 42; rec.small = true;
-    } else if (o.kind === 'substation') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const [l, w, h] = o.size || [60, 40, 10];
-      const body = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), mats.substation); body.position.y = h / 2;
-      const mast = new THREE.Mesh(new THREE.BoxGeometry(2, 30, 2), mats.dark); mast.position.set(l / 2 - 5, 15, 0);
-      g.add(body, mast);
-      rec.labelObj = g; rec.dy = 36; rec.small = true;
+      const [xe, ye, ze] = o.path[o.path.length - 1];
+      pts.push(ctx.toScene(xe, ye, Math.max(ze, ctx.groundAt(xe, ye))));
+      const g = M.conveyor(pts, { height: 3 });
+      const anchor = new THREE.Object3D(); anchor.position.copy(pts[Math.floor(pts.length / 2)]); g.add(anchor);
+      const head = new THREE.Object3D(); head.position.copy(pts[0]); g.add(head);
+      add(id, { kind: o.kind, g, model: g, anchor, hit: 40, lamp: addLamp(head, 12) }, o.id, 3, 12);
+    } else if (o.kind === 'stockpile') {
+      const isClay = o.id.includes('clay');
+      const g = new THREE.Group(); place(g, o);
+      const pile = M.stockpile(0, { color: isClay ? ctx.colors.stockpileClay : ctx.colors.stockpileOre });
+      g.add(pile);
+      add(id, { kind: o.kind, g, model: pile, lamp: addLamp(g, 2), radius: o.radius || 50, hit: o.radius || 50 }, o.id, 3, 8);
+    } else if (o.kind === 'plant' || o.kind === 'substation') {
+      const size = o.size || [100, 60, 20];
+      const g = M.building(o.kind === 'plant' ? 'main' : 'substation', { size });
+      place(g, o);
+      const h = size[2] * (o.kind === 'plant' ? 1.3 : 1);   // у главного корпуса мельничный пролёт выше крыши
+      // подпись корпуса — над западным торцом, чтобы не закрывать подписи складов у восточного края
+      const anchor = new THREE.Object3D(); anchor.position.x = o.kind === 'plant' ? -size[0] * 0.3 : 0; g.add(anchor);
+      add(id, { kind: o.kind, g, model: g, anchor, lamp: addLamp(g, h + 6), hit: Math.max(size[0], size[1]) / 2 },
+        o.id, o.kind === 'plant' ? 3 : 2, h + (o.kind === 'plant' ? 70 : 14));
+    } else if (o.kind === 'mill' || o.kind === 'flotation') {
+      // мельница и флотация стоят внутри главного корпуса: отдельной модели нет, только точка
+      // (клик, подпись, значок сценария) и фонарь состояния над крышей
+      const g = new THREE.Group(); place(g, o);
+      add(id, { kind: o.kind, g, lamp: addLamp(g, 48), hit: 30 }, o.id, 2, 56);
     } else if (o.kind === 'dump') {
-      g = new THREE.Group(); g.position.copy(P(o));
-      const r = o.radius || 200;
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, 30, 36), mats.dump); cone.position.y = 15;
-      g.add(cone);
-      rec.labelObj = g; rec.dy = 40;
+      const g = M.dump(o.radius || 200, DUMP_HEIGHT_M, { tiers: 3 });
+      place(g, o);
+      add(id, { kind: o.kind, g, model: g, hit: (o.radius || 200) * 0.6 }, o.id, 3, DUMP_HEIGHT_M + 10);
     }
-    if (!g) continue;
-    ctx.group.add(g);
-    ctx.register(g, id);
-    rec.group = g;
-    rec.label = ctx.label(rec.labelObj || g, o.id, { dy: rec.dy || 20, small: !!rec.small });
-    objs[id] = rec;
   }
 }
 
 export function update(ctx, twins) {
+  const cam = ctx.camera && ctx.camera.position;
   for (const [id, rec] of Object.entries(objs)) {
     const twin = twins[id];
-    if (!twin) continue;
+    const obj = rec.anchor || rec.g;
+    if (rec.model && rec.model.setDetail && cam) {
+      const far = obj.getWorldPosition(rec._p || (rec._p = new ctx.THREE.Vector3())).distanceTo(cam) > FAR_M;
+      if (rec.far !== far) { rec.model.setDetail(far ? 'far' : 'full'); rec.far = far; }
+    }
+    if (rec.lamp) rec.lamp.scale.setScalar(Math.min(3, ctx.markerScale || 1));
+    if (!twin) { if (rec.kind === 'conveyor') rec.model.setFlow(0, ctx.dt); continue; }
     const name = (twin.attributes && twin.attributes.name) || id.split(':')[1];
-    const lo = rec.labelObj || rec.group;
     const state = fv(twin, 'state', '');
-    // «idle» — простой без аварии (нет руды), красным красим только реальную остановку
-    const stopped = ['stopped', 'stop', 'down', 'maintenance', 'off', 'failed'].includes(state);
-    const idleTxt = state === 'idle' ? ' · простой' : (stopped ? ' · стоит' : '');
+    let lamp = level(state), text = name;
+
     if (rec.kind === 'crusher') {
       const accepting = fv(twin, 'accepting', true) !== false;
-      const m = (stopped || !accepting) ? mats.crusherStop : mats.crusher;
-      if (rec.body.material !== m) rec.body.material = m;
-      lo.userData.label = name + (accepting ? '' : ' · не принимает') + idleTxt + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч · очередь: ' + fv(twin, 'trucks_queued', 0);
-    } else if (rec.kind === 'stockpile') {
-      const cap = Number(twin.attributes && twin.attributes.capacity_t) || 100000;
-      const stock = Number(fv(twin, 'stock', 0)) || 0;
-      const h = 20 + 60 * Math.max(0, Math.min(1, stock / cap));   // высота 20–80 м
-      rec.cone.scale.y = h / 40; rec.cone.position.y = h / 2;
-      const q = fv(twin, 'trucks_queued', null);
-      lo.userData.label = name + ' · ' + fmtNum(stock / 1000, 1) + ' тыс. т' + (q !== null ? ' · очередь: ' + q : '');
-    } else if (rec.kind === 'plant') {
-      lo.userData.label = name + idleTxt + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' т/ч · план ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
+      rec.model.setState(state);                                     // красный корпус и фонарь — стоит
+      text += (STATE_RU[state] ?? '') + (accepting ? '' : ' · не принимает') + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) +
+        ' т/ч · бункер ' + fmtNum(fv(twin, 'bunker', 0), 0) + ' т · очередь: ' + fv(twin, 'trucks_queued', 0);
+      const why = fv(twin, 'stop_reason', '');
+      if (state === 'stopped' && why) text += ' · ' + why;
     } else if (rec.kind === 'conveyor') {
-      lo.userData.label = name + idleTxt + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч';
+      const running = state === 'running';
+      const tph = running ? Math.max(Number(fv(twin, 'intake', 0)), Number(fv(twin, 'throughput', 0)), 300) : 0;
+      rec.model.setFlow(tph, ctx.dt);                                 // кучки руды едут по ленте
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'length', 0) / 1000, 2) + ' км · ' +
+        fmtNum(fv(twin, 'intake', 0), 0) + ' т/ч с дробилки · на ленте ' + fmtNum(fv(twin, 'load', 0), 0) + ' т';
+    } else if (rec.kind === 'stockpile') {
+      const stock = Number(fv(twin, 'stock', 0)) || 0;
+      rec.model.setVolume(Number(fv(twin, 'volume', stock / BULK_DENSITY)));
+      rec.lamp.position.y = (rec.model.userData.height || 0) + 6;
+      const hours = fv(twin, 'hours_left', null);
+      text += ' · ' + fmtNum(stock / 1000, 1) + ' тыс. т' + (hours !== null ? ' · хватит на ' + fmtNum(hours, 1) + ' ч' : '');
+      if (id.endsWith(':stockpile-coarse')) {
+        const full = fv(twin, 'full', false) === true, expect = fv(twin, 'stop_expected', false) === true;
+        lamp = full ? 'red' : (expect ? 'amber' : 'green');
+        if (full) text += ' · полон';
+        else if (expect) text += ' · фабрика встанет в ' + fv(twin, 'stop_forecast', '—');
+      } else {
+        const accepting = fv(twin, 'accepting', true) !== false;
+        lamp = accepting ? 'green' : 'red';
+        if (!accepting) text += ' · не принимает';
+        const q = fv(twin, 'trucks_queued', null);
+        if (q) text += ' · очередь: ' + q;
+      }
+    } else if (rec.kind === 'plant') {
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' / ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
+        ' т/ч · план ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
     } else if (rec.kind === 'mill') {
-      lo.userData.label = name + (stopped ? ' · ТО' : (state === 'idle' ? ' · простой' : '')) + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч';
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч';
     } else if (rec.kind === 'flotation') {
-      lo.userData.label = name + ' · извлечение ' + fmtNum(fv(twin, 'recovery', 0), 1) + ' %';
+      text += ' · извлечение ' + fmtNum(fv(twin, 'recovery', 0), 1) + ' %';
     } else if (rec.kind === 'substation') {
-      lo.userData.label = name + ' · ' + fmtNum(fv(twin, 'load', 0), 1) + ' МВт';
+      text += ' · ' + fmtNum(fv(twin, 'load', 0), 1) + ' МВт';
     } else if (rec.kind === 'dump') {
-      lo.userData.label = name + ' · ' + fmtNum(Number(fv(twin, 'received_total', 0)) / 1000, 1) + ' тыс. т';
-    } else {
-      lo.userData.label = name;
+      text += ' · ' + fmtNum(Number(fv(twin, 'received_total', 0)) / 1000, 1) + ' тыс. т';
     }
+    if (rec.lamp) { const m = lampMats[lamp]; if (rec.lamp.material !== m) rec.lamp.material = m; }
+    obj.userData.label = text;
   }
 }
