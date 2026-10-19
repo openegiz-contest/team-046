@@ -96,11 +96,11 @@ mine
 | `crusher-01` (№4) | `accepting` (true/false) — принимает ли руду | №2: при `false` самосвалы ждут в очереди у дробилки |
 | `stockpile-clay` (№4) | `accepting` | №2 |
 | `face-01…06` (№3) | `ore_type` (sulphide/clay/waste), `cu_grade` (% Cu), `au_grade` (г/т), `clay_pct` (%), `p80` (мм), `loading_factor` (коэф. скорости погрузки, 1 = норма), `hardness`, `remaining` (т), `recommended_destination` (crusher-01 / stockpile-clay / dump-waste-1), `blasted` | №2: груз самосвала получает содержание и долю глины забоя; время погрузки делится на `loading_factor`; пункт разгрузки — по `recommended_destination` |
-| `mine` (координатор) | `sim_time`, `shift`, `shift_hour`, `temperature`, `wind`, `visibility`, `speed_limit` (км/ч) | все: `speed_limit` ограничивает скорость самосвалов (метель) |
+| `mine` (координатор) | `sim_time`, `shift`, `shift_hour`, `temperature`, `wind`, `visibility`, `speed_limit` (км/ч), `scenario_<имя>` (1/0), `active_scenarios` | все: `speed_limit` ограничивает скорость самосвалов (метель) |
 | `road-*` (№2) | `open`, `speed_limit` | №2 (своё), 3D-сцена |
 
 Признаки самосвала (`truck-*`, №2): `state` ∈ {queued_load, loading, hauling, queued_dump, dumping,
-returning, refueling, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
+returning, refueling, reserve, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
 `cargo_type` ∈ {sulphide, clay, waste, none}, `cargo_cu` (% Cu), `cargo_clay` (%), `destination`,
 `excavator`, `fuel` (%), `trips_total`.
 
@@ -108,6 +108,11 @@ returning, refueling, down}, `x`, `y`, `z` (м, в общих координат
   `core/geometry.json`, рядом с дорогой к дробилке; связан ребром с узлом `rim-ne`). Длительность ≈ 15 мин
   модельного времени, примерно раз в смену (по признаку `fuel`); после заправки `fuel` = 100. В сцене
   самосвал на заправке окрашен как порожний (белый).
+- `reserve` — «в резерве»: самосвал стоит на стоянке у узла `fuel-station` и не участвует в перевозке
+  (не ездит, не грузится, не получает назначений); `payload` = 0, `cargo_type` = none, `destination` = «».
+  Вывод в резерв и возврат в работу — решение модуля №2 (например, лишние самосвалы в ручном режиме или
+  при остановке дробилки). В сцене самосвал в резерве окрашен серо-белым (`setState('reserve')`
+  в библиотеке моделей); легенда дополнена.
 
 Итоговые показатели в `mine` (координатор считает по чужим двойникам через платформу):
 `ore_to_plants` (т/ч), `plan_fulfilment` (%), `feed_cu` (% Cu), `feed_clay` (%), `cu_concentrate_shift` (т),
@@ -136,6 +141,13 @@ curl -u "ditto:$DITTO_PASSWORD" -X PUT -H 'Content-Type: application/json' -d tr
 ```
 
 - Модули только читают (через события `opentwins/twin/events/kz.bozshakol/scenarios` и HTTP). Отмена = выключить (`false`).
+- **Сценарии в истории (InfluxDB, Grafana).** Одиночная запись признака через API Ditto попадает в InfluxDB
+  полем без имени признака, поэтому сам двойник `scenarios` на графиках не виден. Координатор (`bz-core`)
+  публикует вместе с остальными признаками `mine` (каждые 5 с) числовой признак `scenario_<имя>`
+  (1 — включён, 0 — выключен) для каждого сценария и строковый `active_scenarios` — список включённых
+  по-русски через запятую («нет», если ничего не включено). Для графиков и аннотаций в дашбордах модулей
+  брать `mine.scenario_<имя>`: поле InfluxDB `value_scenario_<имя>_properties_value`,
+  `thingId = kz.bozshakol:mine`. Реагировать на сценарий модули по-прежнему должны по двойнику `scenarios`.
 
 | Сценарий | Владелец реакции | Параметры | Что происходит |
 |---|---|---|---|

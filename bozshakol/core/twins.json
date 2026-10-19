@@ -89,6 +89,51 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "scenario_blizzard": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_dispatch_off": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_road_closed": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_excavator_down": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_clay_face": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_bad_blast": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_crusher_stop": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_sag_maintenance": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "active_scenarios": {
+    "properties": {
+     "value": "нет"
+    }
    }
   }
  },
