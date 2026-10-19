@@ -240,7 +240,7 @@ export function update(ctx, twins) {
     const f = twins[id] && twins[id].features; if (!f) continue;
     const v = (k) => f[k] && f[k].properties.value;
     g.position.copy(ctx.toScene(v('x'), v('y'), v('z')));      // x, y, z двойника уже включают рельеф
-    g.rotation.y = -v('heading') * Math.PI / 180;               // heading: 0 = север, по часовой
+    g.rotation.y = Math.PI - v('heading') * Math.PI / 180;     // heading: 0 = север, по часовой; «вперёд» модели = +Z, север сцены = −Z
     g.scale.setScalar(ctx.markerScale);                          // заметность на общем плане
     g.setLoad(v('payload') > 0 ? v('cargo_type') : 'none');
     g.setDumping(v('state') === 'dumping' ? 1 : 0);

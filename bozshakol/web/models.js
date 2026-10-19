@@ -9,7 +9,7 @@
 //
 // Использование в слое участника:
 //   const g = ctx.models.truck({ cls: 135 }); ctx.group.add(g); ...
-//   в update: g.position.copy(ctx.toScene(x, y, z)); g.rotation.y = -heading*Math.PI/180;
+//   в update: g.position.copy(ctx.toScene(x, y, z)); g.rotation.y = Math.PI - heading*Math.PI/180;  (север сцены = −Z)
 //             g.setLoad(cargo_type); g.setDumping(state === 'dumping' ? 1 : 0); g.setWheels(odometer_m);
 //
 // Каждая фабрика возвращает THREE.Group; методы висят и на самой группе, и в group.userData.api.
