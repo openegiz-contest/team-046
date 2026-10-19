@@ -53,6 +53,10 @@ core[tid("mine")] = twin("Карьер Бозшаколь", "mine", attrs={
     "feed_clay": feat(0.0, "%"),
     "cu_concentrate_shift": feat(0.0, "т"),
     "trucks_hauling": feat(0, "шт"),
+    # сценарии в истории: 1/0 на сценарий и список включённых по-русски (см. договор, раздел 6)
+    **{f"scenario_{n}": feat(0) for n in ("blizzard", "dispatch_off", "road_closed", "excavator_down",
+                                            "clay_face", "bad_blast", "crusher_stop", "sag_maintenance")},
+    "active_scenarios": feat("нет"),
 })
 core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios", "mine", features={
     "blizzard": feat(False, visibility_m=300, speed_limit_kmh=20, owner="core"),

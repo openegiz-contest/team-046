@@ -142,6 +142,16 @@ else
   fi
 fi
 
+# 4а. Сценарии в истории: mine.scenario_* (договор, раздел 6) ----------------------------
+flux_sc='from(bucket: "default") |> range(start: -2m) |> filter(fn: (r) => r.thingId == "kz.bozshakol:mine" and r._field == "value_scenario_blizzard_properties_value") |> keep(columns: ["_time","_value"]) |> last()'
+sc_last="$(curl -s --max-time 20 -X POST "$INFLUX/api/v2/query?org=opentwins" \
+    -H "Authorization: Token ${INFLUXDB_TOKEN}" -H 'Content-Type: application/vnd.flux' -H 'Accept: application/csv' \
+    --data-binary "$flux_sc" | tr -d '\r' | grep -v '^$' | awk -F, 'NR==1{for(i=1;i<=NF;i++) if($i=="_value") c=i} NR==2{print $c}')"
+case "${sc_last:-}" in
+  0|1) ok "сценарии пишутся в историю: mine.scenario_blizzard = $sc_last (поле value_scenario_*_properties_value)" ;;
+  *) bad "в InfluxDB нет mine.scenario_* (bz-core должен публиковать scenario_<имя> вместе с признаками mine)" ;;
+esac
+
 # 5. Grafana отвечает -----------------------------------------------------------------
 echo "5. Grafana"
 code_gf="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://$H:${GRAFANA_PORT:-3000}/api/health")"
