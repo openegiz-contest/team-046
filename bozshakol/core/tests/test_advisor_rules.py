@@ -50,6 +50,16 @@ class Rules(unittest.TestCase):
         s["stockpile-coarse"]["hours_left"] = 1.5
         self.assertEqual(R.advise(s)[0]["priority"], "critical")
 
+    def test_crusher_bunker_full_is_info_only(self):
+        s = base_snap()
+        s["crusher-01"].update(accepting=False, state="running", stop_reason="", bunker=760.0, capacity=4500.0)
+        s["dispatch"]["queue_crusher"] = 2
+        a = R.advise(s)
+        self.assertEqual(a[0]["id"], "crusher")
+        self.assertEqual(a[0]["priority"], "info")
+        self.assertIn("бункер полон (760 т)", a[0]["text"])
+        self.assertNotIn("Фабрика встанет", a[0]["text"])
+
     def test_clay_face_substitution(self):
         # сценарий clay_face: забой face-03 стал глинистым (45 %), глина в питании выросла до 14 %
         s = base_snap()

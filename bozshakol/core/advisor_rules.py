@@ -58,7 +58,20 @@ def rule_crusher(snap):
     stock = _f(sp, "stock")
     forecast = str(sp.get("stop_forecast") or "").strip()
     k = int(_f(d, "queue_crusher", _f(cr, "trucks_queued")))
-    why = str(cr.get("stop_reason") or "").strip() or f"дробилка: {cr.get('state', '—')}"
+    state = str(cr.get("state") or "")
+    reason = str(cr.get("stop_reason") or "").strip()
+    if state == "running" and not reason:
+        # дробилка работает, просто бункер полон — короткая пауза, фабрика не пострадает: к сведению
+        bunker, cap = _f(cr, "bunker"), _f(cr, "capacity")
+        text = (f"Дробилка временно не принимает: бункер полон ({bunker:.0f} т). "
+                f"{k} самосвалов ждут разгрузки — новых к дробилке пока не направлять, бункер освободится за несколько минут.")
+        return _advice("crusher", "info", "Бункер дробилки полон", text,
+                       f"crusher-01.accepting = false при state = running и пустом stop_reason; бункер {bunker:.0f} т"
+                       + (f" при производительности {cap:.0f} т/ч" if cap else "") + f"; очередь у дробилки {k}",
+                       "очередь рассосётся без вмешательства; совет снимется, когда дробилка снова примет",
+                       "crusher-01", {"crusher-01.accepting": False, "crusher-01.state": state, "crusher-01.bunker": bunker,
+                                      "dispatch.queue_crusher": k})
+    why = reason or f"дробилка: {state or '—'}"
     if TIME_RE.match(forecast):
         head = f"Фабрика встанет в {forecast} (запас склада {hours:.1f} ч)."
     elif forecast and forecast != "не ожидается":
