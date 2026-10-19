@@ -63,10 +63,7 @@ SPEED_DOWN_EMPTY_KMH = 40.0           # допущение: тормоз-зам�
 FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (плотность топлива — допущение)
 
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
-REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке (временная реализация)
-# ВРЕМЕННО, пока у координатора нет состояния truck-*.state = "refueling" (см. запрос в договор):
-# заправка сделана как простой с destination="заправка" при текущем state. Когда состояние появится,
-# переключить достаточно в одном месте — см. _start_refuel().
+REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке, по договору (fuel-station)
 
 TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
 SLOW_PUBLISH_S = 5.0
@@ -241,6 +238,8 @@ class Truck:
         self.buckets_done = 0
         self.refuel_timer = 0.0
         self.queue_index = 0
+        self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
+        self.travel_kind = None         # "depart"/"return"/"refuel" — куда именно едем, для повтора
         # -- разброс (водитель) --
         self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
         self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
@@ -686,13 +685,38 @@ class Haulage:
         truck.destination = ex.id
 
     def _start_refuel(self, truck):
-        # ВРЕМЕННО: пока в договоре нет truck.state = "refueling" — стоим под видом "returning".
-        # Когда координатор добавит состояние, здесь достаточно поменять truck.state на "refueling".
+        """Топливо < REFUEL_FUEL_PCT после разгрузки — самосвал едет по дорогам на fuel-station
+        (узел из core/geometry.json, по договору), state = "refueling" наступает по прибытии
+        (см. _arrived) — не сразу, самосвал сперва честно доезжает."""
+        truck.destination = "fuel-station"
         truck.state = "returning"
-        truck.speed = 0.0
-        truck.path = []
-        truck.destination = "заправка"
-        truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+        path = self.roads.path(truck.node, "fuel-station")
+        if path is None:
+            truck.travel_pending = True
+            truck.travel_kind = "refuel"
+            truck.path = []
+            truck.speed = 0.0
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
+
+    def _retry_pending_travel(self, truck):
+        """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
+        ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
+        чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора)."""
+        if truck.travel_kind == "refuel":
+            dest_node = "fuel-station"
+        else:
+            dest_node = None  # другие виды — часть 3
+        if dest_node is None:
+            return
+        path = self.roads.path(truck.node, dest_node)
+        if path is None:
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
 
     # -- движение ------------------------------------------------------------
     def _mean_speed(self, truck, grade_pct, road):
@@ -782,9 +806,14 @@ class Haulage:
             truck.dump_wait = 0.0
             self.dumps[truck.destination].queue.append(truck)
         elif truck.state == "returning":
-            truck.state = "queued_load"
-            truck.wait = 0.0
-            self.excavators[truck.excavator].queue.append(truck)
+            if truck.destination == "fuel-station":
+                truck.state = "refueling"
+                truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+                truck.speed = 0.0
+            else:
+                truck.state = "queued_load"
+                truck.wait = 0.0
+                self.excavators[truck.excavator].queue.append(truck)
 
     # -- шаг модели ----------------------------------------------------------
     def step(self, dt):
@@ -796,7 +825,7 @@ class Haulage:
             ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
         for truck in self.trucks:
             self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
-            if truck.refuel_timer > 0:
+            if truck.state == "refueling":
                 truck.time_in["refuel"] += dt
                 truck.refuel_timer = max(0.0, truck.refuel_timer - dt)
                 truck.speed = 0.0
@@ -804,7 +833,11 @@ class Haulage:
                     truck.fuel = 100.0
                     self.refuels_total += 1
                     truck.destination = ""
-                    self._return(truck)
+                    self._return(truck)  # «авто» — по диспетчеру, «ручной» — к своему экскаватору
+            elif truck.travel_pending:
+                bucket = "haul_loaded" if truck.travel_kind == "depart" else "haul_empty"
+                truck.time_in[bucket] += dt
+                self._retry_pending_travel(truck)
             elif truck.state == "hauling":
                 truck.time_in["haul_loaded"] += dt
                 self._move(truck, dt)
@@ -995,7 +1028,8 @@ class Haulage:
     # -- публикация ----------------------------------------------------------
     def dispatch_features(self):
         hauling = sum(1 for t in self.trucks if t.state in ("hauling", "returning"))
-        queued = sum(1 for t in self.trucks if t.state in ("queued_load", "queued_dump"))
+        not_working = sum(1 for t in self.trucks
+                           if t.state in ("queued_load", "queued_dump", "refueling"))
         assignments = {t.id: t.excavator for t in self.trucks}
         hours = min(1.0, self._sim_t / WAIT_WINDOW_MODEL_S) if self._sim_t > 0 else 0.0
         window_h = max(hours, 1e-6)
@@ -1003,10 +1037,11 @@ class Haulage:
         avg_wait_dump = (sum(v for _, v in self._wait_dump) / len(self._wait_dump)) if self._wait_dump else 0.0
         trips_per_hour = len(self._trips_log) / window_h
         tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
-        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке); у грузовиков нет
-        # отдельного state="down" (ломаются только экскаваторы) — простой у сломанного экскаватора
-        # уже учтён через queued_load, отдельно вычитать не нужно (было задвоение).
-        fleet_utilization = 100.0 * max(0, len(self.trucks) - queued) / len(self.trucks)
+        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке) и не заправляется
+        # (часть 2 задачи по проверке координатора — заправляющиеся не считаются работающими);
+        # у грузовиков нет отдельного простоя из-за поломки экскаватора — он уже учтён через
+        # queued_load, отдельно вычитать не нужно (было задвоение).
+        fleet_utilization = 100.0 * max(0, len(self.trucks) - not_working) / len(self.trucks)
         clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
                       if self._clay_crusher_total_t > 0 else 0.0)
         return {
