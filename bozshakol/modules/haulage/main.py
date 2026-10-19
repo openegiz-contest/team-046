@@ -74,7 +74,10 @@ DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dum
 # домашние экскаваторы: 6+5+6 на сульфидные забои, 4 на глинистый, 3+4 на вскрышу
 HOME = ([1] * 6 + [2] * 5 + [3] * 6 + [4] * 4 + [5] * 3 + [6] * 4)
 
-# -- диспетчер: лимит доли глины в руде, привезённой на дробилку (§4 договора, clay_limit) --
+# -- диспетчер: лимит доли глины в руде, привезённой на дробилку --
+# clay_limit в договоре нет (проверено координатором) — это константа МОДУЛЯ (допущение,
+# не из договора), просто публикуется в dispatch как справочное значение.
+CLAY_LIMIT_PCT = 15.0         # допущение: предел доли глины в руде на дробилке
 CLAY_WINDOW_T = 2000.0        # т — скользящее окно, по которому считаем clay_share_crusher
 CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинистые забои, если подошли к 90 % лимита
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
@@ -337,7 +340,7 @@ class Haulage:
         for t in self.trucks:
             t.fuel = self.rng.uniform(60, 100)
         self._current_shift = None  # пересчитать машинистов/водителей при первом read_scenarios()
-        self.clay_limit_pct = 15.0
+        self.clay_limit_pct = CLAY_LIMIT_PCT
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
         # -- план-диспетчер (часть 2) --
@@ -393,7 +396,6 @@ class Haulage:
         self.dumps["crusher-01"].accepting = bool(w.get("crusher-01", "accepting", True))
         self.dumps["stockpile-clay"].accepting = bool(w.get("stockpile-clay", "accepting", True))
         self.speed_limit = float(w.get("mine", "speed_limit", 50) or 50)
-        self.clay_limit_pct = float(w.get("dispatch", "clay_limit", 15) or 15)
         shift = w.get("mine", "shift", 1)
         if shift != self._current_shift:
             self._current_shift = shift
