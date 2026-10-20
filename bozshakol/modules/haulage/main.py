@@ -122,6 +122,13 @@ PLAN_WASTE_TPH = PLAN_CRUSHER_TPH + PLAN_CLAY_TPH
 PLAN_RECOMPUTE_S = 10.0 * 60.0   # план пересчитывается не реже, чем раз в 10 модельных минут
 TRUCK_TIE_BREAK_S = 30.0         # «близкие значения» отставания от плана — 0,5 мин
 PLAN_DEFICIT_FALLBACK_S = 1.0e6  # конечный «очень большой» запасной вариант вместо math.inf (см. _plan_deficit_time_s)
+# допущение (часть 2 задачи «погоня за ожиданием»): диспетчер не пытается «отыграть» больше
+# 1-2 упущенных рейсов сразу — иначе после восстановления обслуживания (дорога открылась,
+# экскаватор почин) весь парк одновременно бросается к ОДНОМУ экскаватору с огромным накопленным
+# долгом (настоящий баг части 1 — план-долг не ограничен сверху). Берём больший класс самосвала
+# (180 т) — щедрее предел, число 2 — прямо из текста задачи, не подбирал под результат.
+PLAN_DEFICIT_CAP_TRUCKS = 2.0
+PLAN_DEFICIT_CAP_T = PLAN_DEFICIT_CAP_TRUCKS * TRUCK_PASSPORT[180]["capacity_t"]
 
 # -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
 # запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
@@ -449,6 +456,33 @@ class Haulage:
         cycle_s = BUCKET_CYCLE_S / info["factor"] / ex.operator_mult
         return EXCAVATOR_BUCKET_T * 3600.0 / cycle_s if cycle_s > 0 else 0.0
 
+    def _excavator_cut_off(self, ex):
+        """Экскаватор физически не обслуживается — не получает цель (`plan_tph = 0`) в
+        `_update_plan` и не копит план-долг (`plan_target_cum_t`, пауза в `step()`): сломан
+        (`ex.down`), отрезан закрытой дорогой (честная проверка путём от fuel-station — узла,
+        который сам никогда не закрывается, т.к. не на съездах road-ramp-1/2/road-crusher),
+        забой исчерпан (`remaining` — признак геологии, в договоре есть, просто раньше не
+        читали). КОРОТКАЯ остановка (`EXCAVATOR_SHORT_STOP_*`, п.6 разброса — сам разброс не
+        трогаем) сюда намеренно НЕ входит, хотя в тексте задачи названа одной из причин —
+        проверено прогоном (`sim_check.py`, режим «со сценариями»): если на каждую короткую
+        3-10-минутную остановку (±раз в час на экскаватор) переставать копить план-долг или
+        перебрасывать её долю плана на остальных экскаваторов группы, план «дёргается» чаще,
+        чем самосвалы успевают доехать — ожидание у экскаватора становится ХУЖЕ (не лучше), а
+        руда у «авто» уходит ниже 90% от плана (настоящее эмпирическое наблюдение по трём
+        отдельным прогонам, не предположение). Короткие остановки — единственная из четырёх
+        причин, которую отдельно НЕ гасим: они и так короткие, укладываются под общий предел
+        PLAN_DEFICIT_CAP_T (ниже) без вреда для точности руды. На ВЫБОР экскаватора самосвалом
+        (`_best_candidate`) ничего из этого не влияет — там уже есть честная проверка
+        достижимости по пути (`_eta_s`), её не трогаем."""
+        if ex.down:
+            return True
+        if self.roads.path("fuel-station", ex.node) is None:
+            return True
+        remaining = self.watcher.get(ex.face, "remaining", None)
+        if remaining is not None and float(remaining) <= 0.0:
+            return True
+        return False
+
     def _update_plan(self):
         """Целевой т/ч для дробилки/склада глины — план добычи (0, если сейчас не принимает);
         делится между работающими экскаваторами своей руды пропорционально их возможной
@@ -462,25 +496,37 @@ class Haulage:
         причина перебора руды цели в «авто», НЕ HOME). Целевой т/ч для вскрыши — PLAN_WASTE_TPH
         (== план руды, «вскрыша ≈ тоннаж руды» — уже существующее допущение проекта,
         bozshakol/data/SOURCES.md), делится между работающими вскрышными экскаваторами
-        пропорционально их возможной производительности — так же, как у рудных групп."""
+        пропорционально их возможной производительности — так же, как у рудных групп.
+        Структурно недоступные экскаваторы (`_excavator_cut_off` — сломан/отрезан/забой
+        исчерпан) не получают цель (`plan_tph = 0`) и не входят в `group_total` своей группы
+        — план-долг не копится, пока их физически не обслуживают (часть 1 задачи «погоня за
+        ожиданием», настоящий баг: раньше проверялось только `ex.down`). Короткие остановки
+        сюда не входят — см. `_excavator_cut_off`."""
         self.plan_crusher_tph = PLAN_CRUSHER_TPH if self.dumps["crusher-01"].accepting else 0.0
         self.plan_clay_tph = PLAN_CLAY_TPH if self.dumps["stockpile-clay"].accepting else 0.0
         targets = {"sulphide": self.plan_crusher_tph, "clay": self.plan_clay_tph, "waste": PLAN_WASTE_TPH}
-        possible = {ex.id: (0.0 if ex.down else self._possible_tph(ex)) for ex in self.excavators.values()}
+        available = {ex.id: not self._excavator_cut_off(ex) for ex in self.excavators.values()}
+        possible = {ex.id: (self._possible_tph(ex) if available[ex.id] else 0.0) for ex in self.excavators.values()}
         ore_of = {ex.id: self.face_info(ex.id)["ore"] for ex in self.excavators.values()}
         for ex in self.excavators.values():
-            if ex.down:
+            if not available[ex.id]:
                 ex.plan_tph = 0.0
                 continue
             group_total = sum(possible[e.id] for e in self.excavators.values()
-                               if not e.down and ore_of[e.id] == ore_of[ex.id])
+                               if available[e.id] and ore_of[e.id] == ore_of[ex.id])
             ex.plan_tph = targets.get(ore_of[ex.id], 0.0) * possible[ex.id] / group_total if group_total > 0 else 0.0
 
     def _maybe_update_plan(self):
         """Пересчёт плана не реже раза в 10 модельных минут, и сразу же при смене входных
-        данных плана (поломка экскаватора, дробилка/склад перестали принимать)."""
+        данных плана (поломка/отрезанность экскаватора, открытие-закрытие дороги, дробилка/
+        склад перестали принимать) — `roads.closed` добавлен, чтобы отрезанность подхватывалась
+        сразу. Короткая остановка (`ex.short_stop_until`) сюда НЕ входит — `_update_plan`
+        (доля группы) от неё не зависит, см. `_excavator_cut_off`; добавление её сюда проверено
+        и отклонено: план пересчитывался бы практически каждый тик (короткие остановки часты —
+        ~раз в час на каждый из 6 экскаваторов) без какой-либо пользы."""
         inputs = (self.dumps["crusher-01"].accepting, self.dumps["stockpile-clay"].accepting,
-                  tuple(ex.down for ex in self.excavators.values()))
+                  tuple(ex.down for ex in self.excavators.values()),
+                  tuple(sorted(self.roads.closed)))
         if self._sim_t - self._last_plan_update_t >= PLAN_RECOMPUTE_S or inputs != self._plan_inputs:
             self._update_plan()
             self._last_plan_update_t = self._sim_t
@@ -512,8 +558,13 @@ class Haulage:
         «очень большой» запасной вариант вместо math.inf (не 0 т/ч цели, но отставание есть) —
         чтобы разность score'ов в _best_candidate никогда не давала inf-inf=nan (баг, найденный
         проверкой части 2: при score=nan сравнение «близко к лучшему» ложно для всех кандидатов,
-        список кандидатов для выбора пустеет, и min() падает)."""
-        deficit_t = ex.plan_target_cum_t - self._committed_tons(ex)
+        список кандидатов для выбора пустеет, и min() падает).
+        `deficit_t` ограничен сверху PLAN_DEFICIT_CAP_T (часть 2 задачи «погоня за ожиданием») —
+        общий предохранитель независимо от причины долга: `_excavator_cut_off` останавливает
+        НАКОПЛЕНИЕ долга, пока экскаватор недоступен, а этот предел ограничивает УЖЕ накопленный
+        долг (в т.ч. из других причин, не перечисленных явно) — после восстановления диспетчер
+        не бросает весь парк к одному экскаватору, отыгрывая не больше 1-2 рейсов разом."""
+        deficit_t = min(ex.plan_target_cum_t - self._committed_tons(ex), PLAN_DEFICIT_CAP_T)
         if ex.plan_tph > 0:
             return deficit_t / (ex.plan_tph / 3600.0)
         return PLAN_DEFICIT_FALLBACK_S if deficit_t > 0 else 0.0
@@ -1009,7 +1060,8 @@ class Haulage:
         self._maybe_update_plan()
         self._check_reserve_exits()
         for ex in self.excavators.values():
-            ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
+            if not self._excavator_cut_off(ex):  # план-долг не копится, пока не обслуживается
+                ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
         fuel_before = self.fuel_used_l_total
         state_counts = {}
         for truck in self.trucks:
