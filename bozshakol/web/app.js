@@ -117,10 +117,18 @@ Object.assign(sun.shadow.camera, { left: -4600, right: 4600, top: 3600, bottom: 
 sun.shadow.bias = -0.0008;
 scene.add(sun, sun.target);
 
+// Виды подобраны под окно 1920×1080 (холст ≈ 1,5 : 1); на более узком холсте камера отходит дальше,
+// чтобы макет не обрезался по краям
+let startFitted = false;
+function fitToAspect(pos, target) {
+  const k = Math.max(1, 1.5 / (perspCam.aspect || 1.5));
+  return pos.sub(target).multiplyScalar(k).add(target);
+}
 function resize() {
   const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
   renderer.setSize(w, h, false);
   perspCam.aspect = w / h; perspCam.updateProjectionMatrix();
+  if (!startFitted) { startFitted = true; fitToAspect(perspCam.position, controls.target); }
   const half = 3000, asp = w / h;
   orthoCam.left = -half * asp; orthoCam.right = half * asp; orthoCam.top = half; orthoCam.bottom = -half;
   orthoCam.updateProjectionMatrix();
@@ -730,7 +738,8 @@ function setView(name) {
     camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
   } else {
     const v = VIEWS[name];
-    flyTo(toScene(...v.pos), toScene(...v.target));
+    const target = toScene(...v.target);
+    flyTo(fitToAspect(toScene(...v.pos), target), target);
   }
   markViewButton(name);
 }
@@ -988,7 +997,7 @@ function buildFuelStation() {
   addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
 }
 
-// ---------------------------------------------------------------- переключатель «Снимок» и подписи источников
+// ---------------------------------------------------------------- кнопка «Карта местности» (снимок) и подписи источников
 function updateAttribution() {
   const a = document.getElementById('attribution');
   if (!terrainApi || !terrainApi.attribution) { a.hidden = true; return; }

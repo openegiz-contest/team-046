@@ -85,7 +85,8 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .scenario { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .scenario:last-child { border-bottom: none; }
 .scenario .row { display: flex; align-items: center; gap: 6px; }
-.scenario .row .title { flex: 1; font-weight: 600; }
+.scenario .row .title { flex: 1; min-width: 0; font-weight: 600; }
+.scenario .row button { flex-shrink: 0; }
 .scenario .hint { color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.35; }
 .scenario .params { color: var(--muted); font-size: 10.5px; margin-top: 2px; opacity: .8; }
 .scenario button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 10px; color: #fff; font-size: 12px; font-weight: 600; }
@@ -156,11 +157,11 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 
 /* --- подсказка по клавишам и путеводитель --- */
 #help-hint, #guide-open {
-  position: absolute; right: 12px; font-size: 11.5px; color: var(--ink); cursor: pointer;
+  position: absolute; left: 12px; font-size: 11.5px; color: var(--ink); cursor: pointer;   /* слева: справа их закрывает карточка двойника */
   background: rgba(255,255,255,0.85); border: none; border-radius: 999px; padding: 4px 11px; box-shadow: var(--shadow);
 }
-#help-hint { bottom: 36px; }
-#guide-open { bottom: 66px; font-weight: 600; color: var(--accent); }
+#help-hint { bottom: 52px; }   /* над подписью источников (на узком окне она в две строки) */
+#guide-open { bottom: 82px; font-weight: 600; color: var(--accent); }
 #help-hint:hover, #guide-open:hover { background: #fff; }
 #help {
   position: absolute; right: 14px; top: 70px; width: 410px; max-width: calc(100% - 28px); max-height: calc(100% - 100px);
