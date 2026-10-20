@@ -90,6 +90,11 @@ class Rules(unittest.TestCase):
         a = R.advise(s)
         self.assertEqual(a[0]["priority"], "important")
         self.assertIn("Сейчас 2 гружёных самосвалов этого забоя везут руду на дробилку", a[0]["text"])
+        # сценарий включён, но геология ещё не обновила забой и глина в питании в норме — совета нет
+        s2 = base_snap(); s2["mine"]["scenario_clay_face"] = 1
+        s2["scenarios_params"] = {"clay_face": {"value": True, "face": "face-03", "clay_pct": 45}}
+        s2["face-03"]["clay_pct"] = 3; s2["plant-sulphide"]["feed_clay"] = 4.0
+        self.assertEqual(R.advise(s2), [])
         # сценарий выключен — совета нет
         s["mine"]["scenario_clay_face"] = 0
         s["face-03"].update(ore_type="sulphide", clay_pct=5)

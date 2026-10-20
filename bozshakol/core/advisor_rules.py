@@ -140,6 +140,8 @@ def rule_clay(snap):
         target = face
         priority = "important" if (clay > CLAY_LIMIT_PCT or trucks) else "info"
     else:
+        if clay <= CLAY_LIMIT_PCT:
+            return None                 # сценарий включён, но забой ещё не стал глинистым, и в питании глина в норме
         trucks = []
         text = (f"Глина в питании сульфидной фабрики {clay:.1f} % — выше порога {CLAY_LIMIT_PCT:.0f} %; "
                 f"глинистый забой по двойникам не определён: проверить забои и рекомендованные пункты разгрузки.")
