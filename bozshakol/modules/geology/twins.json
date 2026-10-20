@@ -84,6 +84,18 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
    }
   }
  },
@@ -171,6 +183,18 @@
     "properties": {
      "value": 0.0,
      "unit": "%"
+    }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
     }
    }
   }
@@ -260,6 +284,18 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
    }
   }
  },
@@ -347,6 +383,18 @@
     "properties": {
      "value": 0.0,
      "unit": "%"
+    }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
     }
    }
   }
@@ -436,6 +484,18 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
    }
   }
  },
@@ -524,6 +584,18 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
    }
   }
  },
@@ -576,6 +648,35 @@
     "properties": {
      "value": 0,
      "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
     }
    }
   }
@@ -630,6 +731,35 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
+    }
    }
   }
  },
@@ -682,6 +812,35 @@
     "properties": {
      "value": 0,
      "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
     }
    }
   }
