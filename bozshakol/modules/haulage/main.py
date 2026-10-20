@@ -811,9 +811,14 @@ class Haulage:
         """Переключение «авто» → «ручной» (п.5 части 1 задачи): резерва не существует — все
         резервные самосвалы сразу выезжают к своим домашним экскаваторам. self.mode уже
         «manual» в момент вызова, поэтому _return (через choose_excavator) сам отправляет их
-        по закреплённому распределению, не по диспетчеру."""
+        по закреплённому распределению, не по диспетчеру. Самосвалы, которые ФИЗИЧЕСКИ ЕЩЁ
+        ЕДУТ на fuel-station, чтобы встать в резерв (state=="returning", entering_reserve=True,
+        ещё не доехали) — тоже перенаправляем сразу, а не ждём, пока они доедут и попробуют
+        встать в резерв уже в «ручном» (настоящий баг, найденный независимой проверкой части 1:
+        без этой ветки такой самосвал на прибытии получал бы state="reserve" даже в manual)."""
         for truck in self.trucks:
-            if truck.state == "reserve":
+            if truck.state == "reserve" or (truck.state == "returning" and truck.entering_reserve):
+                truck.entering_reserve = False
                 self._return(truck)
 
     def _start_refuel(self, truck):
@@ -967,7 +972,7 @@ class Haulage:
             self.dumps[truck.destination].queue.append(truck)
         elif truck.state == "returning":
             if truck.destination == "fuel-station":
-                if truck.entering_reserve:
+                if truck.entering_reserve and self.mode == "auto":
                     # приехал встать в резерв (не на дозаправку — та идёт тем же путём, но с
                     # entering_reserve=False, см. _enter_reserve/_start_refuel): контракт
                     # (contract/README.md) — payload=0, cargo_type=none, destination=«»
@@ -978,6 +983,12 @@ class Haulage:
                     truck.cargo_type = "none"
                     truck.destination = ""
                     truck.speed = 0.0
+                elif truck.entering_reserve:
+                    # защита (основной путь — _release_all_reserve в step()): mode уже сменился
+                    # на «ручной», пока самосвал был в пути к резерву — не паркуем в резерв,
+                    # отправляем в работу (баг, найденный независимой проверкой части 1)
+                    truck.entering_reserve = False
+                    self._return(truck)
                 else:
                     truck.state = "refueling"
                     truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
