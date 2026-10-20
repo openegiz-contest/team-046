@@ -161,7 +161,10 @@ function updateTruck(ctx, id, twin) {
   g.setLoad(payload > 0 ? fv(twin, 'cargo_type', 'none') : 'none');
   g.setDumping(state === 'dumping' ? 1 : 0);
   g.setWheels(tr.odometer);
+  // g.setState('reserve') красит кабину и кузов в серо-белый — уже делает общая библиотека
+  // (web/models.js, setState), сами ничего не красим; добавляем только текстовую метку
   g.setState(state);
+  g.userData.label = av(twin, 'name', id.slice(NS.length)) + (state === 'reserve' ? ' · резерв' : '');
   g.visible = !(x === 0 && y === 0 && z === 0);   // до первой телеметрии не показываем
 
   const excavator = fv(twin, 'excavator', '');
