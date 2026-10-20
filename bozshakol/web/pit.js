@@ -1,6 +1,6 @@
 // Карьер: модель уступов по geometry.json (pit: полуоси, число уступов, высота уступа, отступ).
-// Каждый уступ — ступень: светлая плоская берма (площадка) и крутая стенка (≈ 58°, как в паспорте
-// карьера) из рыже-серой породы, затенённая по направлению на солнце (юго-запад). Верхняя кромка
+// Каждый уступ — чистая ступень с резкой кромкой (плоские грани): светлая берма и крутая тёмная стенка
+// (≈ 58°, как в паспорте карьера) из рыже-серой породы с едва заметными полосами, затенённая по солнцу. Верхняя кромка
 // повторяет высоту рельефа (terrain.demAt), поэтому борт переходит в степь без щелей и ступенек.
 // На дне — пятна руды по зонам забоев (приглушённые цвета договора). Съезды (road-ramp-*) —
 // с отбойными валами по внутреннему краю.
@@ -8,7 +8,7 @@
 //   buildPit(THREE, geometry, terrain, toScene, colors, faces) -> THREE.Group
 //   faces: [{ x, y, ore: 'sulphide'|'clay'|'waste' }] — забои для оттенка руды (из geometry.objects)
 
-const SEGMENTS = 72;
+const SEGMENTS = 120;                      // гладкий контур, ступени с резкой кромкой
 const SUN = [-0.7, -0.7];                 // направление на солнце в плане (юго-запад), как у света сцены
 
 export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
@@ -17,9 +17,9 @@ export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
   group.name = 'pit';
   const bermW = 12;                                    // ширина бермы, м; остальное отступа — заложение стенки
   const wallRun = Math.max(4, pit.inset - bermW);      // горизонтальное заложение стенки (≈ 9,4 м при 58°)
-  const bermColor = new THREE.Color(0xcfc0a0);
-  const wallRust = new THREE.Color(0x8a5f45), wallGrey = new THREE.Color(0x6f6762);
-  const floorColor = new THREE.Color(0xa09482);
+  const bermColor = new THREE.Color(0xe2d4b4);                       // светлая утрамбованная берма
+  const wallRust = new THREE.Color(0x7a4f37), wallGrey = new THREE.Color(0x5d5753);   // тёмная крутая стенка
+  const floorColor = new THREE.Color(0xa49a86);
   const oreColors = { sulphide: new THREE.Color(colors.sulphide), clay: new THREE.Color(colors.clay), waste: new THREE.Color(colors.waste) };
   const tmp = new THREE.Color();
 
@@ -37,7 +37,7 @@ export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
     const nx = -x / (pit.a * pit.a), ny = -y / (pit.b * pit.b);
     const n = Math.hypot(nx, ny) || 1;
     const d = (nx / n) * SUN[0] + (ny / n) * SUN[1];
-    return 0.72 + 0.4 * Math.max(0, d);
+    return 0.62 + 0.5 * Math.max(0, d);
   }
   // оттенок руды: ближайший забой в радиусе 500 м
   function tint(base, x, y, strength) {
@@ -50,6 +50,7 @@ export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
     if (best && oreColors[best.ore]) tmp.lerp(oreColors[best.ore], strength * (1 - best.d / 500));
     return tmp;
   }
+  const flatMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, flatShading: true });
   function addStrip(outer, inner, zOuter, zInner, colorFn) {
     const pos = [], col = [], idx = [];
     const zo = (p) => typeof zOuter === 'function' ? zOuter(p[0], p[1]) : zOuter;
@@ -70,12 +71,15 @@ export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     geo.setIndex(idx);
     geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geo, flatMat);
+    mesh.receiveShadow = true;
     group.add(mesh);
     return mesh;
   }
 
   const rimZ = (x, y) => terrain.demAt(x, y);          // верхняя кромка — по рельефу
+  // полосы породы: едва заметные тона по сегментам стенки (детерминированно)
+  const band = (x, y) => 0.94 + 0.12 * (Math.abs(Math.sin(Math.round(Math.atan2(y, x) * 40) * 12.9898) * 43758.5453) % 1);
   const bermFn = () => tmp.copy(bermColor);
   for (let k = 0; k < pit.count; k++) {
     const zTop = -k * pit.h;
@@ -87,17 +91,17 @@ export function buildPit(THREE, geometry, terrain, toScene, colors, faces) {
     addStrip(outer, crest, k === 0 ? rimZ : zTop, zTop, bermFn);
     // стенка: рыжая порода вверху, серая внизу; темнее на теневой стороне
     const rock = tmp.clone().copy(wallRust).lerp(wallGrey, k / Math.max(1, pit.count - 1));
-    addStrip(crest, toe, zTop, zBot, (x, y) => tmp.copy(rock).multiplyScalar(wallShade(x, y)));
+    addStrip(crest, toe, zTop, zBot, (x, y) => tmp.copy(rock).multiplyScalar(wallShade(x, y) * band(x, y)));
   }
   // дно: пятна руды по зонам забоев
   const bottom = ring(pit.count * pit.inset);
   {
-    const shape = new THREE.Shape(bottom.map(([x, y]) => new THREE.Vector2(x, -y)));
+    const shape = new THREE.Shape(bottom.map(([x, y]) => new THREE.Vector2(x, y)));   // после поворота −90° по X: y → −Z, как в toScene
     const geo = new THREE.ShapeGeometry(shape, 1);
     const colArr = [];
     const p = geo.attributes.position;
     for (let i = 0; i < p.count; i++) {
-      const c = tint(floorColor, p.getX(i), -p.getY(i), 0.55);
+      const c = tint(floorColor, p.getX(i), p.getY(i), 0.55);
       colArr.push(c.r, c.g, c.b);
     }
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colArr, 3));

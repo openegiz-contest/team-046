@@ -94,7 +94,7 @@ def step(watcher, telemetry, history, last_ids, ctx=None):
                                 float(sp.get("inflow") or 0.0)))
             except (TypeError, ValueError):
                 pass
-            history = [h for h in history if t - h[0] <= PLAN_WINDOW_S]
+            history = [h for h in history if t - h[0] <= 2 * PLAN_WINDOW_S]   # 2 ч: окно «последний час» + признак разгона
         advice = advise(snap, history, rule_ctx)
         top = advice[0] if advice else None
         ids = ",".join(a["id"] for a in advice)

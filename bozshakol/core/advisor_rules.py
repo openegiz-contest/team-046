@@ -10,6 +10,7 @@ reason (почему, по каким двойникам), effect (ожидае�
 Пороги — допущения, обоснованы в data/SOURCES.md.
 """
 import re
+import time as _t
 
 NS = "kz.bozshakol"
 
@@ -18,7 +19,8 @@ CLAY_NORM_PCT = 5.0          # «нормальная» глина сульфи�
 RECOVERY_PER_CLAY = 0.4
 PLAN_LIMIT_PCT = 95.0        # выполнение плана за последний модельный час, ниже — совет в)
 PLAN_WINDOW_S = 3600         # окно «последний модельный час»
-PLAN_MIN_SPAN_S = 2700       # минимум данных в окне (45 мин), иначе совет не даётся
+PLAN_MIN_SPAN_S = 3300       # минимум данных в окне «последний час» (55 мин), иначе совет не даётся
+WARMUP_S = 3600              # первый модельный час после старта — «рудник разгоняется», правила привоза молчат
 RECOVER_WINDOW_S = 900       # последние 15 мин: если привоз уже в норме, совет по привозу снимается
 WAIT_LIMIT_MIN = 2.0         # ожидание у экскаватора в «авто», выше — совет г)
 WAIT_TARGET_MIN = 1.25       # ориентир Бозшаколя 1–1,5 мин
@@ -158,12 +160,14 @@ def rule_clay(snap):
 
 # ---------------------------------------------------------------- в) план ниже 95 % за час
 def _hour_window(history):
-    """Окно «последний модельный час» или None, если данных меньше 45 мин."""
+    """Окно «последний модельный час» или None, если данных меньше 55 мин."""
     if not history:
         return None
     t_last = history[-1][0]
     window = [h for h in history if t_last - h[0] <= PLAN_WINDOW_S]
     if len(window) < 2 or t_last - window[0][0] < PLAN_MIN_SPAN_S:
+        return None
+    if t_last - history[0][0] < WARMUP_S:      # первый модельный час после старта — «рудник разгоняется»
         return None
     return window
 
@@ -185,6 +189,18 @@ def _bottlenecks(snap):
     cr = snap.get("crusher-01") or {}
     sp = snap.get("stockpile-coarse") or {}
     causes, target = [], None
+    d = snap.get("dispatch") or {}
+    reserve = int(_f(d, "trucks_reserve"))
+    if reserve > 0:
+        # недовоз руды при самосвалах в резерве: вернуть в работу K (по trucks_needed модуля транспорта)
+        # trucks_needed модуля №2 — среднее число самосвалов, занятых делом (погрузка, рейс, разгрузка, возврат),
+        # без очередей; сравниваем с тем же — самосвалами в работе без очередей
+        working = sum(1 for st, _ in fleet_sample(snap) if st in ("loading", "hauling", "dumping", "returning")) \
+            or int(_f(d, "trucks_hauling"))
+        need = _f(d, "trucks_needed", working)
+        k = max(1, min(reserve, int(round(need - working))))
+        causes.append(f"в резерве {reserve} самосвалов при нехватке руды — вернуть {k} в работу")
+        target = "dispatch"
     for name, f in sorted(snap.items()):
         if name.startswith("excavator-") and isinstance(f, dict) and f.get("state") == "down":
             causes.append(f"{name} в аварии — перераспределить его самосвалы на другие забои")
@@ -263,7 +279,8 @@ def rule_inflow(snap, history):
     causes, target = _bottlenecks(snap)
     text = (f"Привоз руды на дробилку за последний час — {pct:.0f} % плана ({inflow:.0f} из {plan:.0f} т/ч); "
             f"фабрика идёт со склада, его хватит на {hours:.1f} ч. Узкое место: {causes[0]}.")
-    return _advice("inflow", "critical" if hours < STOCK_CRIT_H else "important", "Привоз руды ниже плана", text,
+    # фабрика при этом идёт со склада на план — «к сведению» (с запасом в часах); критично при запасе < 2 ч
+    return _advice("inflow", "critical" if hours < STOCK_CRIT_H else "info", "Привоз руды ниже плана", text,
                    "среднее stockpile-coarse.inflow за последний модельный час против plant-sulphide.plan_rate; " +
                    "; ".join(causes),
                    f"привоз вернётся к плану {plan:.0f} т/ч, склад перестанет таять",
@@ -406,13 +423,29 @@ def rule_blizzard(snap, ctx=None):
                    "stockpile-coarse", data)
 
 
+def rule_warmup(snap, history):
+    """Первый модельный час после старта: правила привоза ещё не работают — так и сказать."""
+    if not history:
+        return None
+    t0, t1 = history[0][0], history[-1][0]
+    if t1 - t0 >= WARMUP_S:
+        return None
+    ready = t0 + WARMUP_S
+    hhmm = _t.strftime("%H:%M", _t.localtime(ready))
+    return _advice("warmup", "info", "Рудник разгоняется",
+                   f"К сведению: рудник разгоняется после старта — данные о привозе за час будут к {hhmm}.",
+                   f"данных о привозе руды {int((t1 - t0) / 60)} модельных минут из 60, нужных для оценки «привоз ниже плана»",
+                   "после первого модельного часа советник сравнит привоз с планом и назовёт узкое место, если оно есть",
+                   "crusher-01", {"history_min": round((t1 - t0) / 60, 1), "ready_at": hhmm})
+
+
 def advise(snap, history=None, ctx=None):
     """Все правила; главный совет первым (по уровню, затем по порядку правил).
     ctx — накопленные сервисом данные: samples_before (срезы парка за час до метели), deliveries, blizzard_since."""
     out = []
     hist = history or []
     for rule in (rule_crusher, rule_clay, lambda s: rule_plan(s, hist), lambda s: rule_inflow(s, hist), rule_fleet,
-                 lambda s: rule_blizzard(s, ctx)):
+                 lambda s: rule_blizzard(s, ctx), lambda s: rule_warmup(s, hist)):
         a = rule(snap)
         if a:
             out.append(a)
