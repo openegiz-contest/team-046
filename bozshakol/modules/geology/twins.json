@@ -84,6 +84,29 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -171,6 +194,29 @@
     "properties": {
      "value": 0.0,
      "unit": "%"
+    }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
     }
    }
   }
@@ -260,6 +306,29 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -347,6 +416,29 @@
     "properties": {
      "value": 0.0,
      "unit": "%"
+    }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
     }
    }
   }
@@ -436,6 +528,29 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -524,6 +639,29 @@
      "value": 0.0,
      "unit": "%"
     }
+   },
+   "powder_factor": {
+    "properties": {
+     "value": 0.43,
+     "unit": "кг/м³"
+    }
+   },
+   "reserve_blocks": {
+    "properties": {
+     "value": 3,
+     "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -576,6 +714,35 @@
     "properties": {
      "value": 0,
      "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
     }
    }
   }
@@ -630,6 +797,35 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
+    }
    }
   }
  },
@@ -681,6 +877,76 @@
    "holes_total": {
     "properties": {
      "value": 0,
+     "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-summary": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровые работы (сводка)",
+   "kind": "drill_summary",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "drill_utilisation_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "drilling_capacity_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "blasting_demand_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "drills_working": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "drills_needed": {
+    "properties": {
+     "value": 0.0,
      "unit": "шт"
     }
    }

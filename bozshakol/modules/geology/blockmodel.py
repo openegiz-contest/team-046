@@ -21,12 +21,12 @@ WASTE, CLAY, SULPHIDE = 0, 1, 2
 ORE_NAME = {WASTE: "waste", CLAY: "clay", SULPHIDE: "sulphide"}
 DENSITY = {WASTE: 2.65, CLAY: 2.2, SULPHIDE: 2.7}            # т/м³
 DESTINATION = {WASTE: "dump-waste-1", CLAY: "stockpile-clay", SULPHIDE: "crusher-01"}
-HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 12.0}       # ед. Протодьяконова f
-HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (10.0, 14.0)}
+HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 11.0}       # ед. Протодьяконова f
+HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (9.0, 13.0)}
 
 # Тренды в «сигмах» логарифма содержания: центр залежи богаче края, с глубиной богаче;
 # у забоев из geometry.json — локальные аномалии (руда у рудных забоев, вскрыша у вскрышных).
-BUMP_AMP = {"sulphide": 1.4, "clay": 0.2, "waste": -2.4}
+BUMP_AMP = {"sulphide": 1.0, "clay": -0.3, "waste": -2.4}
 BUMP_SIGMA_H = 450.0     # м
 BUMP_SIGMA_Z = 45.0      # м
 CLAY_ZONE_SIGMA_H = 250.0
@@ -35,12 +35,20 @@ CLAY_ZONE_AMP = 50.0     # % глины в центре зоны глиниза�
 CLAY_BASE = 5.0          # % глины в глубине залежи
 CLAY_NOISE = 2.5
 CLAY_WEATHER_DEPTH = 60.0  # м, на какой глубине выветривание затухает в e раз
+# Сжатие верхнего хвоста распределения меди: выше CU_SOFT содержание плавно прижимается к CU_MAX
+# (богатые «гнёзда» в порфировых рудах редки и ограничены), максимум по модели < CU_MAX.
+CU_SOFT = 0.45           # % Cu, с этого значения начинается сжатие
+CU_MAX = 1.0             # % Cu, предел
+# Выветрелая глинистая часть залежи обеднена: медь частично вынесена. Множитель на содержание Cu
+# падает линейно от 1,0 при нулевой глине до 1 − CLAY_CU_LOSS при глине CLAY_CU_FULL % и выше.
+CLAY_CU_LOSS = 0.4
+CLAY_CU_FULL = 60.0
 AU_PER_CU = 0.30         # г/т на 1 % Cu (порфировое Cu-Au: золото следует за медью)
 AU_NOISE = 0.03
 
 # Калибровка (tools/calibrate.py). Среднее по рудным блокам Cu 0,39 %, Au 0,19 г/т,
 # глинистая руда 17,5 % рудного тоннажа, вскрыша/руда 0,67 т/т.
-CAL = {"mu": -1.32964, "sigma": 0.4334, "clay_surf": 47.79396, "c_au": 0.07291}
+CAL = {"mu": -1.07678, "sigma": 0.44229, "clay_surf": 55.73845, "c_au": 0.07309}
 
 
 class _Noise:
@@ -220,11 +228,15 @@ class BlockModel:
         mu, sigma, surf, c_au = (self.cal[k] for k in ("mu", "sigma", "clay_surf", "c_au"))
         cu, au, clay, hard, dens, typ = self.cu, self.au, self.clay, self.hard, self.dens, self.typ
         for i in range(self.count):
-            c = min(3.0, max(0.005, math.exp(mu + sigma * self.zc[i])))
-            g = max(0.01, AU_PER_CU * c + c_au + AU_NOISE * self.z_au[i])
+            c = math.exp(mu + sigma * self.zc[i])
+            if c > CU_SOFT:
+                span = CU_MAX - CU_SOFT
+                c = CU_SOFT + span * (1.0 - math.exp(-(c - CU_SOFT) / span))
             cl = CLAY_BASE + CLAY_NOISE * self.zcl[i] + surf * math.exp(-self.depth[i] / CLAY_WEATHER_DEPTH) \
                 + CLAY_ZONE_AMP * self.zone[i]
             cl = min(90.0, max(0.5, cl))
+            c = max(0.005, c * (1.0 - CLAY_CU_LOSS * min(1.0, cl / CLAY_CU_FULL)))   # глина → беднее
+            g = max(0.01, AU_PER_CU * c + c_au + AU_NOISE * self.z_au[i])
             t = WASTE if c < CUTOFF_CU else (CLAY if cl >= CLAY_LIMIT else SULPHIDE)
             lo, hi = HARD_RANGE[t]
             cu[i], au[i], clay[i], typ[i] = c, g, cl, t
@@ -235,6 +247,10 @@ class BlockModel:
         """Освободить поля этапа 1: сервису после калибровки они не нужны (экономия памяти)."""
         for name in ("zc", "zcl", "z_au", "z_h", "zone", "depth"):
             setattr(self, name, None)
+
+    def kind_of(self, i):
+        """Тип блока строкой: waste / clay / sulphide."""
+        return ORE_NAME[self.typ[i]]
 
     def tonnes(self, i):
         return self.block_vol * self.dens[i]
@@ -252,7 +268,10 @@ class BlockModel:
             au_t += self.au[i] * t
             if self.typ[i] == CLAY:
                 t_clay += t
+        ore_cu = sorted(self.cu[i] for i in range(self.count) if self.typ[i] != WASTE)
+        pct = lambda q: ore_cu[min(len(ore_cu) - 1, int(q / 100.0 * len(ore_cu)))]
         return {
+            "cu_p50": pct(50), "cu_p90": pct(90), "cu_p99": pct(99), "cu_max_ore": ore_cu[-1], "cu_max_all": max(self.cu),
             "blocks": self.count, "ore_mt": t_ore / 1e6, "waste_mt": t_waste / 1e6,
             "cu": cu_t / t_ore, "au": au_t / t_ore, "clay_share": t_clay / t_ore, "strip": t_waste / t_ore,
         }

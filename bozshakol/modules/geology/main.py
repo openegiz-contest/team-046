@@ -6,21 +6,30 @@
 face-01…06 своя панель — цепочка соседних блоков уступа. Экскаватор в забое (читается через
 платформу, накопительный loaded_total) отрабатывает панель; содержание забоя — смесь текущего
 и следующего блока по доле выработки текущего. Когда панель кончается, забой переходит на
-уступ ниже. Буровые станки drill-01…03 переходят по блокам и наращивают метры и скважины.
+уступ ниже.
+
+Буровые станки (drilling.py) бурят блоки панелей по сетке, измеряют крепость по скорости
+бурения (MWD) и «взрывают» блок: блоку присваиваются крепость и P80 по модели
+Кузнецова–Рамлера (blasting.py). Забой публикует p80 и hardness взорванного блока; если дошёл
+до невзорванного — blasted = false и loading_factor падает до минимума.
 Сценарии: clay_face (face, clay_pct), bad_blast (face, p80_mm).
 """
 import json
+import math
 import random
 import time
 
+import blasting as bl
 import blockmodel as bm
 from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging, value
+from drilling import Drill
 
 log = setup_logging("bz-geology")
 PUBLISH_S = 10.0         # реальных секунд между публикациями
-DRILL_RATE_M_PER_H = 25.0  # допущение: метров скважины в час
-HOLE_DEPTH_M = 16.0        # уступ 15 м + перебур
-PREVIEW_BLOCKS = 30        # блоков вокруг забоя в block_preview
+PREVIEW_BLOCKS = 30      # блоков вокруг забоя в block_preview
+INITIAL_BLASTED = 1      # блоков панели, взорванных до начала моделирования (запас перед экскаватором): станки начинают работать сразу
+RATE_MAX_TPH = 3000.0     # верхняя граница оценки скорости отгрузки экскаватора, т/ч
+BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
 
 
 def same_face(param, face_id):
@@ -28,31 +37,121 @@ def same_face(param, face_id):
 
 
 class Face:
-    def __init__(self, thing_id, body, geometry, model, claimed):
+    def __init__(self, thing_id, body, geometry, model, claimed, rng):
         self.id = thing_id.split(":")[1]
         f = body["features"]
-        self.base = {k: value(f, k) for k in ("p80", "loading_factor", "remaining")}
+        self.base = {k: value(f, k) for k in ("remaining",)}
         obj = next(o for o in geometry["objects"] if o["id"] == self.id)
         self.x, self.y, z = obj["position"]
-        self.model, self.claimed = model, claimed
+        self.model, self.claimed, self.rng = model, claimed, rng
         self.level = model.level_of(z)
         self.target_t = float(self.base["remaining"])      # тоннаж одной панели — как в twins.json
         self.excavator = f"excavator-{self.id[-2:]}"
         self.last_loaded = None
         self.extracted = 0.0
         self.panel_no = 1
-        self.panel = bm.Panel(model, self.level, self.x, self.y, self.target_t, claimed)
+        self.last_p80 = bl.P80_REF
+        self.win_x = self.win_t = 0.0
+        self.rate_tph = 700.0          # скорость отгрузки экскаватора, т/ч (скользящая оценка по loaded_total)
+        self._new_panel()
         self.preview = json.dumps(bm.preview(model, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
         self.cur = {}
         self.update_values(False, {}, False, {})
 
-    def absorb(self, loaded):
-        """Отработка панели по приросту накопительного loaded_total экскаватора."""
-        if loaded is None:
+    # -- панель и взрыв ----------------------------------------------------------------
+    def _new_panel(self):
+        m = self.model
+        self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, self.claimed)
+        if not self.panel.blocks:      # нижний уступ исчерпан другими панелями — берём блоки повторно
+            self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, set())
+        p = self.panel
+        n = len(p.blocks)
+        p.level = self.level
+        p.reserved = set()                       # блоки, которые сейчас бурит станок
+        p.blasted = bytearray(n)
+        p.p80 = [0.0] * n
+        p.hard_b = [0.0] * n
+        for j in range(min(INITIAL_BLASTED, n)):   # взорванный запас на старте: крепость с небольшим разбросом
+            self.blast(p, j, m.hard[p.blocks[j]] * (1.0 + self.rng.gauss(0.0, 0.03)))
+
+    def blast(self, panel, j, f):
+        """Блок взорван: ему присваиваются крепость (измеренная MWD) и P80 по модели Кузнецова–Рамлера."""
+        idx = panel.blocks[j]
+        m = self.model
+        panel.hard_b[j] = f
+        panel.p80[j] = bl.p80_mm(f, m.kind_of(idx), m.clay[idx], m.dens[idx])   # проект по типу блока, A — по Лилли
+        panel.blasted[j] = 1
+
+    def cur_index(self):
+        return bm.bisect_index(self.panel.cum, self.extracted)
+
+    def reserve(self):
+        """Сколько взорванных блоков подряд лежит перед экскаватором (с текущего)."""
+        p, i = self.panel, self.cur_index()
+        k = 0
+        while i + k < len(p.blocks) and p.blasted[i + k]:
+            k += 1
+        return k
+
+    def blasted_ahead_t(self):
+        """Тоннаж взорванного запаса впереди экскаватора (остаток текущего блока и взорванные блоки подряд за ним)."""
+        p, i = self.panel, self.cur_index()
+        n = len(p.blocks)
+        if i >= n or not p.blasted[i]:
+            return 0.0
+        t = self.model.tonnes(p.blocks[i]) - (self.extracted - p.cum[i])
+        k = i + 1
+        while k < n and p.blasted[k]:
+            t += self.model.tonnes(p.blocks[k])
+            k += 1
+        return max(0.0, t)
+
+    def blasted_ahead_h(self):
+        """Сколько часов работы экскаватора хватит взорванного запаса; 0 — забой упирается в невзорванный блок."""
+        return self.blasted_ahead_t() / max(self.rate_tph, 300.0)
+
+    def ahead_status(self):
+        """Предупреждение о нехватке бурения: ok (> 12 ч), low (4–12 ч), critical (< 4 ч взорванного запаса)."""
+        h = self.blasted_ahead_h()
+        return "ok" if h > 12.0 else ("low" if h >= 4.0 else "critical")
+
+    def ahead_with_pending_h(self):
+        """Запас с учётом блоков, которые станки бурят прямо сейчас (чтобы два станка не поехали в один и тот же забой)."""
+        p = self.panel
+        pending = sum(self.model.tonnes(p.blocks[j]) for j in p.reserved if j < len(p.blocks))
+        return (self.blasted_ahead_t() + pending) / max(self.rate_tph, 300.0)
+
+    def next_to_blast(self):
+        p = self.panel
+        for j in range(self.cur_index(), len(p.blocks)):
+            if not p.blasted[j] and j not in p.reserved:
+                return j
+        return None
+
+    # -- отработка ---------------------------------------------------------------------
+    def absorb(self, loaded, dt=0.0):
+        """Отработка панели по приросту накопительного loaded_total экскаватора.
+
+        Нулевое или отсутствующее значение — это начальное значение двойника, а не показание счётчика: ждём первого
+        настоящего (положительного) значения и только от него считаем прирост. Скачок больше возможного за тик
+        (счётчик перезапущен, пропуск сообщений) пропускается."""
+        if loaded is None or loaded <= 0:
             return
-        if self.last_loaded is not None and loaded >= self.last_loaded:
-            self.extracted += loaded - self.last_loaded
+        if self.last_loaded is None or loaded < self.last_loaded:
+            self.last_loaded = loaded          # первое показание или счётчик сброшен: новая точка отсчёта
+            return
+        delta = loaded - self.last_loaded
         self.last_loaded = loaded
+        if delta > max(2000.0, 5.0 * RATE_MAX_TPH * max(dt, 1.0) / 3600.0):
+            log.warning("%s: скачок loaded_total на %.0f т за тик — пропущен", self.id, delta)
+            return
+        self.extracted += delta
+        self.win_x += delta               # скорость отгрузки считаем по окну в 10 модельных минут, а не по тику
+        self.win_t += dt
+        if self.win_t >= 600.0:
+            inst = self.win_x / self.win_t * 3600.0
+            self.rate_tph = 0.8 * self.rate_tph + 0.2 * min(RATE_MAX_TPH, inst)
+            self.win_x = self.win_t = 0.0
         while self.panel.total > 0 and self.extracted >= self.panel.total:
             self.extracted -= self.panel.total
             self.next_panel()
@@ -62,29 +161,51 @@ class Face:
         old = self.level
         self.level = min(self.level + 1, m.levels - 1)
         self.panel_no += 1
-        self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, self.claimed)
-        if not self.panel.blocks:      # нижний уступ исчерпан другими панелями — берём блоки повторно
-            self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, set())
+        self._new_panel()
         self.preview = json.dumps(bm.preview(m, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
         where = "на уступ %d" % (self.level + 1) if self.level != old else "на следующий ряд нижнего уступа %d" % (self.level + 1)
         log.info("%s: панель отработана, забой переходит %s (панель %d, %.2f млн т, блоков %d)",
                  self.id, where, self.panel_no, self.panel.total / 1e6, len(self.panel.blocks))
 
     def update_values(self, clay_on, clay_p, blast_on, blast_p):
-        mix = bm.mixed(self.model, self.panel, self.extracted)
+        p = self.panel
+        mix = bm.mixed(self.model, p, self.extracted)
         if mix is None:                # пустая панель — оставляем последние значения
             return
-        c = {"cu_grade": mix["cu"], "au_grade": mix["au"], "clay_pct": mix["clay"], "hardness": mix["hard"],
-             "p80": self.base["p80"], "loading_factor": self.base["loading_factor"]}
+        i = self.cur_index()
+        n = len(p.blocks)
+        k = mix["k"]
+        blasted = bool(p.blasted[i])
+        if blasted:
+            p80, hard = p.p80[i], p.hard_b[i]
+            if i + 1 < n and p.blasted[i + 1]:     # как и содержание: смесь текущего и следующего блока
+                p80 = (1 - k) * p80 + k * p.p80[i + 1]
+                hard = (1 - k) * hard + k * p.hard_b[i + 1]
+            self.last_p80 = p80
+            lf = bl.loading_factor(p80)
+        else:                          # экскаватор дошёл до невзорванного блока: погрузка на минимуме
+            p80, hard, lf = self.last_p80, mix["hard"], bl.LF_MIN
+        c = {"cu_grade": mix["cu"], "au_grade": mix["au"], "clay_pct": mix["clay"], "hardness": hard,
+             "p80": p80, "loading_factor": lf}
         ore, dest = bm.classify(c["cu_grade"], c["clay_pct"])
         if clay_on and same_face(clay_p.get("face"), self.id):
             c["clay_pct"] = float(clay_p.get("clay_pct", 45))
             ore, dest = "clay", bm.DESTINATION[bm.CLAY]
         if blast_on and same_face(blast_p.get("face"), self.id):
-            c["p80"] = float(blast_p.get("p80_mm", 450))
-            c["loading_factor"] = 0.6
+            # неудачный взрыв: крупность выше расчётной, скорость погрузки — по той же формуле
+            normal = c["p80"]
+            try:
+                asked = float(blast_p.get("p80_mm") or 0.0)
+            except (TypeError, ValueError):
+                asked = 0.0
+            # p80_mm, меньший расчётного P80 забоя (стоящее в scenarios значение 450 мм — под прежний масштаб 250 мм),
+            # не имеет смысла для «неудачного» взрыва: берём вдвое от расчётного
+            c["p80"] = asked if asked > 1.2 * normal else BAD_BLAST_FACTOR * normal
+            c["loading_factor"] = min(c["loading_factor"], bl.loading_factor(c["p80"]))
         c["ore_type"], c["recommended_destination"] = ore, dest
-        c["remaining"] = max(0.0, self.panel.total - self.extracted)
+        c["remaining"] = max(0.0, p.total - self.extracted)
+        c["blasted"] = blasted
+        c["powder_factor"] = bl.charge(self.model.kind_of(p.blocks[i]))["powder_factor"]
         self.cur = c
 
     def features(self):
@@ -92,53 +213,17 @@ class Face:
         return {
             "ore_type": feature(c["ore_type"]), "cu_grade": feature(round(c["cu_grade"], 3), "% Cu"),
             "au_grade": feature(round(c["au_grade"], 3), "г/т"), "clay_pct": feature(round(c["clay_pct"], 1), "%"),
-            "p80": feature(int(c["p80"]), "мм"), "loading_factor": feature(round(c["loading_factor"], 2), "коэф."),
+            "p80": feature(int(round(c["p80"])), "мм"), "loading_factor": feature(round(c["loading_factor"], 2), "коэф."),
             "hardness": feature(round(c["hardness"], 1), "ед. Протодьяконова"),
             "remaining": feature(round(c["remaining"], 0), "т"),
-            "recommended_destination": feature(c["recommended_destination"]), "blasted": feature(True),
+            "recommended_destination": feature(c["recommended_destination"]), "blasted": feature(c["blasted"]),
             "block_preview": feature(self.preview, "м, м, % Cu"),
             "bench": feature(self.level + 1, "№"),
             "panel_progress": feature(round(100.0 * self.extracted / max(1.0, self.panel.total), 1), "%"),
-        }
-
-
-class Drill:
-    def __init__(self, thing_id, geometry, rng):
-        self.id = thing_id.split(":")[1]
-        obj = next(o for o in geometry["objects"] if o["id"] == self.id)
-        self.pos = list(obj["position"])
-        self.rng = rng
-        self.block = f"Б-{self.id[-1]}{rng.randint(10, 40)}"
-        self.meters = 0.0
-        self.holes = 0
-        self.hole_progress = 0.0
-        self.state = "drilling"
-        self.timer = 0.0
-
-    def step(self, dt):
-        self.timer += dt
-        if self.state == "drilling":
-            m = DRILL_RATE_M_PER_H * dt / 3600.0
-            self.meters += m
-            self.hole_progress += m
-            if self.hole_progress >= HOLE_DEPTH_M:
-                self.hole_progress = 0.0
-                self.holes += 1
-                self.state = "moving"
-                self.timer = 0.0
-                self.pos[0] += self.rng.uniform(-8, 8)
-                self.pos[1] += self.rng.uniform(-8, 8)
-        elif self.state == "moving" and self.timer >= 120:
-            self.state = "drilling"
-            if self.holes % 40 == 0:
-                self.block = f"Б-{self.id[-1]}{self.rng.randint(10, 40)}"
-
-    def features(self):
-        return {
-            "state": feature(self.state), "x": feature(round(self.pos[0], 1), "м"),
-            "y": feature(round(self.pos[1], 1), "м"), "z": feature(round(self.pos[2], 1), "м"),
-            "block": feature(self.block), "meters_total": feature(round(self.meters, 1), "м"),
-            "holes_total": feature(self.holes, "шт"),
+            "powder_factor": feature(round(c["powder_factor"], 2), "кг/м³"),
+            "reserve_blocks": feature(self.reserve(), "шт"),
+            "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
+            "drilling_ahead_status": feature(self.ahead_status()),
         }
 
 
@@ -154,9 +239,16 @@ def main():
     model.drop_fields()
     log.info("блочная модель: %d блоков за %.1f с; рудные блоки: Cu %.3f %%, Au %.3f г/т, глинистая руда %.1f %%, вскрыша/руда %.2f т/т",
              st["blocks"], time.time() - t0, st["cu"], st["au"], 100 * st["clay_share"], st["strip"])
+    for kind in ("ore", "waste"):
+        ch, d = bl.charge(kind), bl.design(kind)
+        log.info("взрыв (%s): скважина %.0f мм, сетка %.1f×%.1f м, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f",
+                 kind, d["d_mm"], d["burden"], d["spacing"], ch["mass"], ch["powder_factor"], bl.uniformity_n(kind))
+    log.info("P80 опорное (руда, f=11): %.0f мм", bl.P80_REF)
     claimed = set()
-    faces = [Face(t, b, geometry, model, claimed) for t, b in twins.items() if ":face-" in t]
-    drills = [Drill(t, geometry, rng) for t in twins if ":drill-" in t]
+    faces = [Face(t, b, geometry, model, claimed, rng) for t, b in twins.items() if ":face-" in t]
+    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if t.split(":")[1].startswith("drill-") and t.split(":")[1][6:].isdigit()))]
+    for drill in drills:    # общий пул: любой станок может бурить любой забой, выбирая самый нуждающийся
+        drill.faces = list(faces)
     ditto = DittoClient()
     watcher = TwinWatcher(ditto, names={"scenarios"} | {f.excavator for f in faces}, client_id="bz-geology-watch").start()
     telemetry = Telemetry(client_id="bz-geology").connect()
@@ -166,19 +258,35 @@ def main():
         dt = clock.tick()
         clay_on, clay_p = watcher.scenario("clay_face")
         blast_on, blast_p = watcher.scenario("bad_blast")
+        for drill in drills:
+            drill.step(dt)
+            telemetry.publish(drill.id, drill.features())
+        n = max(1, len(drills))
+        rate = {k: sum(d.rates[k] for d in drills) / n for k in ("ore", "waste")}    # т/ч одного станка по типам работ
+        demand = need = 0.0
+        for f in faces:
+            r = min(f.rate_tph, RATE_MAX_TPH)
+            demand += r
+            need += r / rate["waste" if f.cur.get("ore_type") == "waste" else "ore"]   # станков, нужных этому забою
+        # производительность бурения при текущем составе работ (руда и вскрыша): спрос / нужное число станков × число станков
+        capacity = demand * n / need if need > 0 else n * rate["ore"]
+        telemetry.publish("drill-summary", {
+            "drill_utilisation_pct": feature(round(100.0 * sum(d.util for d in drills) / n, 1), "%"),
+            "drilling_capacity_tph": feature(round(capacity, 0), "т/ч"),
+            "blasting_demand_tph": feature(round(demand, 0), "т/ч"),
+            "drills_needed": feature(round(need, 2), "шт"),
+            "drills_working": feature(sum(1 for d in drills if d.state != "idle"), "шт"),
+        })
         for face in faces:
             if watcher.get(face.excavator, "face") == face.id:
-                face.absorb(watcher.get(face.excavator, "loaded_total"))
+                face.absorb(watcher.get(face.excavator, "loaded_total"), dt)
             else:
                 face.last_loaded = None    # экскаватор в другом забое: счётчик чужой, отсчёт заново
             face.update_values(clay_on, clay_p, blast_on, blast_p)
             telemetry.publish(face.id, face.features())
-        for drill in drills:
-            drill.step(dt)
-            telemetry.publish(drill.id, drill.features())
         log.info("забои: %s", ", ".join(
-            f"{f.id} {f.cur['cu_grade']:.2f}%Cu глина {f.cur['clay_pct']:.0f}% → {f.cur['recommended_destination']} "
-            f"(ост. {f.cur['remaining'] / 1e6:.2f} млн т)" for f in faces[:4]))
+            f"{f.id} {f.cur['cu_grade']:.2f}%Cu P80 {f.cur['p80']:.0f} мм lf {f.cur['loading_factor']:.2f} "
+            f"{'взорван' if f.cur['blasted'] else 'НЕ взорван'} (запас {f.blasted_ahead_h():.0f} ч)" for f in faces[:4]))
         time.sleep(PUBLISH_S)
 
 
