@@ -96,6 +96,12 @@
      "value": 3,
      "unit": "шт"
     }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
    }
   }
  },
@@ -195,6 +201,12 @@
     "properties": {
      "value": 3,
      "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
     }
    }
   }
@@ -296,6 +308,12 @@
      "value": 3,
      "unit": "шт"
     }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
    }
   }
  },
@@ -395,6 +413,12 @@
     "properties": {
      "value": 3,
      "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
     }
    }
   }
@@ -496,6 +520,12 @@
      "value": 3,
      "unit": "шт"
     }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
+    }
    }
   }
  },
@@ -595,6 +625,12 @@
     "properties": {
      "value": 3,
      "unit": "шт"
+    }
+   },
+   "blasted_ahead_h": {
+    "properties": {
+     "value": 70.0,
+     "unit": "ч"
     }
    }
   }

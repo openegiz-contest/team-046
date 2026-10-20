@@ -27,7 +27,8 @@ from drilling import Drill
 log = setup_logging("bz-geology")
 PUBLISH_S = 10.0         # реальных секунд между публикациями
 PREVIEW_BLOCKS = 30      # блоков вокруг забоя в block_preview
-INITIAL_BLASTED = 3      # блоков панели, взорванных до начала моделирования (запас перед экскаватором)
+INITIAL_BLASTED = 1      # блоков панели, взорванных до начала моделирования (запас перед экскаватором): станки начинают работать сразу
+RATE_MAX_TPH = 3000.0     # верхняя граница оценки скорости отгрузки экскаватора, т/ч
 BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
 
 
@@ -50,6 +51,8 @@ class Face:
         self.extracted = 0.0
         self.panel_no = 1
         self.last_p80 = bl.P80_REF
+        self.win_x = self.win_t = 0.0
+        self.rate_tph = 700.0          # скорость отгрузки экскаватора, т/ч (скользящая оценка по loaded_total)
         self._new_panel()
         self.preview = json.dumps(bm.preview(model, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
         self.cur = {}
@@ -73,8 +76,10 @@ class Face:
 
     def blast(self, panel, j, f):
         """Блок взорван: ему присваиваются крепость (измеренная MWD) и P80 по модели Кузнецова–Рамлера."""
+        idx = panel.blocks[j]
+        m = self.model
         panel.hard_b[j] = f
-        panel.p80[j] = bl.p80_mm(f)
+        panel.p80[j] = bl.p80_mm(f, m.kind_of(idx), m.clay[idx], m.dens[idx])   # проект по типу блока, A — по Лилли
         panel.blasted[j] = 1
 
     def cur_index(self):
@@ -88,6 +93,29 @@ class Face:
             k += 1
         return k
 
+    def blasted_ahead_t(self):
+        """Тоннаж взорванного запаса впереди экскаватора (остаток текущего блока и взорванные блоки подряд за ним)."""
+        p, i = self.panel, self.cur_index()
+        n = len(p.blocks)
+        if i >= n or not p.blasted[i]:
+            return 0.0
+        t = self.model.tonnes(p.blocks[i]) - (self.extracted - p.cum[i])
+        k = i + 1
+        while k < n and p.blasted[k]:
+            t += self.model.tonnes(p.blocks[k])
+            k += 1
+        return max(0.0, t)
+
+    def blasted_ahead_h(self):
+        """Сколько часов работы экскаватора хватит взорванного запаса; 0 — забой упирается в невзорванный блок."""
+        return self.blasted_ahead_t() / max(self.rate_tph, 300.0)
+
+    def ahead_with_pending_h(self):
+        """Запас с учётом блоков, которые станки бурят прямо сейчас (чтобы два станка не поехали в один и тот же забой)."""
+        p = self.panel
+        pending = sum(self.model.tonnes(p.blocks[j]) for j in p.reserved if j < len(p.blocks))
+        return (self.blasted_ahead_t() + pending) / max(self.rate_tph, 300.0)
+
     def next_to_blast(self):
         p = self.panel
         for j in range(self.cur_index(), len(p.blocks)):
@@ -96,13 +124,29 @@ class Face:
         return None
 
     # -- отработка ---------------------------------------------------------------------
-    def absorb(self, loaded):
-        """Отработка панели по приросту накопительного loaded_total экскаватора."""
-        if loaded is None:
+    def absorb(self, loaded, dt=0.0):
+        """Отработка панели по приросту накопительного loaded_total экскаватора.
+
+        Нулевое или отсутствующее значение — это начальное значение двойника, а не показание счётчика: ждём первого
+        настоящего (положительного) значения и только от него считаем прирост. Скачок больше возможного за тик
+        (счётчик перезапущен, пропуск сообщений) пропускается."""
+        if loaded is None or loaded <= 0:
             return
-        if self.last_loaded is not None and loaded >= self.last_loaded:
-            self.extracted += loaded - self.last_loaded
+        if self.last_loaded is None or loaded < self.last_loaded:
+            self.last_loaded = loaded          # первое показание или счётчик сброшен: новая точка отсчёта
+            return
+        delta = loaded - self.last_loaded
         self.last_loaded = loaded
+        if delta > max(2000.0, 5.0 * RATE_MAX_TPH * max(dt, 1.0) / 3600.0):
+            log.warning("%s: скачок loaded_total на %.0f т за тик — пропущен", self.id, delta)
+            return
+        self.extracted += delta
+        self.win_x += delta               # скорость отгрузки считаем по окну в 10 модельных минут, а не по тику
+        self.win_t += dt
+        if self.win_t >= 600.0:
+            inst = self.win_x / self.win_t * 3600.0
+            self.rate_tph = 0.8 * self.rate_tph + 0.2 * min(RATE_MAX_TPH, inst)
+            self.win_x = self.win_t = 0.0
         while self.panel.total > 0 and self.extracted >= self.panel.total:
             self.extracted -= self.panel.total
             self.next_panel()
@@ -156,6 +200,7 @@ class Face:
         c["ore_type"], c["recommended_destination"] = ore, dest
         c["remaining"] = max(0.0, p.total - self.extracted)
         c["blasted"] = blasted
+        c["powder_factor"] = bl.charge(self.model.kind_of(p.blocks[i]))["powder_factor"]
         self.cur = c
 
     def features(self):
@@ -170,8 +215,9 @@ class Face:
             "block_preview": feature(self.preview, "м, м, % Cu"),
             "bench": feature(self.level + 1, "№"),
             "panel_progress": feature(round(100.0 * self.extracted / max(1.0, self.panel.total), 1), "%"),
-            "powder_factor": feature(round(bl.charge()["powder_factor"], 2), "кг/м³"),
+            "powder_factor": feature(round(c["powder_factor"], 2), "кг/м³"),
             "reserve_blocks": feature(self.reserve(), "шт"),
+            "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
         }
 
 
@@ -187,15 +233,16 @@ def main():
     model.drop_fields()
     log.info("блочная модель: %d блоков за %.1f с; рудные блоки: Cu %.3f %%, Au %.3f г/т, глинистая руда %.1f %%, вскрыша/руда %.2f т/т",
              st["blocks"], time.time() - t0, st["cu"], st["au"], 100 * st["clay_share"], st["strip"])
-    ch = bl.charge()
-    log.info("взрыв: сетка %.0f×%.0f м, скважина %.0f мм, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f, P80 опорное %.0f мм",
-             bl.BURDEN_M, bl.SPACING_M, bl.HOLE_D_MM, ch["mass"], ch["powder_factor"], bl.uniformity_n(), bl.P80_REF)
+    for kind in ("ore", "waste"):
+        ch, d = bl.charge(kind), bl.design(kind)
+        log.info("взрыв (%s): скважина %.0f мм, сетка %.1f×%.1f м, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f",
+                 kind, d["d_mm"], d["burden"], d["spacing"], ch["mass"], ch["powder_factor"], bl.uniformity_n(kind))
+    log.info("P80 опорное (руда, f=12): %.0f мм", bl.P80_REF)
     claimed = set()
     faces = [Face(t, b, geometry, model, claimed, rng) for t, b in twins.items() if ":face-" in t]
     drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if ":drill-" in t))]
-    for face in faces:      # каждый забой обслуживает ближайший станок
-        near = min(drills, key=lambda d: math.dist((face.x, face.y), d.pos[:2]))
-        near.faces.append(face)
+    for drill in drills:    # общий пул: любой станок может бурить любой забой, выбирая самый нуждающийся
+        drill.faces = list(faces)
     ditto = DittoClient()
     watcher = TwinWatcher(ditto, names={"scenarios"} | {f.excavator for f in faces}, client_id="bz-geology-watch").start()
     telemetry = Telemetry(client_id="bz-geology").connect()
@@ -210,14 +257,14 @@ def main():
             telemetry.publish(drill.id, drill.features())
         for face in faces:
             if watcher.get(face.excavator, "face") == face.id:
-                face.absorb(watcher.get(face.excavator, "loaded_total"))
+                face.absorb(watcher.get(face.excavator, "loaded_total"), dt)
             else:
                 face.last_loaded = None    # экскаватор в другом забое: счётчик чужой, отсчёт заново
             face.update_values(clay_on, clay_p, blast_on, blast_p)
             telemetry.publish(face.id, face.features())
         log.info("забои: %s", ", ".join(
             f"{f.id} {f.cur['cu_grade']:.2f}%Cu P80 {f.cur['p80']:.0f} мм lf {f.cur['loading_factor']:.2f} "
-            f"{'взорван' if f.cur['blasted'] else 'НЕ взорван'} (запас {f.reserve()})" for f in faces[:4]))
+            f"{'взорван' if f.cur['blasted'] else 'НЕ взорван'} (запас {f.blasted_ahead_h():.0f} ч)" for f in faces[:4]))
         time.sleep(PUBLISH_S)
 
 

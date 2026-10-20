@@ -248,6 +248,10 @@ class BlockModel:
         for name in ("zc", "zcl", "z_au", "z_h", "zone", "depth"):
             setattr(self, name, None)
 
+    def kind_of(self, i):
+        """Тип блока строкой: waste / clay / sulphide."""
+        return ORE_NAME[self.typ[i]]
+
     def tonnes(self, i):
         return self.block_vol * self.dens[i]
 

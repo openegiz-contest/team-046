@@ -1,15 +1,16 @@
 """Буровые станки: цикл «скважина → переезд → следующая скважина», MWD и подготовка блоков к взрыву.
 
-Станок обслуживает ближайшие к нему забои: берёт блок панели забоя, у которого запас взорванных
-блоков перед экскаватором меньше целевого, бурит по сетке B × S, и когда блок добурен — он
-«взрывается»: блоку присваиваются крепость (по измерениям MWD) и P80 (модель Кузнецова–Рамлера).
+Любой станок может бурить любой забой (общий пул): берёт блок панели забоя, у которого взорванного запаса
+перед экскаватором меньше целевого (в часах работы экскаватора), бурит по сетке проекта (руда — мелкая
+сетка, вскрыша — крупная), и когда блок добурен — он «взрывается»: блоку присваиваются крепость
+(по измерениям MWD) и P80 (модель Кузнецова–Рамлера).
 """
 import math
 
 import blasting as bl
 
-BLOCK_XY = 25.0
-RESERVE_TARGET = 5          # блоков взорванного запаса перед экскаватором, который держит станок
+BLOCK_XY = bl.BLOCK_XY
+AHEAD_TARGET_H = 72.0       # взорванный запас, который держит станок, часов работы экскаватора
 HOLE_MOVE_S = 120.0         # переезд между скважинами одного блока, модельных секунд
 TRAM_KMH = 3.0              # скорость переезда станка между блоками (допущение), км/ч
 ROP_NOISE = 0.04            # разброс скорости бурения от скважины к скважине
@@ -18,9 +19,11 @@ SPEED_FACTORS = (0.92, 1.00, 1.12)       # у каждого станка сво
 START_PHASES = (("drilling", 0.30), ("moving", 0.60), ("drilling", 0.80))   # сдвиг фазы на старте
 
 
-def hole_offsets(per_block):
-    """Положения скважин в блоке (смещение от центра, м): сетка по B × S, всего per_block скважин."""
-    nx = max(1, round(BLOCK_XY / bl.SPACING_M))
+def hole_offsets(kind):
+    """Положения скважин в блоке (смещение от центра, м): сетка по B × S, всего holes_per_block скважин."""
+    d = bl.design(kind)
+    per_block = bl.holes_per_block(kind)
+    nx = max(1, round(BLOCK_XY / d["spacing"]))
     ny = max(1, math.ceil(per_block / nx))
     pts = [((i + 0.5) / nx - 0.5, (j + 0.5) / ny - 0.5) for j in range(ny) for i in range(nx)]
     return [(px * BLOCK_XY, py * BLOCK_XY) for px, py in pts][:per_block]
@@ -34,8 +37,9 @@ class Drill:
         self.model, self.rng = model, rng
         self.speed_factor = SPEED_FACTORS[index % len(SPEED_FACTORS)]
         self.faces = []
-        self.per_block = bl.holes_per_block(BLOCK_XY)
-        self.offsets = hole_offsets(self.per_block)
+        self.kind = "ore"               # проект текущего блока
+        self.per_block = bl.holes_per_block("ore")
+        self.offsets = hole_offsets("ore")
         self.meters = 0.0
         self.holes = 0
         self.state = "idle"
@@ -46,35 +50,39 @@ class Drill:
         self.rop = 0.0                  # текущая механическая скорость бурения, м/ч
         self.f_mwd = 0.0                # последнее измеренное значение крепости
         self.f_samples = []             # измерения по скважинам текущего блока
-        self.target = None              # (face, индекс блока в панели)
+        self.target = None              # (face, индекс блока в панели, панель)
         self.move_from = self.move_to = None
         self.move_left = self.move_total = 0.0
         self.phase = START_PHASES[index % len(START_PHASES)]
         self.first = True
+        self.busy_s = 0.0               # модельных секунд в работе (бурение и переезды) — для баланса
+        self.total_s = 0.0
 
     # -- выбор работы ----------------------------------------------------------------
     def _pick(self):
-        best = None
+        """Выбирает работу: забои по возрастанию запаса впереди; берём первый, где ещё есть что бурить."""
+        needy = []
         for face in self.faces:
-            reserve = face.reserve()
-            if reserve >= RESERVE_TARGET:
+            ahead = face.ahead_with_pending_h()
+            if ahead < AHEAD_TARGET_H:
+                needy.append((ahead, face.id, face))
+        needy.sort(key=lambda x: (x[0], x[1]))
+        for _, _, face in needy:
+            j = face.next_to_blast()
+            if j is None:
                 continue
-            if best is None or reserve < best[0]:
-                best = (reserve, face)
-        if best is None:
-            return False
-        face = best[1]
-        j = face.next_to_blast()
-        if j is None:
-            return False
-        panel = face.panel
-        panel.reserved.add(j)
-        self.target = (face, j, panel)
-        self.holes_in_block, self.f_samples, self.block_ready = 0, [], False
-        lvl = panel.level
-        self.block_name = "Б%d-%s-%d" % (lvl + 1, face.id[-2:], j + 1)
-        self._start_move(self._hole_pos(0), travel=True)
-        return True
+            panel = face.panel
+            panel.reserved.add(j)
+            self.target = (face, j, panel)
+            self.holes_in_block, self.f_samples, self.block_ready = 0, [], False
+            kind = self.model.kind_of(panel.blocks[j])
+            self.kind = "waste" if kind == "waste" else "ore"
+            self.per_block = bl.holes_per_block(self.kind)
+            self.offsets = hole_offsets(self.kind)
+            self.block_name = "Б%d-%s-%d" % (panel.level + 1, face.id[-2:], j + 1)
+            self._start_move(self._hole_pos(0), travel=True)
+            return True
+        return False
 
     def _hole_pos(self, k):
         face, j, panel = self.target
@@ -110,6 +118,15 @@ class Drill:
         self.state = "idle"
         self.rop = 0.0
 
+    def _abandon(self):
+        """Забой перешёл на новую панель, пока станок бурил блок старой: бросаем его и берём новую работу."""
+        face, j, panel = self.target
+        panel.reserved.discard(j)
+        self.target = None
+        self.state = "idle"
+        self.rop = 0.0
+        self.holes_in_block, self.f_samples = 0, []
+
     # -- шаг модели ----------------------------------------------------------------------
     def step(self, dt):
         if self.first:
@@ -121,16 +138,20 @@ class Drill:
                 else:                                  # сразу «в скважине» с долей глубины
                     self.pos = self.move_to
                     self._begin_hole()
-                    self.depth = frac * bl.HOLE_DEPTH_M
+                    self.depth = frac * bl.hole_depth(self.kind)
+        self.total_s += dt
         guard = 0
-        while dt > 1e-6 and guard < 500:
+        while dt > 1e-6 and guard < 2000:
             guard += 1
+            if self.target is not None and self.target[0].panel is not self.target[2]:
+                self._abandon()
             if self.state == "idle":
                 if not self._pick():
                     return
             elif self.state == "moving":
                 use = min(dt, self.move_left)
                 self.move_left -= use
+                self.busy_s += use
                 dt -= use
                 k = 1.0 - self.move_left / self.move_total if self.move_total else 1.0
                 self.pos = [a + (b - a) * k for a, b in zip(self.move_from, self.move_to)]
@@ -138,15 +159,17 @@ class Drill:
                     self.pos = list(self.move_to)
                     self._begin_hole()
             elif self.state == "drilling":
-                left = bl.HOLE_DEPTH_M - self.depth
+                depth_full = bl.hole_depth(self.kind)
+                left = depth_full - self.depth
                 need = left / self.rop * 3600.0
                 use = min(dt, need)
                 drilled = self.rop * use / 3600.0
                 self.depth += drilled
                 self.meters += drilled
+                self.busy_s += use
                 dt -= use
-                if self.depth >= bl.HOLE_DEPTH_M - 1e-6:
-                    self.depth = bl.HOLE_DEPTH_M
+                if self.depth >= depth_full - 1e-6:
+                    self.depth = depth_full
                     self.holes += 1
                     self.holes_in_block += 1
                     self.f_samples.append(self.f_mwd)
