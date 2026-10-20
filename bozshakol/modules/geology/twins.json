@@ -943,6 +943,12 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "drills_needed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "шт"
+    }
    }
   }
  }

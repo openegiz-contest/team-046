@@ -61,14 +61,14 @@ class Drill:
         self.util = 0.0                 # загрузка станка: скользящее среднее доли времени в работе (постоянная времени UTIL_TAU_S)
         self.block_busy_s = 0.0         # время в работе на текущем блоке
         # производительность станка, т/ч взорванной породы: начальная — расчёт для рудного блока, затем по факту блоков
-        self.rate_tph = self._initial_rate()
+        self.rates = {"ore": self._initial_rate("ore", bl.F_REF), "waste": self._initial_rate("waste", 14.0)}   # т/ч по типам работ
 
-    def _initial_rate(self):
-        """Производительность по расчёту для рудного блока средней крепости, т/ч (с переездом на блок ~12 мин)."""
-        per = bl.holes_per_block("ore")
-        rop = bl.rop_from_hardness(bl.F_REF) * self.speed_factor
-        hours = per * (bl.hole_depth("ore") / rop + HOLE_MOVE_S / 3600.0) + 0.2
-        return self.model.block_vol * bl.DENS_REF / hours
+    def _initial_rate(self, kind, f):
+        """Производительность по расчёту для блока типа kind и крепости f, т/ч (с переездом на блок ~12 мин)."""
+        per = bl.holes_per_block(kind)
+        rop = bl.rop_from_hardness(f) * self.speed_factor
+        hours = per * (bl.hole_depth(kind) / rop + HOLE_MOVE_S / 3600.0) + 0.2
+        return self.model.block_vol * (bl.DENS_REF if kind == "ore" else 2.65) / hours
 
     # -- выбор работы ----------------------------------------------------------------
     def _pick(self):
@@ -125,9 +125,9 @@ class Drill:
         face, j, panel = self.target
         f_block = sum(self.f_samples) / len(self.f_samples)
         face.blast(panel, j, f_block)                # блок взорван: крепость (MWD) и P80
-        if self.kind == "ore" and self.block_busy_s > 60.0:   # фактическая производительность по рудному блоку (вскрыша не считается)
+        if self.block_busy_s > 60.0:                 # фактическая производительность по этому блоку, отдельно для руды и вскрыши
             inst = self.model.tonnes(panel.blocks[j]) / (self.block_busy_s / 3600.0)
-            self.rate_tph = 0.8 * self.rate_tph + 0.2 * inst
+            self.rates[self.kind] = 0.8 * self.rates[self.kind] + 0.2 * inst
         panel.reserved.discard(j)
         self.block_ready = True
         self.target = None

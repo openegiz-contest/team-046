@@ -261,11 +261,20 @@ def main():
         for drill in drills:
             drill.step(dt)
             telemetry.publish(drill.id, drill.features())
-        capacity = sum(d.rate_tph for d in drills)
+        n = max(1, len(drills))
+        rate = {k: sum(d.rates[k] for d in drills) / n for k in ("ore", "waste")}    # т/ч одного станка по типам работ
+        demand = need = 0.0
+        for f in faces:
+            r = min(f.rate_tph, RATE_MAX_TPH)
+            demand += r
+            need += r / rate["waste" if f.cur.get("ore_type") == "waste" else "ore"]   # станков, нужных этому забою
+        # производительность бурения при текущем составе работ (руда и вскрыша): спрос / нужное число станков × число станков
+        capacity = demand * n / need if need > 0 else n * rate["ore"]
         telemetry.publish("drill-summary", {
-            "drill_utilisation_pct": feature(round(100.0 * sum(d.util for d in drills) / max(1, len(drills)), 1), "%"),
+            "drill_utilisation_pct": feature(round(100.0 * sum(d.util for d in drills) / n, 1), "%"),
             "drilling_capacity_tph": feature(round(capacity, 0), "т/ч"),
-            "blasting_demand_tph": feature(round(sum(min(f.rate_tph, RATE_MAX_TPH) for f in faces), 0), "т/ч"),
+            "blasting_demand_tph": feature(round(demand, 0), "т/ч"),
+            "drills_needed": feature(round(need, 2), "шт"),
             "drills_working": feature(sum(1 for d in drills if d.state != "idle"), "шт"),
         })
         for face in faces:
