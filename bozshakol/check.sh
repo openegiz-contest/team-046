@@ -189,12 +189,17 @@ else
 import json, sys
 b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2] or "{}")
 problems = []
+JUMP_T = 600   # т: больше, чем склад может измениться за время перезапуска
 num = lambda x: float(x) if isinstance(x, (int, float)) else None
 if num(a.get("bunker")) is None or num(a.get("bunker_t")) is None or not (0 <= a["bunker"] <= a["bunker_t"]):
     problems.append(f"бункер дробилки {a.get('bunker')} т при ёмкости {a.get('bunker_t')} т")
+names = {"coarse": "крупнодроблёной руды", "clay": "глинистой руды"}
 for k, cap in (("coarse", "coarse_cap"), ("clay", "clay_cap")):
     if num(a.get(k)) is None or num(a.get(cap)) is None or not (0 <= a[k] <= a[cap]):
-        problems.append(f"склад {k}: {a.get(k)} т при ёмкости {a.get(cap)} т")
+        problems.append(f"склад {names[k]}: {a.get(k)} т при ёмкости {a.get(cap)} т")
+    elif num(b.get(k)) is not None and abs(a[k] - b[k]) > JUMP_T:
+        # за ~40 с перезапуска (≈ 7 модельных минут) запас меняется на сотни тонн, а не возвращается к начальному
+        problems.append(f"склад {names[k]} скачком {b[k]:.0f} → {a[k]:.0f} т (запас не восстановлен из Ditto)")
 for k in ("delivered_crusher_t", "delivered_clay_t", "delivered_dump_t", "trips_total"):
     if num(b.get(k)) is not None and (num(a.get(k)) is None or a[k] < b[k]):
         problems.append(f"dispatch.{k} уменьшился: {b.get(k)} → {a.get(k)}")
