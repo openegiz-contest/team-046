@@ -73,6 +73,28 @@ class Rules(unittest.TestCase):
         self.assertIn("14.0 %", a[0]["reason"])
         self.assertIn("3.6 %", a[0]["effect"])     # 0,4 × (14 − 5)
 
+    def test_clay_face_scenario_marked_as_clay(self):
+        # геология при clay_face помечает забой как clay и рекомендует склад глины; глина в питании ещё в норме
+        s = base_snap()
+        s["mine"]["scenario_clay_face"] = 1
+        s["scenarios_params"] = {"clay_face": {"value": True, "face": "face-03", "clay_pct": 45}}
+        s["face-03"].update(ore_type="clay", clay_pct=45, recommended_destination="stockpile-clay")
+        a = R.advise(s)
+        self.assertEqual([x["id"] for x in a], ["clay"])
+        self.assertEqual(a[0]["priority"], "info")
+        self.assertIn("Забой face-03 даёт глину 45 %", a[0]["text"])
+        self.assertIn("Геология уже рекомендует склад глины", a[0]["text"])
+        # два гружёных самосвала этого забоя ещё везут руду на дробилку — «важно»
+        s["truck-05"] = {"state": "hauling", "excavator": "excavator-03", "destination": "crusher-01", "payload": 135}
+        s["truck-07"] = {"state": "queued_dump", "excavator": "excavator-03", "destination": "crusher-01", "payload": 135}
+        a = R.advise(s)
+        self.assertEqual(a[0]["priority"], "important")
+        self.assertIn("Сейчас 2 гружёных самосвалов этого забоя везут руду на дробилку", a[0]["text"])
+        # сценарий выключен — совета нет
+        s["mine"]["scenario_clay_face"] = 0
+        s["face-03"].update(ore_type="sulphide", clay_pct=5)
+        self.assertEqual(R.advise(s), [])
+
     def test_clay_without_face(self):
         s = base_snap()
         s["plant-sulphide"]["feed_clay"] = 12.0
@@ -138,10 +160,21 @@ class Rules(unittest.TestCase):
         self.assertIn("≈ 3", R.advise(s)[0]["text"])
         s["dispatch"]["trucks_reserve"] = 2                 # модуль №2 публикует оба признака: K = в работе − нужно
         a = R.advise(s)
-        self.assertIn("≈ 6", a[0]["text"])                  # 26 − 20
+        self.assertIn("≈ 6", a[0]["text"])                  # нет двойников truck-*: в работе = trucks_hauling = 26; 26 − 20
         self.assertIn("в резерве уже 2", a[0]["reason"])
-        s["dispatch"].update(trucks_needed=25.8)            # нужно ≈ столько, сколько в работе — совета нет
+        # двойники truck-*: 24 в цикле (в пути только 10), 2 в резерве, 2 на заправке — в работе 24, а не 10
+        states = ["hauling"] * 6 + ["returning"] * 4 + ["loading"] * 5 + ["queued_load"] * 6 + ["dumping"] * 3 + ["reserve"] * 2 + ["refueling"] * 2
+        for i, st in enumerate(states, 1):
+            s[f"truck-{i:02d}"] = {"state": st, "speed": 25.0 if st in ("hauling", "returning") else 0.0}
+        s["dispatch"]["trucks_hauling"] = 10
+        a = R.advise(s)
+        self.assertIn("≈ 4", a[0]["text"])                  # 24 − 20
+        self.assertIn("в работе (в цикле) 24", a[0]["reason"])
+        s["dispatch"].update(trucks_needed=23.8)            # нужно ≈ столько, сколько в работе — совета нет
         self.assertEqual(R.advise(s), [])
+        for i in range(1, 29):
+            s.pop(f"truck-{i:02d}", None)
+        s["dispatch"].update(trucks_hauling=26)
         s["dispatch"].update(trucks_needed=20, mode="manual")
         self.assertEqual(R.advise(s), [])
 

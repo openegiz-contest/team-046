@@ -36,6 +36,8 @@ def snapshot(watcher):
         feats = watcher.features(name)
         if feats:
             snap[name] = {k: (v.get("properties") or {}).get("value") for k, v in feats.items() if isinstance(v, dict)}
+            if name == "scenarios":     # параметры сценариев (забой, дорога, экскаватор) — для правил
+                snap["scenarios_params"] = {k: dict(v.get("properties") or {}) for k, v in feats.items() if isinstance(v, dict)}
     return snap
 
 

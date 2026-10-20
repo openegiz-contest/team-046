@@ -93,36 +93,65 @@ def rule_crusher(snap):
 
 
 # ---------------------------------------------------------------- б) глина в питании
+def _clay_face_scenario(snap):
+    """Забой сценария clay_face (из параметров двойника scenarios), если сценарий включён."""
+    if _f(snap.get("mine") or {}, "scenario_clay_face") < 1:
+        return None
+    params = (snap.get("scenarios_params") or {}).get("clay_face") or {}
+    face = params.get("face")
+    return face if face in snap else None
+
+
+def _trucks_to_crusher(snap, face):
+    """Гружёные самосвалы забоя face (экскаватор с тем же номером), которые едут или стоят на дробилку."""
+    exc = "excavator-" + face.split("-")[-1]
+    return sorted(n for n, f in snap.items() if n.startswith("truck-") and isinstance(f, dict)
+                  and f.get("excavator") == exc and f.get("destination") == "crusher-01" and _f(f, "payload") > 0)
+
+
 def rule_clay(snap):
     ps = snap.get("plant-sulphide") or {}
     clay = _f(ps, "feed_clay")
-    if clay <= CLAY_LIMIT_PCT:
+    scen_face = _clay_face_scenario(snap)
+    if clay <= CLAY_LIMIT_PCT and not scen_face:
         return None
     faces = []
     for name, f in sorted(snap.items()):
         if not name.startswith("face-") or not isinstance(f, dict):
             continue
-        if f.get("ore_type") == "sulphide" and _f(f, "clay_pct") > CLAY_LIMIT_PCT:
+        # сульфидный забой с глиной выше порога; при сценарии clay_face геология может пометить забой как clay
+        if (f.get("ore_type") == "sulphide" or name == scen_face) and _f(f, "clay_pct") > CLAY_LIMIT_PCT:
             faces.append((name, _f(f, "clay_pct"), f.get("recommended_destination") or ""))
     faces.sort(key=lambda x: (-x[1], x[0]))
-    gain = RECOVERY_PER_CLAY * (clay - CLAY_NORM_PCT)
+    gain = RECOVERY_PER_CLAY * (max(clay, CLAY_NORM_PCT) - CLAY_NORM_PCT)
     if faces:
         face, pct, dest = faces[0]
-        text = (f"Забой {face} даёт глину {pct:.0f} % — направлять его руду на склад глинистой руды (stockpile-clay), "
-                f"а не на дробилку.")
-        reason = (f"глина в питании сульфидной фабрики {clay:.1f} % при пороге {CLAY_LIMIT_PCT:.0f} %; "
-                  f"сульфидные забои с глиной выше порога: " + ", ".join(f"{n} {p:.0f} %" for n, p, _ in faces) +
-                  (f"; рекомендованный пункт у {face}: {dest}" if dest else ""))
+        trucks = _trucks_to_crusher(snap, face)
+        text = f"Забой {face} даёт глину {pct:.0f} % — направлять его руду на склад глинистой руды (stockpile-clay), а не на дробилку."
+        if trucks:
+            text += f" Сейчас {len(trucks)} гружёных самосвалов этого забоя везут руду на дробилку."
+        elif dest == "stockpile-clay":
+            text += " Геология уже рекомендует склад глины — проверить, что самосвалы забоя едут туда."
+        reason = (f"глина в питании сульфидной фабрики {clay:.1f} % (порог {CLAY_LIMIT_PCT:.0f} %)"
+                  + (f"; включён сценарий «глинистый забой» ({face})" if face == scen_face else "")
+                  + "; забои с глиной выше порога: " + ", ".join(f"{n} {p:.0f} %" for n, p, _ in faces)
+                  + (f"; рекомендованный пункт у {face}: {dest}" if dest else "")
+                  + (f"; на дробилку везут: {', '.join(trucks)}" if trucks else ""))
         target = face
+        priority = "important" if (clay > CLAY_LIMIT_PCT or trucks) else "info"
     else:
+        trucks = []
         text = (f"Глина в питании сульфидной фабрики {clay:.1f} % — выше порога {CLAY_LIMIT_PCT:.0f} %; "
                 f"глинистый забой по двойникам не определён: проверить забои и рекомендованные пункты разгрузки.")
         reason = f"plant-sulphide.feed_clay = {clay:.1f} %; у сульфидных забоев clay_pct ≤ {CLAY_LIMIT_PCT:.0f} %"
         target = "plant-sulphide"
-    return _advice("clay", "important", "Глина в питании фабрики", text, reason,
-                   f"глина в питании вернётся к ≈ {CLAY_NORM_PCT:.0f} %, извлечение меди вырастет ≈ на {gain:.1f} % "
-                   f"(модель фабрики: −{RECOVERY_PER_CLAY} % извлечения на 1 % глины сверх {CLAY_NORM_PCT:.0f} %)",
-                   target, {"plant-sulphide.feed_clay": clay, "faces": [{"face": n, "clay_pct": p} for n, p, _ in faces]})
+        priority = "important"
+    return _advice("clay", priority, "Глина в питании фабрики", text, reason,
+                   f"глина в питании останется около {CLAY_NORM_PCT:.0f} %"
+                   + (f", извлечение меди вырастет ≈ на {gain:.1f} %" if gain > 0.05 else ", извлечение меди не упадёт")
+                   + f" (модель фабрики: −{RECOVERY_PER_CLAY} % извлечения на 1 % глины сверх {CLAY_NORM_PCT:.0f} %)",
+                   target, {"plant-sulphide.feed_clay": clay, "faces": [{"face": n, "clay_pct": p} for n, p, _ in faces],
+                            "trucks_to_crusher": trucks})
 
 
 # ---------------------------------------------------------------- в) план ниже 95 % за час
@@ -259,10 +288,13 @@ def rule_fleet(snap):
                 queued += int(_f(f, "queue"))
     if d.get("trucks_needed") not in (None, "") and d.get("trucks_reserve") not in (None, ""):
         needed, reserve = _f(d, "trucks_needed"), int(_f(d, "trucks_reserve"))
-        k = int(round(hauling - needed))
+        # «в работе» — самосвалы в цикле (очередь, погрузка, рейс, разгрузка) по двойникам truck-*:
+        # trucks_needed модуля №2 — среднее число занятых в цикле, а trucks_hauling — только самосвалы в пути
+        in_cycle = len(fleet_sample(snap)) or hauling
+        k = int(round(in_cycle - needed))
         if k < 1:
             return None                 # модуль транспорта уже держит в работе столько, сколько нужно
-        how = (f"модуль транспорта: в работе {hauling}, нужно ≈ {needed:.1f} (dispatch.trucks_needed), "
+        how = (f"модуль транспорта: в работе (в цикле) {in_cycle}, нужно ≈ {needed:.1f} (dispatch.trucks_needed), "
                f"в резерве уже {reserve} (dispatch.trucks_reserve)")
     else:
         k = max(1, queued - working)
@@ -351,7 +383,7 @@ def rule_blizzard(snap, ctx=None):
     hours = _f(sp, "hours_left")
     fact = measured_change(ctx.get("deliveries") or [], ctx.get("blizzard_since"))
     text = (f"Метель: ограничение {limit:.0f} км/ч. До метели гружёные шли в среднем {v_loaded:.0f} км/ч, "
-            f"порожние {v_empty:.0f} км/ч, ход — {share:.0%} цикла: вывоз горной массы упадёт примерно на {drop:.0f} %.")
+            f"порожние {v_empty:.0f} км/ч, ход — {share * 100:.0f} % цикла: вывоз горной массы упадёт примерно на {drop:.0f} %.")
     if fact:
         text += (f" За {fact['minutes']:.0f} мин метели: руда {fact['ore_pct']:+.0f} %, вскрыша {fact['waste_pct']:+.0f} %"
                  + (" — диспетчер держит руду за счёт вскрыши." if fact["ore_pct"] > fact["waste_pct"] + 5 else "."))
