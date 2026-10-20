@@ -53,6 +53,10 @@ core[tid("mine")] = twin("Карьер Бозшаколь", "mine", attrs={
     "feed_clay": feat(0.0, "%"),
     "cu_concentrate_shift": feat(0.0, "т"),
     "trucks_hauling": feat(0, "шт"),
+    # сценарии в истории: 1/0 на сценарий и список включённых по-русски (см. договор, раздел 6)
+    **{f"scenario_{n}": feat(0) for n in ("blizzard", "dispatch_off", "road_closed", "excavator_down",
+                                            "clay_face", "bad_blast", "crusher_stop", "sag_maintenance")},
+    "active_scenarios": feat("нет"),
 })
 core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios", "mine", features={
     "blizzard": feat(False, visibility_m=300, speed_limit_kmh=20, owner="core"),
@@ -63,6 +67,15 @@ core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios
     "bad_blast": feat(False, face="face-01", p80_mm=450, owner="geology"),
     "crusher_stop": feat(False, owner="processing"),
     "sag_maintenance": feat(False, owner="processing"),
+})
+core[tid("advisor")] = twin("Советник диспетчера", "advisor", "mine", attrs={
+    "rules": "crusher, clay, plan, inflow, fleet, blizzard", "service": "bz-advisor",
+}, features={
+    "advice": feat("[]", "json"),
+    "advice_count": feat(0, "шт"),
+    "top_advice": feat("Отклонений нет"),
+    "level": feat(0),
+    "advice_ids": feat(""),
 })
 core[tid("pit-central")] = twin("Центральный карьер", "pit", "mine", attrs={
     "length_m": 4400, "width_m": 1100, "depth_m": 200, "bench_height_m": 15, "bench_face_angle_deg": 58,

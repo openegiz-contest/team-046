@@ -21,6 +21,30 @@ BASE_WIND_MS = 4.0
 BASE_VISIBILITY_M = 5000
 BASE_SPEED_LIMIT = 50
 
+# названия сценариев по-русски для mine.active_scenarios (неизвестный сценарий — своим именем)
+SCENARIO_NAMES = {
+    "blizzard": "метель", "dispatch_off": "диспетчеризация отключена", "road_closed": "дорога закрыта",
+    "excavator_down": "экскаватор сломан", "clay_face": "глинистый забой", "bad_blast": "неудачный взрыв",
+    "crusher_stop": "остановка дробилки", "sag_maintenance": "мельница на ТО",
+}
+
+
+def scenario_features(watcher):
+    """Сценарии как признаки mine: scenario_<имя> = 1/0 и active_scenarios (список включённых по-русски).
+    Одиночная запись признака двойника scenarios через API Ditto попадает в InfluxDB без имени признака,
+    поэтому для истории и графиков сценарии дублируются здесь, вместе с остальными признаками mine."""
+    feats, active = {}, []
+    for name, body in sorted(watcher.features("scenarios").items()):
+        try:
+            on = bool(body["properties"].get("value", False))
+        except (KeyError, TypeError, AttributeError):
+            on = False
+        feats[f"scenario_{name}"] = feature(1 if on else 0)
+        if on:
+            active.append(SCENARIO_NAMES.get(name, name))
+    feats["active_scenarios"] = feature(", ".join(active) if active else "нет")
+    return feats
+
 
 def main():
     ditto = DittoClient()
@@ -73,6 +97,7 @@ def main():
             "feed_clay": feature(round(feed_clay, 1), "%"),
             "cu_concentrate_shift": feature(round(cu_conc, 1), "т"),
             "trucks_hauling": feature(trucks, "шт"),
+            **scenario_features(watcher),
         })
         if telemetry.sent % 12 == 1:
             log.info("смена %d, %s, %.0f т/ч на фабрики, план %.0f %%, метель=%s",

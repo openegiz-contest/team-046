@@ -63,10 +63,7 @@ SPEED_DOWN_EMPTY_KMH = 40.0           # допущение: тормоз-зам�
 FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (плотность топлива — допущение)
 
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
-REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке (временная реализация)
-# ВРЕМЕННО, пока у координатора нет состояния truck-*.state = "refueling" (см. запрос в договор):
-# заправка сделана как простой с destination="заправка" при текущем state. Когда состояние появится,
-# переключить достаточно в одном месте — см. _start_refuel().
+REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке, по договору (fuel-station)
 
 TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
 SLOW_PUBLISH_S = 5.0
@@ -77,7 +74,10 @@ DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dum
 # домашние экскаваторы: 6+5+6 на сульфидные забои, 4 на глинистый, 3+4 на вскрышу
 HOME = ([1] * 6 + [2] * 5 + [3] * 6 + [4] * 4 + [5] * 3 + [6] * 4)
 
-# -- диспетчер: лимит доли глины в руде, привезённой на дробилку (§4 договора, clay_limit) --
+# -- диспетчер: лимит доли глины в руде, привезённой на дробилку --
+# clay_limit в договоре нет (проверено координатором) — это константа МОДУЛЯ (допущение,
+# не из договора), просто публикуется в dispatch как справочное значение.
+CLAY_LIMIT_PCT = 15.0         # допущение: предел доли глины в руде на дробилке
 CLAY_WINDOW_T = 2000.0        # т — скользящее окно, по которому считаем clay_share_crusher
 CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинистые забои, если подошли к 90 % лимита
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
@@ -241,6 +241,8 @@ class Truck:
         self.buckets_done = 0
         self.refuel_timer = 0.0
         self.queue_index = 0
+        self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
+        self.travel_kind = None         # "depart"/"return"/"refuel" — куда именно едем, для повтора
         # -- разброс (водитель) --
         self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
         self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
@@ -338,7 +340,7 @@ class Haulage:
         for t in self.trucks:
             t.fuel = self.rng.uniform(60, 100)
         self._current_shift = None  # пересчитать машинистов/водителей при первом read_scenarios()
-        self.clay_limit_pct = 15.0
+        self.clay_limit_pct = CLAY_LIMIT_PCT
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
         # -- план-диспетчер (часть 2) --
@@ -394,7 +396,6 @@ class Haulage:
         self.dumps["crusher-01"].accepting = bool(w.get("crusher-01", "accepting", True))
         self.dumps["stockpile-clay"].accepting = bool(w.get("stockpile-clay", "accepting", True))
         self.speed_limit = float(w.get("mine", "speed_limit", 50) or 50)
-        self.clay_limit_pct = float(w.get("dispatch", "clay_limit", 15) or 15)
         shift = w.get("mine", "shift", 1)
         if shift != self._current_shift:
             self._current_shift = shift
@@ -658,41 +659,81 @@ class Haulage:
         # новый рейс — новый случайный множитель скорости водителя (п.4 разброса)
         truck.trip_mult = min(1.0 + TRUCK_DRIVER_TRIP_CLIP, max(1.0 - TRUCK_DRIVER_TRIP_CLIP,
                                self.rng.gauss(1.0, TRUCK_DRIVER_TRIP_STD)))
+        truck.state = "hauling"
         dest = self.dumps[truck.destination]
         path = self.roads.path(truck.node, dest.node)
-        if path is None:  # дорога закрыта — ждём на месте
-            truck.state = "queued_dump"
-            truck.speed = 0.0
+        if path is None:
+            # дороги к пункту разгрузки нет (road_closed) — ждём на месте и пробуем снова
+            # каждый шаг (часть 3 задачи по проверке координатора), никуда не переадресуем
+            truck.travel_pending = True
+            truck.travel_kind = "depart"
             truck.path = []
+            truck.speed = 0.0
             return
+        truck.travel_pending = False
         truck.path = path[1:]
         truck.seg_pos = 0.0
-        truck.state = "hauling"
 
     def _return(self, truck):
         truck.excavator = self.choose_excavator(truck)
         ex = self.excavators[truck.excavator]
-        path = self.roads.path(truck.node, ex.node)
-        if path is None:
-            truck.state = "queued_load"
-            truck.speed = 0.0
-            truck.path = []
-            if truck not in ex.queue:
-                ex.queue.append(truck)
-            return
-        truck.path = path[1:]
-        truck.seg_pos = 0.0
         truck.state = "returning"
         truck.destination = ex.id
+        path = self.roads.path(truck.node, ex.node)
+        if path is None:
+            # дороги к экскаватору нет — ждём на месте и пробуем снова каждый шаг; НЕ встаём
+            # в очередь экскаватора заранее (иначе самосвал «телепортировался» бы туда на
+            # сцене — очередь позиционируется по узлу экскаватора, а самосвал там физически
+            # ещё не был) и не перемещаемся мгновенно (часть 3 задачи по проверке координатора)
+            truck.travel_pending = True
+            truck.travel_kind = "return"
+            truck.path = []
+            truck.speed = 0.0
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
 
     def _start_refuel(self, truck):
-        # ВРЕМЕННО: пока в договоре нет truck.state = "refueling" — стоим под видом "returning".
-        # Когда координатор добавит состояние, здесь достаточно поменять truck.state на "refueling".
+        """Топливо < REFUEL_FUEL_PCT после разгрузки — самосвал едет по дорогам на fuel-station
+        (узел из core/geometry.json, по договору), state = "refueling" наступает по прибытии
+        (см. _arrived) — не сразу, самосвал сперва честно доезжает."""
+        truck.destination = "fuel-station"
         truck.state = "returning"
-        truck.speed = 0.0
-        truck.path = []
-        truck.destination = "заправка"
-        truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+        path = self.roads.path(truck.node, "fuel-station")
+        if path is None:
+            truck.travel_pending = True
+            truck.travel_kind = "refuel"
+            truck.path = []
+            truck.speed = 0.0
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
+
+    def _retry_pending_travel(self, truck):
+        """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
+        ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
+        чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора)."""
+        if truck.travel_kind == "return" and self.mode == "auto":
+            # «авто»: если прежний экскаватор всё ещё отрезан, пробуем выбрать другой —
+            # choose_excavator сам исключает недостижимые (честный ETA = None у таких кандидатов)
+            truck.excavator = self.choose_excavator(truck)
+            truck.destination = truck.excavator
+        if truck.travel_kind == "depart":
+            dest_node = self.dumps[truck.destination].node
+        elif truck.travel_kind == "return":
+            dest_node = self.excavators[truck.excavator].node
+        elif truck.travel_kind == "refuel":
+            dest_node = "fuel-station"
+        else:
+            return
+        path = self.roads.path(truck.node, dest_node)
+        if path is None:
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
 
     # -- движение ------------------------------------------------------------
     def _mean_speed(self, truck, grade_pct, road):
@@ -740,7 +781,28 @@ class Haulage:
             nxt = truck.path[0]
             length, grade, road = self.roads.edge(truck.node, nxt)
             if road in self.roads.closed:
-                # дорога закрылась под колёсами — перестроить маршрут
+                # дорога закрылась под колёсами — не телепортируемся ни вперёд, ни назад:
+                # если самосвал уже проехал часть ребра (seg_pos > 0), сначала честно
+                # возвращаем его по той же дороге к truck.node (тому узлу, который он уже
+                # реально проезжал), расходуя настоящие dt и топливо, и только оттуда ищем
+                # новый маршрут. Без этого (просто сброс seg_pos=0 и путь от truck.node)
+                # самосвал визуально прыгает на расстояние, которое уже проехал по закрытому
+                # ребру, — вплоть до сотен метров за один шаг (настоящий баг части 3 этой
+                # задачи, найден на проверке road_closed, не только в местах из описания)
+                if truck.seg_pos > 0:
+                    # едем НАЗАД по тому же ребру — уклон обратный (подъём вперёд = спуск назад)
+                    back_grade = -grade
+                    v = self._speed(truck, back_grade, road)
+                    step = v / 3.6 * dt
+                    if step < truck.seg_pos:
+                        truck.seg_pos -= step
+                        self._place(truck, nxt, truck.seg_pos / length)
+                        self._consume_fuel(truck, self._edge_fuel_l(truck, back_grade, step))
+                        return
+                    dt -= truck.seg_pos / (v / 3.6)
+                    self._consume_fuel(truck, self._edge_fuel_l(truck, back_grade, truck.seg_pos))
+                    truck.seg_pos = 0.0
+                    self._place(truck, truck.node, 1.0)
                 goal = truck.path[-1]
                 path = self.roads.path(truck.node, goal)
                 if path is None:
@@ -774,35 +836,22 @@ class Haulage:
 
     def _arrived(self, truck):
         if truck.state == "hauling":
-            if self._reroute_if_not_accepting(truck):
-                return  # переадресован на отвал — продолжает ехать, в очередь пока не встаёт
+            # пункт разгрузки сейчас не принимает (crusher_stop/sag_maintenance) — гружёный
+            # самосвал всё равно встаёт в очередь у СВОЕГО пункта и ждёт, пока приём не
+            # возобновится (часть 1 задачи по проверке координатора); на отвал не переадресуем
             truck.state = "queued_dump"
             truck.timer = 0.0
             truck.dump_wait = 0.0
             self.dumps[truck.destination].queue.append(truck)
         elif truck.state == "returning":
-            truck.state = "queued_load"
-            truck.wait = 0.0
-            self.excavators[truck.excavator].queue.append(truck)
-
-    def _reroute_if_not_accepting(self, truck):
-        """Пункт разгрузки перестал принимать (crusher_stop/sag_maintenance) — везём на отвал
-        вскрыши вместо того, чтобы встать в очередь, которая никогда не продвинется."""
-        dump = self.dumps[truck.destination]
-        if dump.accepting or truck.destination == "dump-waste-1":
-            return False
-        return self._reroute_to_dest(truck, "dump-waste-1")
-
-    def _reroute_to_dest(self, truck, dest_id):
-        dest = self.dumps[dest_id]
-        path = self.roads.path(truck.node, dest.node)
-        if path is None:
-            return False
-        truck.destination = dest_id
-        truck.path = path[1:]
-        truck.seg_pos = 0.0
-        truck.state = "hauling"
-        return True
+            if truck.destination == "fuel-station":
+                truck.state = "refueling"
+                truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+                truck.speed = 0.0
+            else:
+                truck.state = "queued_load"
+                truck.wait = 0.0
+                self.excavators[truck.excavator].queue.append(truck)
 
     # -- шаг модели ----------------------------------------------------------
     def step(self, dt):
@@ -814,7 +863,7 @@ class Haulage:
             ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
         for truck in self.trucks:
             self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
-            if truck.refuel_timer > 0:
+            if truck.state == "refueling":
                 truck.time_in["refuel"] += dt
                 truck.refuel_timer = max(0.0, truck.refuel_timer - dt)
                 truck.speed = 0.0
@@ -822,7 +871,11 @@ class Haulage:
                     truck.fuel = 100.0
                     self.refuels_total += 1
                     truck.destination = ""
-                    self._return(truck)
+                    self._return(truck)  # «авто» — по диспетчеру, «ручной» — к своему экскаватору
+            elif truck.travel_pending:
+                bucket = "haul_loaded" if truck.travel_kind == "depart" else "haul_empty"
+                truck.time_in[bucket] += dt
+                self._retry_pending_travel(truck)
             elif truck.state == "hauling":
                 truck.time_in["haul_loaded"] += dt
                 self._move(truck, dt)
@@ -847,14 +900,6 @@ class Haulage:
             ex.queue_integral += len(ex.queue) * dt
             self._excavator(ex)
         for dump in self.dumps.values():
-            if not dump.accepting and dump.id != "dump-waste-1" and dump.queue:
-                # уже стоявшие в очереди, когда пункт перестал принимать — тоже на отвал,
-                # иначе будут ждать бесконечно (дробилка/склад снова начнут принимать не скоро)
-                stuck = dump.queue
-                dump.queue = []
-                for truck in stuck:
-                    if not self._reroute_to_dest(truck, "dump-waste-1"):
-                        dump.queue.append(truck)  # пути нет совсем — только ждать на месте
             self._dump_point(dump)
         self._queue_positions()
 
@@ -1021,7 +1066,8 @@ class Haulage:
     # -- публикация ----------------------------------------------------------
     def dispatch_features(self):
         hauling = sum(1 for t in self.trucks if t.state in ("hauling", "returning"))
-        queued = sum(1 for t in self.trucks if t.state in ("queued_load", "queued_dump"))
+        not_working = sum(1 for t in self.trucks
+                           if t.state in ("queued_load", "queued_dump", "refueling"))
         assignments = {t.id: t.excavator for t in self.trucks}
         hours = min(1.0, self._sim_t / WAIT_WINDOW_MODEL_S) if self._sim_t > 0 else 0.0
         window_h = max(hours, 1e-6)
@@ -1029,10 +1075,11 @@ class Haulage:
         avg_wait_dump = (sum(v for _, v in self._wait_dump) / len(self._wait_dump)) if self._wait_dump else 0.0
         trips_per_hour = len(self._trips_log) / window_h
         tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
-        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке); у грузовиков нет
-        # отдельного state="down" (ломаются только экскаваторы) — простой у сломанного экскаватора
-        # уже учтён через queued_load, отдельно вычитать не нужно (было задвоение).
-        fleet_utilization = 100.0 * max(0, len(self.trucks) - queued) / len(self.trucks)
+        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке) и не заправляется
+        # (часть 2 задачи по проверке координатора — заправляющиеся не считаются работающими);
+        # у грузовиков нет отдельного простоя из-за поломки экскаватора — он уже учтён через
+        # queued_load, отдельно вычитать не нужно (было задвоение).
+        fleet_utilization = 100.0 * max(0, len(self.trucks) - not_working) / len(self.trucks)
         clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
                       if self._clay_crusher_total_t > 0 else 0.0)
         return {

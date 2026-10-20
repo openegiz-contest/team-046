@@ -21,7 +21,9 @@ function av(twin, a, d) {
   return v === undefined || v === null ? d : v;
 }
 function headingToRad(deg) {
-  return -(deg || 0) * Math.PI / 180;
+  // как в исправленном примере договора (contract/README.md, §9): «вперёд» модели = +Z,
+  // север сцены = −Z — поэтому Math.PI, а не 0, как было
+  return Math.PI - (deg || 0) * Math.PI / 180;
 }
 function lerpAngle(a, b, t) {
   let d = b - a;

@@ -89,6 +89,51 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "scenario_blizzard": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_dispatch_off": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_road_closed": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_excavator_down": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_clay_face": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_bad_blast": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_crusher_stop": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "scenario_sag_maintenance": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "active_scenarios": {
+    "properties": {
+     "value": "нет"
+    }
    }
   }
  },
@@ -155,6 +200,46 @@
     "properties": {
      "value": false,
      "owner": "processing"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:advisor": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Советник диспетчера",
+   "kind": "advisor",
+   "_isType": false,
+   "_parents": "kz.bozshakol:mine",
+   "rules": "crusher, clay, plan, inflow, fleet, blizzard",
+   "service": "bz-advisor"
+  },
+  "features": {
+   "advice": {
+    "properties": {
+     "value": "[]",
+     "unit": "json"
+    }
+   },
+   "advice_count": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "top_advice": {
+    "properties": {
+     "value": "Отклонений нет"
+    }
+   },
+   "level": {
+    "properties": {
+     "value": 0
+    }
+   },
+   "advice_ids": {
+    "properties": {
+     "value": ""
     }
    }
   }

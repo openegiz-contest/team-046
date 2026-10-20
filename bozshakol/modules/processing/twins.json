@@ -7,8 +7,14 @@
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
    "capacity_mtpa": 25,
-   "design_tph": 2850,
-   "recovery_cu_design_pct": 73.4
+   "capacity_note": "проектная мощность (Mining Technology, KAZ Minerals); суммарная проектная двух фабрик 30 млн т/год, фабрика стабильно её превышает",
+   "plan_mtpa": 29.44,
+   "plan_tph": 3360,
+   "plan_note": "план = факт 2025 г.: 35,7 млн т переработано всего − 6,26 млн т глинистой руды (KAZ Minerals Q4 2025); раздельной переработки по фабрикам в отчёте нет — допущение",
+   "recovery_cu_2025_pct": 73.4,
+   "design_tph": 3360,
+   "design_tph_note": "план по факту 2025 г. (поле читает общая панель 3D-сцены как «план»); проектная — design_capacity_tph",
+   "design_capacity_tph": 2854
   },
   "features": {
    "feed_rate": {
@@ -57,6 +63,18 @@
     "properties": {
      "value": "running"
     }
+   },
+   "plan_rate": {
+    "properties": {
+     "value": 3360.0,
+     "unit": "т/ч"
+    }
+   },
+   "cu_year_pace": {
+    "properties": {
+     "value": 0.0,
+     "unit": "тыс. т/год"
+    }
    }
   }
  },
@@ -68,7 +86,13 @@
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
    "capacity_mtpa": 5,
-   "design_tph": 570
+   "capacity_note": "проектная мощность (Mining Technology, KAZ Minerals)",
+   "plan_mtpa": 6.26,
+   "plan_tph": 715,
+   "plan_note": "план = добыча глинистой руды 2025 г. 6,26 млн т (KAZ Minerals Q4 2025), среднее за 8 760 ч",
+   "design_tph": 715,
+   "design_tph_note": "план по факту 2025 г. (поле читает общая панель 3D-сцены как «план»); проектная — design_capacity_tph",
+   "design_capacity_tph": 571
   },
   "features": {
    "feed_rate": {
@@ -104,6 +128,30 @@
    "state": {
     "properties": {
      "value": "running"
+    }
+   },
+   "feed_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "plan_rate": {
+    "properties": {
+     "value": 715.0,
+     "unit": "т/ч"
+    }
+   },
+   "recovery": {
+    "properties": {
+     "value": 60.0,
+     "unit": "%"
+    }
+   },
+   "cu_year_pace": {
+    "properties": {
+     "value": 0.0,
+     "unit": "тыс. т/год"
     }
    }
   }
@@ -164,9 +212,11 @@
    "_isType": false,
    "_parents": "kz.bozshakol:plant-sulphide",
    "type": "гирационная",
-   "rated_tph": 4000,
-   "bunker_t": 3000,
-   "downstream": "kz.bozshakol:conveyor-01"
+   "rated_tph": 4500,
+   "bunker_t": 900,
+   "downstream": "kz.bozshakol:conveyor-01",
+   "rated_note": "допущение: номинал при p80 = 250 мм и крепости 12; выше плана фабрики 3 360 т/ч, т. к. дробилка работает ~75 % времени",
+   "bunker_note": "допущение: 5 кузовов по 180 т (≈ 6–7 по 135 т)"
   },
   "features": {
    "state": {
@@ -214,6 +264,35 @@
      "value": 0.0,
      "unit": "МВт"
     }
+   },
+   "stop_reason": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "capacity": {
+    "properties": {
+     "value": 4500.0,
+     "unit": "т/ч"
+    }
+   },
+   "bunker_fill": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "feed_p80": {
+    "properties": {
+     "value": 250.0,
+     "unit": "мм"
+    }
+   },
+   "feed_hardness": {
+    "properties": {
+     "value": 12.0,
+     "unit": "ед. Протодьяконова"
+    }
    }
   }
  },
@@ -224,9 +303,11 @@
    "kind": "conveyor",
    "_isType": false,
    "_parents": "kz.bozshakol:plant-sulphide",
-   "length_m": 3000,
-   "rated_tph": 4000,
-   "downstream": "kz.bozshakol:stockpile-coarse"
+   "length_m": 2142,
+   "rated_tph": 4500,
+   "downstream": "kz.bozshakol:stockpile-coarse",
+   "length_note": "сумма отрезков трассы conveyor-01 в core/geometry.json",
+   "belt_speed_mps": 2.5
   },
   "features": {
    "state": {
@@ -251,6 +332,24 @@
      "value": 0.0,
      "unit": "т"
     }
+   },
+   "intake": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "length": {
+    "properties": {
+     "value": 2142.0,
+     "unit": "м"
+    }
+   },
+   "transit_time": {
+    "properties": {
+     "value": 14.3,
+     "unit": "мин"
+    }
    }
   }
  },
@@ -261,19 +360,22 @@
    "kind": "stockpile",
    "_isType": false,
    "_parents": "kz.bozshakol:plant-sulphide",
-   "capacity_t": 200000,
-   "downstream": "kz.bozshakol:sag-mill-01"
+   "capacity_t": 40000,
+   "downstream": "kz.bozshakol:sag-mill-01",
+   "capacity_note": "допущение: ≈ 12 ч питания сульфидной фабрики",
+   "initial_t": 15000,
+   "initial_note": "допущение: оперативный запас ≈ 4,5 ч, чтобы последствия сбоев были видны"
   },
   "features": {
    "stock": {
     "properties": {
-     "value": 60000.0,
+     "value": 15000.0,
      "unit": "т"
     }
    },
    "cu_grade": {
     "properties": {
-     "value": 0.39,
+     "value": 0.41,
      "unit": "% Cu"
     }
    },
@@ -294,6 +396,51 @@
      "value": 0.0,
      "unit": "т"
     }
+   },
+   "fill_pct": {
+    "properties": {
+     "value": 37.5,
+     "unit": "%"
+    }
+   },
+   "volume": {
+    "properties": {
+     "value": 9375.0,
+     "unit": "м³"
+    }
+   },
+   "hours_left": {
+    "properties": {
+     "value": 4.46,
+     "unit": "ч"
+    }
+   },
+   "stop_forecast": {
+    "properties": {
+     "value": "не ожидается"
+    }
+   },
+   "stop_expected": {
+    "properties": {
+     "value": false
+    }
+   },
+   "inflow": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "outflow": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "full": {
+    "properties": {
+     "value": false
+    }
    }
   }
  },
@@ -306,7 +453,7 @@
    "_parents": "kz.bozshakol:plant-sulphide",
    "diameter_m": 12.2,
    "power_mw": 28,
-   "rated_tph": 2850,
+   "rated_tph": 3360,
    "downstream": "kz.bozshakol:flotation-01"
   },
   "features": {
@@ -385,6 +532,12 @@
      "value": 0.0,
      "unit": "т Cu"
     }
+   },
+   "feed_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
    }
   }
  },
@@ -396,7 +549,9 @@
    "_isType": false,
    "_parents": "kz.bozshakol:plant-clay",
    "capacity_t": 120000,
-   "downstream": "kz.bozshakol:plant-clay"
+   "downstream": "kz.bozshakol:plant-clay",
+   "capacity_note": "допущение: долговременный склад глинистой руды",
+   "initial_t": 30000
   },
   "features": {
    "stock": {
@@ -432,6 +587,30 @@
     "properties": {
      "value": 0,
      "unit": "шт"
+    }
+   },
+   "clay_pct": {
+    "properties": {
+     "value": 55.0,
+     "unit": "%"
+    }
+   },
+   "fill_pct": {
+    "properties": {
+     "value": 25.0,
+     "unit": "%"
+    }
+   },
+   "volume": {
+    "properties": {
+     "value": 18750.0,
+     "unit": "м³"
+    }
+   },
+   "hours_left": {
+    "properties": {
+     "value": 42.0,
+     "unit": "ч"
     }
    }
   }

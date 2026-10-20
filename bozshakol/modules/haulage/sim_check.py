@@ -196,6 +196,7 @@ def collect(model):
         ex_stats=ex_stats, group_stats=group_stats, dump_stats=dump_stats,
         avg_bunker_t=getattr(model, "avg_bunker_t", 0.0),
         plan_crusher_tph=fv(disp, "plan_crusher_tph"), plan_clay_tph=fv(disp, "plan_clay_tph"),
+        refuels_total=model.refuels_total,
     )
 
 
@@ -212,6 +213,7 @@ def report_mode(label, runs):
         ("avg_wait_dump", "Ожидание на разгрузке", "мин"),
         ("trips_per_hour", "Рейсов в час", ""),
         ("fleet_utilization", "Самосвалы в деле", "%"),
+        ("refuels_total", f"Заправок за смену ({MODEL_HOURS} ч)", "шт"),
     ]:
         vals = [r[key] for r in runs]
         m, s = avg_spread(vals)
@@ -236,9 +238,9 @@ def report_mode(label, runs):
         plan = avg_spread([r["ex_stats"][eid]["plan_tph"] for r in runs])
         util = avg_spread([r["ex_stats"][eid]["util_pct"] for r in runs])
         q = avg_spread([r["ex_stats"][eid]["avg_queue"] for r in runs])
-        pct = 100.0 * tph[0] / plan[0] if plan[0] > 0 else float("nan")
+        pct_s = f"{100.0 * tph[0] / plan[0]:.0f}% от цели" if plan[0] > 0 else "цель 0 — план не держит (снимок на конец прогона)"
         print(f"    {eid}: цель {plan[0]:.0f}±{plan[1]:.0f} т/ч, факт {tph[0]:.0f}±{tph[1]:.0f} т/ч "
-              f"({pct:.0f}% от цели), приехало {served[0]:.0f}±{served[1]:.0f}, "
+              f"({pct_s}), приехало {served[0]:.0f}±{served[1]:.0f}, "
               f"загрузка {util[0]:.0f}±{util[1]:.0f} %, очередь {q[0]:.2f}±{q[1]:.2f}")
 
     print("  -- группы руды: match factor = (самосвалов × время погрузки) / (экскаваторов × цикл самосвала) --")

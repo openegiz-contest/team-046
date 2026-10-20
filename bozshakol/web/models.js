@@ -9,13 +9,14 @@
 //
 // Использование в слое участника:
 //   const g = ctx.models.truck({ cls: 135 }); ctx.group.add(g); ...
-//   в update: g.position.copy(ctx.toScene(x, y, z)); g.rotation.y = -heading*Math.PI/180;
+//   в update: g.position.copy(ctx.toScene(x, y, z)); g.rotation.y = Math.PI - heading*Math.PI/180;  (север сцены = −Z)
 //             g.setLoad(cargo_type); g.setDumping(state === 'dumping' ? 1 : 0); g.setWheels(odometer_m);
 //
 // Каждая фабрика возвращает THREE.Group; методы висят и на самой группе, и в group.userData.api.
 // Общие методы всех моделей:
 //   setDetail('full' | 'far') — в 'far' прячутся мелкие детали (перила, фары, гидроцилиндры, диски);
-//   setState(state)           — 'down' (или 'stopped' для дробилки) красит корпус в красный, иначе обычный цвет.
+//   setState(state)           — 'down' (или 'stopped' для дробилки) красит корпус в красный,
+//                               'reserve' (самосвал в резерве) — в серо-белый, иначе обычный цвет.
 //
 // Фабрики:
 //   models.truck({ cls: 135 | 180 })      самосвал: setDumping(t 0..1), setLoad('sulphide'|'clay'|'waste'|'none'),
@@ -64,6 +65,7 @@ export function createModels(THREE, colors) {
     down: colors.down ?? 0xd32f2f,
     frame: 0xf2b322, frameDark: 0xc98d0f,          // жёлтая рама и тёмно-жёлтые узлы
     bed: 0xb9bcc0, bedDown: 0xc9524a,             // кузов — светло-серый металл
+    reserve: 0xd5d8dc,                             // самосвал в резерве — серо-белый (кабина и кузов)
     cab: 0xf6f3ea, cabDown: 0xe07a70,             // белая кабина
     tyre: 0x2a2a2a, rim: 0xd9d9d9, glass: 0x4f6f8a, lamp: 0xfff2b0,
     exc: colors.excavator ?? 0xf2a21b, excDark: 0xb97a12, excDown: 0xd84a3d, track: 0x3a3a3a, steel: 0x5b6168,
@@ -160,7 +162,8 @@ export function createModels(THREE, colors) {
     };
     api.setState = api.setState || function (state) {
       const down = state === 'down' || state === 'failed';
-      for (const s of group.userData.swaps || []) s.mesh.material = down ? s.down : s.normal;
+      const reserve = state === 'reserve';
+      for (const s of group.userData.swaps || []) s.mesh.material = down ? s.down : (reserve && s.reserve ? s.reserve : s.normal);
     };
     group.userData.api = api;
     group.userData.size = size;
@@ -168,8 +171,8 @@ export function createModels(THREE, colors) {
     return group;
   }
   // запомнить меш для перекраски в «аварию»
-  function swap(group, mesh, normal, down) {
-    (group.userData.swaps = group.userData.swaps || []).push({ mesh, normal, down });
+  function swap(group, mesh, normal, down, reserve) {
+    (group.userData.swaps = group.userData.swaps || []).push({ mesh, normal, down, reserve });
     return mesh;
   }
 
@@ -214,7 +217,7 @@ export function createModels(THREE, colors) {
     box(g, flat(C.steel), W * 0.5, 0.5, 0.3, 0, deckY - 1.0, L * 0.5 + 0.1, true);       // решётка
     box(g, mFrame, W, 0.3, 3.4, 0, deckY, L * 0.36);               // палуба
     const cabW = W * 0.34, cabH = H - deckY - 0.15;
-    const cab = swap(g, box(g, mCab, cabW, cabH, 2.6, W / 2 - cabW / 2 - 0.2, deckY + cabH / 2 + 0.15, L * 0.33), mCab, flat(C.cabDown));
+    const cab = swap(g, box(g, mCab, cabW, cabH, 2.6, W / 2 - cabW / 2 - 0.2, deckY + cabH / 2 + 0.15, L * 0.33), mCab, flat(C.cabDown), flat(C.reserve));
     box(g, smooth(C.glass), cabW - 0.4, cabH * 0.45, 0.15, cab.position.x, cab.position.y + cabH * 0.1, L * 0.33 + 1.33, true); // лобовое стекло
     box(g, mFrame, W * 0.3, 1.2, 2.2, -W * 0.25, deckY + 0.75, L * 0.3);                 // воздушные фильтры справа
     // перила площадки (мелкие детали)
@@ -241,7 +244,7 @@ export function createModels(THREE, colors) {
     const bed = swap(g, profile(bedPivot, mBed, [
       [zb + 0.3, bedFloor - 0.4], [zf, bedFloor - 0.4], [zf, bedTop], [zf + 0.4, bedTop + 0.1],
       [zf + 0.4, bedTop + 0.5], [zb - 0.4, bedTop + 0.5], [zb - 0.1, bedFloor + 0.6],
-    ], W), mBed, flat(C.bedDown));
+    ], W), mBed, flat(C.bedDown), flat(C.reserve));
     // козырёк над кабиной
     const canopy = box(bedPivot, mBed, W, 0.4, L * 0.32, 0, bedTop + 0.3, zf + 0.4 + L * 0.16);
     box(bedPivot, mBed, W * 0.9, 0.5, 0.6, 0, bedTop - 0.0, zf + 0.6, true);     // ребро козырька

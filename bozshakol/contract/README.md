@@ -10,7 +10,7 @@
 |---|---|---|
 | `bozshakol/compose.yml` | наш слой поверх `deploy/compose/docker-compose.yml`; подключает `core/compose.yml`, `modules/*/compose.yml`, `web/compose.yml` через `include` | координатор |
 | `bozshakol/contract/` | этот договор | координатор |
-| `bozshakol/core/` | координатор: `bz-setup` (создание двойников), `bz-core` (модельное время, погода, сценарии, итоговые показатели), `twins.json`, `geometry.json`, общая библиотека `bzlib/` | координатор |
+| `bozshakol/core/` | координатор: `bz-setup` (создание двойников), `bz-core` (модельное время, погода, сценарии, итоговые показатели), `bz-advisor` (советник диспетчера, раздел 11), `twins.json`, `geometry.json`, общая библиотека `bzlib/` | координатор |
 | `bozshakol/modules/haulage/` | транспорт и диспетчеризация: сервис `bz-haulage`, `twins.json`, `compose.yml`, `Dockerfile`, `README.md` | участник №2 |
 | `bozshakol/modules/geology/` | геология, качество руды, буровзрывные работы: сервис `bz-geology` | участник №3 |
 | `bozshakol/modules/processing/` | переработка и энергия: сервис `bz-processing` | участник №4 |
@@ -96,11 +96,11 @@ mine
 | `crusher-01` (№4) | `accepting` (true/false) — принимает ли руду | №2: при `false` самосвалы ждут в очереди у дробилки |
 | `stockpile-clay` (№4) | `accepting` | №2 |
 | `face-01…06` (№3) | `ore_type` (sulphide/clay/waste), `cu_grade` (% Cu), `au_grade` (г/т), `clay_pct` (%), `p80` (мм), `loading_factor` (коэф. скорости погрузки, 1 = норма), `hardness`, `remaining` (т), `recommended_destination` (crusher-01 / stockpile-clay / dump-waste-1), `blasted` | №2: груз самосвала получает содержание и долю глины забоя; время погрузки делится на `loading_factor`; пункт разгрузки — по `recommended_destination` |
-| `mine` (координатор) | `sim_time`, `shift`, `shift_hour`, `temperature`, `wind`, `visibility`, `speed_limit` (км/ч) | все: `speed_limit` ограничивает скорость самосвалов (метель) |
+| `mine` (координатор) | `sim_time`, `shift`, `shift_hour`, `temperature`, `wind`, `visibility`, `speed_limit` (км/ч), `scenario_<имя>` (1/0), `active_scenarios` | все: `speed_limit` ограничивает скорость самосвалов (метель) |
 | `road-*` (№2) | `open`, `speed_limit` | №2 (своё), 3D-сцена |
 
 Признаки самосвала (`truck-*`, №2): `state` ∈ {queued_load, loading, hauling, queued_dump, dumping,
-returning, refueling, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
+returning, refueling, reserve, down}, `x`, `y`, `z` (м, в общих координатах), `heading` (°), `speed` (км/ч), `payload` (т),
 `cargo_type` ∈ {sulphide, clay, waste, none}, `cargo_cu` (% Cu), `cargo_clay` (%), `destination`,
 `excavator`, `fuel` (%), `trips_total`.
 
@@ -108,6 +108,12 @@ returning, refueling, down}, `x`, `y`, `z` (м, в общих координат
   `core/geometry.json`, рядом с дорогой к дробилке; связан ребром с узлом `rim-ne`). Длительность ≈ 15 мин
   модельного времени, примерно раз в смену (по признаку `fuel`); после заправки `fuel` = 100. В сцене
   самосвал на заправке окрашен как порожний (белый).
+- `reserve` — «в резерве»: самосвал стоит на стоянке у узла `fuel-station` и не участвует в перевозке
+  (не ездит, не грузится, не получает назначений); `payload` = 0, `cargo_type` = none, `destination` = «».
+  Вывод в резерв и возврат в работу — решение модуля №2 (например, лишние самосвалы в ручном режиме или
+  при остановке дробилки). В сцене самосвал в резерве серо-белый: слой транспорта (№2) передаёт признак
+  `state` в модель библиотеки — `g.setState(state)` (для `reserve` библиотека красит кабину и кузов серо-белым,
+  для `down` — красным); легенда дополнена.
 
 Итоговые показатели в `mine` (координатор считает по чужим двойникам через платформу):
 `ore_to_plants` (т/ч), `plan_fulfilment` (%), `feed_cu` (% Cu), `feed_clay` (%), `cu_concentrate_shift` (т),
@@ -136,6 +142,13 @@ curl -u "ditto:$DITTO_PASSWORD" -X PUT -H 'Content-Type: application/json' -d tr
 ```
 
 - Модули только читают (через события `opentwins/twin/events/kz.bozshakol/scenarios` и HTTP). Отмена = выключить (`false`).
+- **Сценарии в истории (InfluxDB, Grafana).** Одиночная запись признака через API Ditto попадает в InfluxDB
+  полем без имени признака, поэтому сам двойник `scenarios` на графиках не виден. Координатор (`bz-core`)
+  публикует вместе с остальными признаками `mine` (каждые 5 с) числовой признак `scenario_<имя>`
+  (1 — включён, 0 — выключен) для каждого сценария и строковый `active_scenarios` — список включённых
+  по-русски через запятую («нет», если ничего не включено). Для графиков и аннотаций в дашбордах модулей
+  брать `mine.scenario_<имя>`: поле InfluxDB `value_scenario_<имя>_properties_value`,
+  `thingId = kz.bozshakol:mine`. Реагировать на сценарий модули по-прежнему должны по двойнику `scenarios`.
 
 | Сценарий | Владелец реакции | Параметры | Что происходит |
 |---|---|---|---|
@@ -227,7 +240,7 @@ export function update(ctx, twins) {
     const f = twins[id] && twins[id].features; if (!f) continue;
     const v = (k) => f[k] && f[k].properties.value;
     g.position.copy(ctx.toScene(v('x'), v('y'), v('z')));      // x, y, z двойника уже включают рельеф
-    g.rotation.y = -v('heading') * Math.PI / 180;               // heading: 0 = север, по часовой
+    g.rotation.y = Math.PI - v('heading') * Math.PI / 180;     // heading: 0 = север, по часовой; «вперёд» модели = +Z, север сцены = −Z
     g.scale.setScalar(ctx.markerScale);                          // заметность на общем плане
     g.setLoad(v('payload') > 0 ? v('cargo_type') : 'none');
     g.setDumping(v('state') === 'dumping' ? 1 : 0);
@@ -253,3 +266,41 @@ export function update(ctx, twins) {
 Исходные цифры — в `data/SOURCES.md` со ссылками. Всё, чего нет в источниках, помечается «допущение»
 с обоснованием. Новые признаки модуль добавляет свободно и описывает в своём `README.md`; признаки,
 которые читают другие модули (таблицы в разделе 4), меняются только через координатора.
+
+## 11. Советник диспетчера
+
+Двойник `kz.bozshakol:advisor` (`_parents`: `mine`), сервис `bz-advisor` в `core/` (владелец — координатор).
+Это то, ради чего двойник существует: подсказать диспетчеру смены конкретное решение с цифрами и причиной.
+Советник читает чужие двойники только через платформу и ничего в них не пишет.
+
+Признаки `advisor` (публикуются каждые 5 с вместе):
+
+| Признак | Что это |
+|---|---|
+| `advice` | JSON-список советов строкой, главный совет первым (см. поля ниже) |
+| `advice_count` | число советов (шт) |
+| `top_advice` | текст главного совета; «Отклонений нет», если советов нет |
+| `level` | уровень главного совета: 2 — критично, 1 — важно, 0 — к сведению или нет советов |
+| `advice_ids` | идентификаторы советов через запятую (для журнала событий в сцене) |
+
+Поля одного совета в `advice`: `id` (crusher / clay / plan / inflow / fleet / blizzard), `priority` (critical / important / info),
+`level` (2 / 1 / 0), `title`, `text` (что сделать, с числами), `reason` (почему: какие двойники и значения),
+`effect` (ожидаемый эффект), `target` (thingId объекта, к которому относится совет), `data` (использованные значения).
+
+Правила детерминированные и объяснимые (`core/advisor_rules.py`, проверяются `core/tests/test_advisor_rules.py`
+подменой данных; пороги — допущения, обоснованы в `data/SOURCES.md`):
+
+| id | Когда | Данные | Совет |
+|---|---|---|---|
+| `crusher` | `crusher-01.accepting = false` | `crusher-01.stop_reason`, `stockpile-coarse.hours_left`, `stop_forecast`, `dispatch.queue_crusher` | «Фабрика встанет в ЧЧ:ММ (запас N ч). У дробилки K гружёных самосвалов — перевести на вскрышу или в резерв; разгрузку руды возобновить, когда дробилка примет». Критично при запасе < 2 ч. Если дробилка `running` без `stop_reason` (просто полон бункер) — только «к сведению»: «Бункер дробилки полон, новых самосвалов не направлять» |
+| `clay` | `plant-sulphide.feed_clay` > 10 % | `face-*.ore_type`, `clay_pct`, `recommended_destination` | «Забой face-0X даёт глину Y % — направлять его руду на склад глинистой руды»; эффект — прирост извлечения ≈ 0,4 % на 1 % глины сверх 5 % |
+| `plan` | среднее `plant-sulphide.feed_rate` за последний модельный час < 95 % `plan_rate` (нужно ≥ 45 мин данных) | `excavator-*.state`, `road-*.open`, `crusher-01`, `stockpile-coarse`, `mine.scenario_*` | «Фабрика за час — P % плана. Узкое место: …» (экскаватор в аварии, закрытая дорога, дробилка, пустой склад, мельница на ремонте, выключенная диспетчеризация, метель). Критично при < 80 % |
+| `inflow` | фабрика идёт по плану, но среднее `stockpile-coarse.inflow` за последний час < 95 % `plan_rate` | те же, что у `plan`, и `stockpile-coarse.hours_left` | «Привоз руды на дробилку за час — P % плана; фабрика идёт со склада, его хватит на N ч. Узкое место: …» — раннее предупреждение. Критично при запасе < 2 ч |
+| `fleet` | `dispatch.mode = auto` и `avg_wait_excavator` > 2 мин (ориентир Бозшаколя 1–1,5 мин) | `dispatch.trucks_hauling`, `trucks_needed` (если модуль №2 публикует), `excavator-*.queue`; объект — экскаватор с самой длинной очередью | «Лишних самосвалов ≈ K — поставить в резерв (`reserve`)»; K = `trucks_hauling − trucks_needed`, иначе очередь у экскаваторов минус число работающих экскаваторов |
+| `blizzard` | `mine.scenario_blizzard = 1` | `mine.speed_limit`, `stockpile-coarse.hours_left`; объект — склад крупнодроблёной руды | «Скорость ограничена до N км/ч — привоз руды упадёт ≈ на X %; держать запас склада не меньше 4 ч»; X = 1 − 1 / (0,4 + 0,6·50/N). Критично при запасе < 4 ч |
+
+В 3D-сцене советы показаны блоком «Советы диспетчеру» вверху панели (главный крупно, цвет по приоритету),
+значком «совет» над объектом `target`; клик по совету ведёт камеру к объекту; появление и снятие совета
+попадает в журнал событий. В Grafana (обзорный дашборд) — число советов и главный совет во времени.
+Модуль №2 может публиковать `dispatch.trucks_needed` (требуемое число самосвалов) — советник возьмёт его вместо оценки.
+

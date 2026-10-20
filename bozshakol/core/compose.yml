@@ -1,5 +1,5 @@
 # Координатор: создание двойников (bz-setup, одноразовый) и сервис bz-core
-# (модельное время, погода, сценарии, итоговые показатели).
+# (модельное время, погода, сценарии, итоговые показатели) и bz-advisor (советник диспетчера).
 services:
   bz-setup:
     build:
@@ -29,6 +29,20 @@ services:
       DITTO_URL: http://ditto-nginx:80
       DITTO_PASSWORD: ${DITTO_PASSWORD}
       SIM_SPEEDUP: ${SIM_SPEEDUP:-10}
+    depends_on:
+      bz-setup:
+        condition: service_completed_successfully
+
+  bz-advisor:
+    image: bozshakol/core:local
+    pull_policy: never
+    restart: unless-stopped
+    mem_limit: 128m
+    command: ["python", "advisor.py"]
+    environment:
+      MQTT_HOST: mosquitto
+      DITTO_URL: http://ditto-nginx:80
+      DITTO_PASSWORD: ${DITTO_PASSWORD}
     depends_on:
       bz-setup:
         condition: service_completed_successfully
