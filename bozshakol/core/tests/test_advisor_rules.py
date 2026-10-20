@@ -133,24 +133,62 @@ class Rules(unittest.TestCase):
         self.assertEqual(a[0]["id"], "fleet")
         self.assertEqual(a[0]["target"], "kz.bozshakol:excavator-01")   # объект в сцене: экскаватор с очередью
         self.assertIn("3.2 мин", a[0]["text"])
-        self.assertIn("≈ 3", a[0]["text"])                  # 9 в очередях − 6 экскаваторов
-        s["dispatch"]["trucks_needed"] = 20
-        self.assertIn("≈ 6", R.advise(s)[0]["text"])         # 26 − 20
-        s["dispatch"]["mode"] = "manual"
+        self.assertIn("≈ 3", a[0]["text"])                  # 9 в очередях − 6 экскаваторов (нет данных модуля №2)
+        s["dispatch"]["trucks_needed"] = 20                 # только trucks_needed — прежняя оценка по очередям
+        self.assertIn("≈ 3", R.advise(s)[0]["text"])
+        s["dispatch"]["trucks_reserve"] = 2                 # модуль №2 публикует оба признака: K = в работе − нужно
+        a = R.advise(s)
+        self.assertIn("≈ 6", a[0]["text"])                  # 26 − 20
+        self.assertIn("в резерве уже 2", a[0]["reason"])
+        s["dispatch"].update(trucks_needed=25.8)            # нужно ≈ столько, сколько в работе — совета нет
+        self.assertEqual(R.advise(s), [])
+        s["dispatch"].update(trucks_needed=20, mode="manual")
         self.assertEqual(R.advise(s), [])
 
-    def test_blizzard(self):
+    def _frames(self, minutes=60):
+        """Срезы парка до метели: каждые 5 модельных минут 28 самосвалов, как на стенде."""
+        frame = ([("hauling", 30.0)] * 4 + [("hauling", 12.0)] * 3 + [("hauling", 30.0)] * 2 +
+                 [("returning", 40.0)] * 5 + [("returning", 25.0)] * 2 +
+                 [("loading", 0.0)] * 4 + [("queued_load", 0.0)] * 4 + [("dumping", 0.0)] * 2 + [("queued_dump", 0.0)] * 2)
+        return [s for _ in range(0, minutes, 5) for s in frame]
+
+    def test_blizzard_from_fleet_speeds(self):
         s = base_snap()
         s["mine"].update(scenario_blizzard=1, speed_limit=20, visibility=300)
-        a = R.advise(s)
+        a = R.advise(s, ctx={"samples_before": self._frames()})
         self.assertEqual(a[0]["id"], "blizzard")
         self.assertEqual(a[0]["target"], "kz.bozshakol:stockpile-coarse")
-        self.assertIn("до 20 км/ч", a[0]["text"])
-        self.assertIn("на 47 %", a[0]["text"])               # 1 − 1/(0,4 + 0,6·50/20)
+        self.assertIn("ограничение 20 км/ч", a[0]["text"])
+        drop = a[0]["data"]["haul_drop_pct"]
+        self.assertTrue(10 <= drop <= 30, drop)               # порядок фактических −7…−24 %, а не прежние −47 %
+        self.assertAlmostEqual(a[0]["data"]["travel_share"], 16 / 28, places=2)
         self.assertIn("не меньше 4 ч (сейчас 4.5 ч)", a[0]["text"])
         self.assertEqual(a[0]["priority"], "important")
         s["stockpile-coarse"]["hours_left"] = 3.0
-        self.assertEqual(R.advise(s)[0]["priority"], "critical")
+        self.assertEqual(R.advise(s, ctx={"samples_before": self._frames()})[0]["priority"], "critical")
+
+    def test_blizzard_fallback_without_data(self):
+        s = base_snap()
+        s["mine"].update(scenario_blizzard=1, speed_limit=20)
+        a = R.advise(s)
+        drop = a[0]["data"]["haul_drop_pct"]
+        self.assertTrue(10 <= drop <= 35, drop)
+        self.assertIn("паспортным скоростям", a[0]["reason"])
+
+    def test_blizzard_measured_change(self):
+        # час до метели: руда 3750 т/ч, вскрыша 4500 т/ч; 40 мин метели: руда 3500 т/ч (−7 %), вскрыша 3420 т/ч (−24 %)
+        t0 = 1_000_000.0
+        dl = [(t0 + m * 60, 3750 * m / 60, 4500 * m / 60) for m in range(0, 61, 5)]
+        ore0, w0 = dl[-1][1], dl[-1][2]
+        dl += [(t0 + 3600 + m * 60, ore0 + 3500 * m / 60, w0 + 3420 * m / 60) for m in range(5, 41, 5)]
+        s = base_snap()
+        s["mine"].update(scenario_blizzard=1, speed_limit=20)
+        a = R.advise(s, ctx={"samples_before": self._frames(), "deliveries": dl, "blizzard_since": t0 + 3600})
+        self.assertIn("За 40 мин метели: руда -7 %, вскрыша -24 %", a[0]["text"])
+        self.assertIn("диспетчер держит руду", a[0]["text"])
+        # меньше 30 минут метели — факта ещё нет
+        a = R.advise(s, ctx={"samples_before": self._frames(), "deliveries": dl[:16], "blizzard_since": t0 + 3600})
+        self.assertNotIn("За ", a[0]["text"])
 
     def test_order_by_level(self):
         s = base_snap()
