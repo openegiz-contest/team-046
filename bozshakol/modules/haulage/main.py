@@ -65,6 +65,15 @@ FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (пло
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
 REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке, по договору (fuel-station)
 
+# -- резерв самосвалов (текущая задача «Резерв самосвалов») --
+RESERVE_REFUEL_FUEL_PCT = 50.0        # порог из текста задачи: топливо < 50% перед резервом — сначала заправка
+RESERVE_MIN_MODEL_S = 10.0 * 60.0     # допущение (защита от «дрызганья»): минимум 10 модельных минут
+                                       # в резерве, прежде чем самосвал можно вернуть в работу — числа
+                                       # 10 мин в договоре нет, это допущение МОДУЛЯ, см. README
+# «не работает» = не считается в fleet_utilization/trucks_needed как занятый планом; резерв сюда же —
+# по условию задачи (п.7 части 1): резервный самосвал не работающий, даже если формально не в очереди
+NOT_WORKING_STATES = ("queued_load", "queued_dump", "refueling", "reserve")
+
 TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
 SLOW_PUBLISH_S = 5.0
 QUEUE_GAP_M = 22.0
@@ -144,6 +153,19 @@ EXCAVATOR_SHORT_STOP_DURATION_S = (3.0 * 60.0, 10.0 * 60.0)  # равномер�
 # самосвала); не стали придумывать новое — используем уже существующее "idle" (экскаватор и
 # так «не грузит» в этом состоянии между самосвалами, разница лишь в причине простоя)
 EXCAVATOR_SHORT_STOP_STATE = "idle"
+
+
+# -- доли времени парка по состояниям (п.6 части 1 задачи «Резерв самосвалов») --
+# полный перебор состояния самосвала из договора (contract/README.md, §«Признаки самосвала»):
+# queued_load/queued_dump -> одна доля «очередь» (п.6 задачи: «очередь у экскаватора и на
+# разгрузке — вместе»), остальные состояния — каждое своей долей; суммируются к 100%, т.к.
+# каждый самосвал всегда ровно в одном из этих состояний
+STATE_TIME_PCT_KEY = {
+    "loading": "loading", "hauling": "hauling", "returning": "returning",
+    "queued_load": "queue", "queued_dump": "queue",
+    "dumping": "dumping", "refueling": "refueling", "reserve": "reserve", "down": "down",
+}
+TIME_PCT_FEATURES = ("loading", "hauling", "returning", "queue", "dumping", "refueling", "reserve", "down")
 
 
 def _lognormal(rng, mean, cv):
@@ -242,7 +264,9 @@ class Truck:
         self.refuel_timer = 0.0
         self.queue_index = 0
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
-        self.travel_kind = None         # "depart"/"return"/"refuel" — куда именно едем, для повтора
+        self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
+        self.entering_reserve = False   # едет на fuel-station, чтобы встать в резерв (не на дозаправку)
+        self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — для RESERVE_MIN_MODEL_S
         # -- разброс (водитель) --
         self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
         self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
@@ -251,7 +275,7 @@ class Truck:
         self.current_cycle_s = None            # текущий (разыгранный) цикл ковша, пока он не завершён
         # -- только для диагностики (sim_check.py): время по фазам цикла, не влияет на поведение --
         self.time_in = {"haul_loaded": 0.0, "haul_empty": 0.0, "queue_excavator": 0.0,
-                         "load": 0.0, "queue_dump": 0.0, "dump": 0.0, "refuel": 0.0}
+                         "load": 0.0, "queue_dump": 0.0, "dump": 0.0, "refuel": 0.0, "reserve": 0.0}
         self.load_sessions_s = []  # длительности завершённых установка+погрузка, с
         self._load_session_start_s = 0.0
 
@@ -359,6 +383,11 @@ class Haulage:
         self._clay_crusher_log = deque()  # (тонн, тонн_глины) — последние CLAY_WINDOW_T тонн на дробилку
         self._clay_crusher_total_t = 0.0
         self._clay_crusher_total_clay_t = 0.0
+        # -- резерв самосвалов (текущая задача) --
+        # (t, dt, {state: шт}, расход_топлива_за_этот_шаг_л) — для fleet-wide time_*_pct и
+        # trucks_needed/fuel_saved_l_shift за последний модельный час (окно — как у _wait_exc и т.п.)
+        self._fleet_state_log = deque()
+        self._shift_reserve_s = 0.0  # накоплено секунд в резерве за ТЕКУЩУЮ смену (сброс — см. read_scenarios)
         self._sim_t = 0.0
         # начальное положение: часть самосвалов уже в пути, чтобы сцена была живой
         for t in self.trucks[::3]:
@@ -400,6 +429,7 @@ class Haulage:
         if shift != self._current_shift:
             self._current_shift = shift
             self._reroll_shift_multipliers()
+            self._shift_reserve_s = 0.0  # новая смена — копим fuel_saved_l_shift с нуля
 
     def _reroll_shift_multipliers(self):
         """Новая смена — у каждого экскаватора свой машинист, у каждого самосвала свой водитель
@@ -615,26 +645,57 @@ class Haulage:
         near = [c for c in candidates if best_score - c[0] < TRUCK_TIE_BREAK_S] or candidates
         return min(near, key=lambda c: c[1])[2]
 
-    def choose_excavator(self, truck):
-        home = self.excavators[truck.home]
-        if self.mode == "manual":
-            # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
-            return home.id
-        # (в) доля глины на дробилке близка к лимиту — не грузить на неё ещё более глинистые забои
-        near_clay_limit = (
+    def _near_clay_limit(self):
+        """Доля глины на дробилке близка к лимиту — не грузить на неё ещё более глинистые забои."""
+        return (
             self._clay_crusher_total_t > 0 and self.clay_limit_pct > 0
             and (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t)
                 >= CLAY_SOFT_FACTOR * self.clay_limit_pct
         )
-        # «авто» (часть 2 ТЕКУЩЕЙ задачи): какую руду возить — решает ПЛАН (кто сильнее отстал),
-        # а не HOME/тип груза домашнего забоя самосвала — HOME здесь не участвует вовсе. Рудные
-        # пункты участвуют в сравнении только если физически принимают сейчас (crusher_stop/
-        # sag_maintenance) — это обязательное правило, не смягчается; вскрыша участвует всегда.
+
+    def _eligible_ores(self):
+        """Рудные пункты участвуют в сравнении только если физически принимают сейчас
+        (crusher_stop/sag_maintenance) — это обязательное правило, не смягчается; вскрыша
+        участвует всегда. Вынесено из choose_excavator (часть 1 задачи «Резерв самосвалов») —
+        тот же набор нужен и в _plan_needs_truck, план-логика при этом не меняется."""
         eligible = {"waste"}
         if self.dumps["crusher-01"].accepting:
             eligible.add("sulphide")
         if self.dumps["stockpile-clay"].accepting:
             eligible.add("clay")
+        return eligible
+
+    def _plan_needs_truck(self, truck):
+        """Нужен ли этот самосвал хоть одному экскаватору прямо сейчас (часть 1 задачи «Резерв
+        самосвалов»): есть ли среди допустимых по тем же правилам, что в choose_excavator,
+        экскаватор, который ОТСТАЁТ от своего план-графика (_plan_deficit_time_s > 0 —
+        план-диспетчер читаем, не меняем) и куда этот самосвал физически может доехать. Нет
+        такого — самосвал сейчас никому не нужен (_enter_reserve/_check_reserve_exits)."""
+        near_clay_limit = self._near_clay_limit()
+        eligible = self._eligible_ores()
+        for ex in self.excavators.values():
+            if ex.down:
+                continue
+            info = self.face_info(ex.id)
+            if info["ore"] not in eligible:
+                continue
+            if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
+                continue
+            if self._eta_s(truck, ex.node) is None:
+                continue
+            if self._plan_deficit_time_s(ex) > 0:
+                return True
+        return False
+
+    def choose_excavator(self, truck):
+        home = self.excavators[truck.home]
+        if self.mode == "manual":
+            # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
+            return home.id
+        # «авто» (часть 2 прошлой задачи): какую руду возить — решает ПЛАН (кто сильнее отстал),
+        # а не HOME/тип груза домашнего забоя самосвала — HOME здесь не участвует вовсе.
+        near_clay_limit = self._near_clay_limit()
+        eligible = self._eligible_ores()
         best = self._best_candidate(truck, eligible, near_clay_limit)
         if best:
             return best
@@ -675,6 +736,15 @@ class Haulage:
         truck.seg_pos = 0.0
 
     def _return(self, truck):
+        """Самосвал освободился (после разгрузки, заправки или выхода из резерва). «Авто»:
+        сначала спрашиваем план-диспетчер, нужен ли этот самосвал хоть кому-то прямо сейчас
+        (`_plan_needs_truck`, часть 1 задачи «Резерв самосвалов») — если никому, едет в резерв
+        (`_enter_reserve`), а не к экскаватору. «Ручной» — без изменений, как раньше (резерва
+        не существует, самосвал всегда едет к своему домашнему экскаватору через choose_excavator)."""
+        if self.mode == "auto" and not self._plan_needs_truck(truck):
+            self._enter_reserve(truck)
+            return
+        truck.entering_reserve = False
         truck.excavator = self.choose_excavator(truck)
         ex = self.excavators[truck.excavator]
         truck.state = "returning"
@@ -693,6 +763,58 @@ class Haulage:
         truck.travel_pending = False
         truck.path = path[1:]
         truck.seg_pos = 0.0
+
+    def _enter_reserve(self, truck):
+        """Самосвал сейчас никому не нужен (часть 1 задачи «Резерв самосвалов») — паркуем в
+        резерв у fuel-station (контракт, contract/README.md: «стоит на стоянке у узла
+        fuel-station»), двигатель заглушен (расход топлива 0 — допущение, см. README). Если
+        топлива меньше RESERVE_REFUEL_FUEL_PCT — сначала честная заправка (_start_refuel,
+        допущение «заправляются во время простоя», п.4 части 1 задачи): по её завершении
+        step() снова вызывает _return(), и решение «резерв или работа» принимается заново,
+        уже с полным баком."""
+        if truck.fuel < RESERVE_REFUEL_FUEL_PCT:
+            self._start_refuel(truck)
+            return
+        truck.entering_reserve = True
+        truck.destination = "fuel-station"
+        truck.state = "returning"
+        path = self.roads.path(truck.node, "fuel-station")
+        if path is None:
+            truck.travel_pending = True
+            truck.travel_kind = "reserve"
+            truck.path = []
+            truck.speed = 0.0
+            return
+        truck.travel_pending = False
+        truck.path = path[1:]
+        truck.seg_pos = 0.0
+
+    def _check_reserve_exits(self):
+        """Выход из резерва (часть 1 задачи «Резерв самосвалов»): проверяем каждый резервный
+        самосвал, который простоял не меньше RESERVE_MIN_MODEL_S (защита от «дрызганья» —
+        допущение, см. README); если план-диспетчер считает, что он сейчас нужен хоть одному
+        экскаватору (`_plan_needs_truck` — та же проверка, что и при входе в резерв), отправляем
+        его в работу обычным путём (`_return`). Вызывается каждый шаг — пересчёт плана (не реже
+        раза в 10 мин) и события (сценарии, поломки, приём дробилки/склада) читаются в
+        read_scenarios()/_maybe_update_plan() тем же шагом, так что ничего не пропускаем."""
+        if self.mode != "auto":
+            return
+        for truck in self.trucks:
+            if truck.state != "reserve":
+                continue
+            if self._sim_t - truck.reserve_since_s < RESERVE_MIN_MODEL_S:
+                continue
+            if self._plan_needs_truck(truck):
+                self._return(truck)
+
+    def _release_all_reserve(self):
+        """Переключение «авто» → «ручной» (п.5 части 1 задачи): резерва не существует — все
+        резервные самосвалы сразу выезжают к своим домашним экскаваторам. self.mode уже
+        «manual» в момент вызова, поэтому _return (через choose_excavator) сам отправляет их
+        по закреплённому распределению, не по диспетчеру."""
+        for truck in self.trucks:
+            if truck.state == "reserve":
+                self._return(truck)
 
     def _start_refuel(self, truck):
         """Топливо < REFUEL_FUEL_PCT после разгрузки — самосвал едет по дорогам на fuel-station
@@ -724,7 +846,7 @@ class Haulage:
             dest_node = self.dumps[truck.destination].node
         elif truck.travel_kind == "return":
             dest_node = self.excavators[truck.excavator].node
-        elif truck.travel_kind == "refuel":
+        elif truck.travel_kind in ("refuel", "reserve"):
             dest_node = "fuel-station"
         else:
             return
@@ -845,9 +967,21 @@ class Haulage:
             self.dumps[truck.destination].queue.append(truck)
         elif truck.state == "returning":
             if truck.destination == "fuel-station":
-                truck.state = "refueling"
-                truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
-                truck.speed = 0.0
+                if truck.entering_reserve:
+                    # приехал встать в резерв (не на дозаправку — та идёт тем же путём, но с
+                    # entering_reserve=False, см. _enter_reserve/_start_refuel): контракт
+                    # (contract/README.md) — payload=0, cargo_type=none, destination=«»
+                    truck.entering_reserve = False
+                    truck.state = "reserve"
+                    truck.reserve_since_s = self._sim_t
+                    truck.payload = 0.0
+                    truck.cargo_type = "none"
+                    truck.destination = ""
+                    truck.speed = 0.0
+                else:
+                    truck.state = "refueling"
+                    truck.refuel_timer = REFUEL_MODEL_MIN * 60.0
+                    truck.speed = 0.0
             else:
                 truck.state = "queued_load"
                 truck.wait = 0.0
@@ -855,14 +989,22 @@ class Haulage:
 
     # -- шаг модели ----------------------------------------------------------
     def step(self, dt):
+        prev_mode = self.mode
         self.read_scenarios()
+        if prev_mode == "auto" and self.mode == "manual":
+            self._release_all_reserve()
         self._sim_t += dt
         self._trim_windows()
         self._maybe_update_plan()
+        self._check_reserve_exits()
         for ex in self.excavators.values():
             ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
+        fuel_before = self.fuel_used_l_total
+        state_counts = {}
         for truck in self.trucks:
-            self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)   # холостой ход — всегда, пока включён
+            state_counts[truck.state] = state_counts.get(truck.state, 0) + 1
+            if truck.state != "reserve":
+                self._consume_fuel(truck, truck.idle_lph * dt / 3600.0)  # холостой ход — пока включён; в резерве двигатель заглушен (расход 0)
             if truck.state == "refueling":
                 truck.time_in["refuel"] += dt
                 truck.refuel_timer = max(0.0, truck.refuel_timer - dt)
@@ -871,7 +1013,9 @@ class Haulage:
                     truck.fuel = 100.0
                     self.refuels_total += 1
                     truck.destination = ""
-                    self._return(truck)  # «авто» — по диспетчеру, «ручной» — к своему экскаватору
+                    self._return(truck)  # «авто» — по диспетчеру (может снова уйти в резерв), «ручной» — к своему экскаватору
+            elif truck.state == "reserve":
+                truck.time_in["reserve"] += dt  # не едет, не грузится, топливо не расходуется (см. выше)
             elif truck.travel_pending:
                 bucket = "haul_loaded" if truck.travel_kind == "depart" else "haul_empty"
                 truck.time_in[bucket] += dt
@@ -894,6 +1038,8 @@ class Haulage:
             elif truck.state == "dumping":
                 truck.time_in["dump"] += dt
                 self._dumping(truck, dt)
+        self._shift_reserve_s += dt * state_counts.get("reserve", 0)
+        self._fleet_state_log.append((self._sim_t, dt, state_counts, self.fuel_used_l_total - fuel_before))
         for ex in self.excavators.values():
             if ex.loading:
                 ex.busy_s += dt
@@ -1035,6 +1181,8 @@ class Haulage:
         for dq in self._wait_dump_by_point.values():
             while dq and dq[0][0] < horizon:
                 dq.popleft()
+        while self._fleet_state_log and self._fleet_state_log[0][0] < horizon:
+            self._fleet_state_log.popleft()
 
     def _queue_positions(self):
         """Стоящие самосвалы выстраиваются цепочкой от точки — очередь видна в 3D."""
@@ -1063,11 +1211,41 @@ class Haulage:
             truck.speed = 0.0
             truck.heading = (math.degrees(math.atan2(-d[0], -d[1])) + 360) % 360
 
+    def _fleet_time_shares(self):
+        """Доли модельного времени ПАРКА по состояниям за последний модельный час (п.6 части 1
+        задачи «Резерв самосвалов», то же окно, что у avg_wait_*/trips_per_hour) — суммируются
+        к 100%, т.к. это полный перебор состояния самосвала из договора, и каждый самосвал
+        всегда ровно в одном из них. trucks_needed — среднее число самосвалов, реально занятых
+        планом за тот же час (всё, кроме NOT_WORKING_STATES, т.е. loading/hauling/returning/
+        dumping) — та же логика, что у fleet_utilization, но усреднённая по часу, а не
+        мгновенная. fuel_rate_l_per_s — средний расход топлива (холостой ход + ход) одного
+        НЕзарезервированного самосвала за тот же час, л/с — используется для fuel_saved_l_shift
+        (формула — см. README, раздел «Резерв самосвалов»)."""
+        total_dt = sum(dt for _, dt, _, _ in self._fleet_state_log)
+        bucket_s = {k: 0.0 for k in TIME_PCT_FEATURES}
+        not_working_s = 0.0
+        fuel_s = 0.0
+        for _, dt, counts, fuel_delta in self._fleet_state_log:
+            fuel_s += fuel_delta
+            not_working_s += dt * sum(counts.get(s, 0) for s in NOT_WORKING_STATES)
+            for state, n in counts.items():
+                key = STATE_TIME_PCT_KEY.get(state)
+                if key:
+                    bucket_s[key] += n * dt
+        fleet_truck_s = max(len(self.trucks) * total_dt, 1e-9)
+        pct = {k: 100.0 * v / fleet_truck_s for k, v in bucket_s.items()}
+        if total_dt > 0:
+            trucks_needed = (len(self.trucks) * total_dt - not_working_s) / total_dt
+        else:
+            trucks_needed = float(len(self.trucks))
+        working_truck_s = max(len(self.trucks) * total_dt - bucket_s["reserve"], 1e-9)
+        fuel_rate_l_per_s = fuel_s / working_truck_s
+        return pct, trucks_needed, fuel_rate_l_per_s
+
     # -- публикация ----------------------------------------------------------
     def dispatch_features(self):
         hauling = sum(1 for t in self.trucks if t.state in ("hauling", "returning"))
-        not_working = sum(1 for t in self.trucks
-                           if t.state in ("queued_load", "queued_dump", "refueling"))
+        not_working = sum(1 for t in self.trucks if t.state in NOT_WORKING_STATES)
         assignments = {t.id: t.excavator for t in self.trucks}
         hours = min(1.0, self._sim_t / WAIT_WINDOW_MODEL_S) if self._sim_t > 0 else 0.0
         window_h = max(hours, 1e-6)
@@ -1075,13 +1253,16 @@ class Haulage:
         avg_wait_dump = (sum(v for _, v in self._wait_dump) / len(self._wait_dump)) if self._wait_dump else 0.0
         trips_per_hour = len(self._trips_log) / window_h
         tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
-        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке) и не заправляется
-        # (часть 2 задачи по проверке координатора — заправляющиеся не считаются работающими);
-        # у грузовиков нет отдельного простоя из-за поломки экскаватора — он уже учтён через
+        # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке), не заправляется и не
+        # в резерве (часть 1 ТЕКУЩЕЙ задачи — резервные не считаются работающими, NOT_WORKING_STATES
+        # выше); у грузовиков нет отдельного простоя из-за поломки экскаватора — он уже учтён через
         # queued_load, отдельно вычитать не нужно (было задвоение).
         fleet_utilization = 100.0 * max(0, len(self.trucks) - not_working) / len(self.trucks)
         clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
                       if self._clay_crusher_total_t > 0 else 0.0)
+        time_pct, trucks_needed, fuel_rate_l_per_s = self._fleet_time_shares()
+        trucks_reserve = sum(1 for t in self.trucks if t.state == "reserve")
+        fuel_saved_l_shift = self._shift_reserve_s * fuel_rate_l_per_s
         return {
             "mode": feature(self.mode),
             "avg_wait_excavator": feature(round(avg_wait_exc, 2), "мин"),
@@ -1109,6 +1290,17 @@ class Haulage:
             "clay_limit": feature(self.clay_limit_pct, "%"),
             "plan_crusher_tph": feature(round(self.plan_crusher_tph, 1), "т/ч"),
             "plan_clay_tph": feature(round(self.plan_clay_tph, 1), "т/ч"),
+            "trucks_needed": feature(round(trucks_needed, 1), "шт"),
+            "trucks_reserve": feature(trucks_reserve, "шт"),
+            "fuel_saved_l_shift": feature(round(fuel_saved_l_shift, 1), "л"),
+            "time_loading_pct": feature(round(time_pct["loading"], 1), "%"),
+            "time_hauling_pct": feature(round(time_pct["hauling"], 1), "%"),
+            "time_returning_pct": feature(round(time_pct["returning"], 1), "%"),
+            "time_queue_pct": feature(round(time_pct["queue"], 1), "%"),
+            "time_dumping_pct": feature(round(time_pct["dumping"], 1), "%"),
+            "time_refueling_pct": feature(round(time_pct["refueling"], 1), "%"),
+            "time_reserve_pct": feature(round(time_pct["reserve"], 1), "%"),
+            "time_down_pct": feature(round(time_pct["down"], 1), "%"),
         }
 
     def road_features(self, road):
