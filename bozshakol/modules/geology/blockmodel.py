@@ -21,8 +21,8 @@ WASTE, CLAY, SULPHIDE = 0, 1, 2
 ORE_NAME = {WASTE: "waste", CLAY: "clay", SULPHIDE: "sulphide"}
 DENSITY = {WASTE: 2.65, CLAY: 2.2, SULPHIDE: 2.7}            # т/м³
 DESTINATION = {WASTE: "dump-waste-1", CLAY: "stockpile-clay", SULPHIDE: "crusher-01"}
-HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 12.0}       # ед. Протодьяконова f
-HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (10.0, 14.0)}
+HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 11.0}       # ед. Протодьяконова f
+HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (9.0, 13.0)}
 
 # Тренды в «сигмах» логарифма содержания: центр залежи богаче края, с глубиной богаче;
 # у забоев из geometry.json — локальные аномалии (руда у рудных забоев, вскрыша у вскрышных).

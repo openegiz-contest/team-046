@@ -110,6 +110,11 @@ class Face:
         """Сколько часов работы экскаватора хватит взорванного запаса; 0 — забой упирается в невзорванный блок."""
         return self.blasted_ahead_t() / max(self.rate_tph, 300.0)
 
+    def ahead_status(self):
+        """Предупреждение о нехватке бурения: ok (> 12 ч), low (4–12 ч), critical (< 4 ч взорванного запаса)."""
+        h = self.blasted_ahead_h()
+        return "ok" if h > 12.0 else ("low" if h >= 4.0 else "critical")
+
     def ahead_with_pending_h(self):
         """Запас с учётом блоков, которые станки бурят прямо сейчас (чтобы два станка не поехали в один и тот же забой)."""
         p = self.panel
@@ -218,6 +223,7 @@ class Face:
             "powder_factor": feature(round(c["powder_factor"], 2), "кг/м³"),
             "reserve_blocks": feature(self.reserve(), "шт"),
             "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
+            "drilling_ahead_status": feature(self.ahead_status()),
         }
 
 
@@ -237,10 +243,10 @@ def main():
         ch, d = bl.charge(kind), bl.design(kind)
         log.info("взрыв (%s): скважина %.0f мм, сетка %.1f×%.1f м, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f",
                  kind, d["d_mm"], d["burden"], d["spacing"], ch["mass"], ch["powder_factor"], bl.uniformity_n(kind))
-    log.info("P80 опорное (руда, f=12): %.0f мм", bl.P80_REF)
+    log.info("P80 опорное (руда, f=11): %.0f мм", bl.P80_REF)
     claimed = set()
     faces = [Face(t, b, geometry, model, claimed, rng) for t, b in twins.items() if ":face-" in t]
-    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if ":drill-" in t))]
+    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if t.split(":")[1].startswith("drill-") and t.split(":")[1][6:].isdigit()))]
     for drill in drills:    # общий пул: любой станок может бурить любой забой, выбирая самый нуждающийся
         drill.faces = list(faces)
     ditto = DittoClient()
@@ -255,6 +261,13 @@ def main():
         for drill in drills:
             drill.step(dt)
             telemetry.publish(drill.id, drill.features())
+        capacity = sum(d.rate_tph for d in drills)
+        telemetry.publish("drill-summary", {
+            "drill_utilisation_pct": feature(round(100.0 * sum(d.util for d in drills) / max(1, len(drills)), 1), "%"),
+            "drilling_capacity_tph": feature(round(capacity, 0), "т/ч"),
+            "blasting_demand_tph": feature(round(sum(min(f.rate_tph, RATE_MAX_TPH) for f in faces), 0), "т/ч"),
+            "drills_working": feature(sum(1 for d in drills if d.state != "idle"), "шт"),
+        })
         for face in faces:
             if watcher.get(face.excavator, "face") == face.id:
                 face.absorb(watcher.get(face.excavator, "loaded_total"), dt)

@@ -102,6 +102,11 @@
      "value": 70.0,
      "unit": "ч"
     }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -207,6 +212,11 @@
     "properties": {
      "value": 70.0,
      "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
     }
    }
   }
@@ -314,6 +324,11 @@
      "value": 70.0,
      "unit": "ч"
     }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -419,6 +434,11 @@
     "properties": {
      "value": 70.0,
      "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
     }
    }
   }
@@ -526,6 +546,11 @@
      "value": 70.0,
      "unit": "ч"
     }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
+    }
    }
   }
  },
@@ -631,6 +656,11 @@
     "properties": {
      "value": 70.0,
      "unit": "ч"
+    }
+   },
+   "drilling_ahead_status": {
+    "properties": {
+     "value": "ok"
     }
    }
   }
@@ -877,6 +907,41 @@
    "block_ready": {
     "properties": {
      "value": false
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-summary": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровые работы (сводка)",
+   "kind": "drill_summary",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central"
+  },
+  "features": {
+   "drill_utilisation_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "drilling_capacity_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "blasting_demand_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "drills_working": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
     }
    }
   }

@@ -10,6 +10,7 @@ import math
 import blasting as bl
 
 BLOCK_XY = bl.BLOCK_XY
+UTIL_TAU_S = 6 * 3600.0     # постоянная времени сглаживания загрузки станка, модельных секунд
 AHEAD_TARGET_H = 72.0       # взорванный запас, который держит станок, часов работы экскаватора
 HOLE_MOVE_S = 120.0         # переезд между скважинами одного блока, модельных секунд
 TRAM_KMH = 3.0              # скорость переезда станка между блоками (допущение), км/ч
@@ -57,6 +58,17 @@ class Drill:
         self.first = True
         self.busy_s = 0.0               # модельных секунд в работе (бурение и переезды) — для баланса
         self.total_s = 0.0
+        self.util = 0.0                 # загрузка станка: скользящее среднее доли времени в работе (постоянная времени UTIL_TAU_S)
+        self.block_busy_s = 0.0         # время в работе на текущем блоке
+        # производительность станка, т/ч взорванной породы: начальная — расчёт для рудного блока, затем по факту блоков
+        self.rate_tph = self._initial_rate()
+
+    def _initial_rate(self):
+        """Производительность по расчёту для рудного блока средней крепости, т/ч (с переездом на блок ~12 мин)."""
+        per = bl.holes_per_block("ore")
+        rop = bl.rop_from_hardness(bl.F_REF) * self.speed_factor
+        hours = per * (bl.hole_depth("ore") / rop + HOLE_MOVE_S / 3600.0) + 0.2
+        return self.model.block_vol * bl.DENS_REF / hours
 
     # -- выбор работы ----------------------------------------------------------------
     def _pick(self):
@@ -75,6 +87,7 @@ class Drill:
             panel.reserved.add(j)
             self.target = (face, j, panel)
             self.holes_in_block, self.f_samples, self.block_ready = 0, [], False
+            self.block_busy_s = 0.0
             kind = self.model.kind_of(panel.blocks[j])
             self.kind = "waste" if kind == "waste" else "ore"
             self.per_block = bl.holes_per_block(self.kind)
@@ -112,6 +125,9 @@ class Drill:
         face, j, panel = self.target
         f_block = sum(self.f_samples) / len(self.f_samples)
         face.blast(panel, j, f_block)                # блок взорван: крепость (MWD) и P80
+        if self.kind == "ore" and self.block_busy_s > 60.0:   # фактическая производительность по рудному блоку (вскрыша не считается)
+            inst = self.model.tonnes(panel.blocks[j]) / (self.block_busy_s / 3600.0)
+            self.rate_tph = 0.8 * self.rate_tph + 0.2 * inst
         panel.reserved.discard(j)
         self.block_ready = True
         self.target = None
@@ -129,6 +145,14 @@ class Drill:
 
     # -- шаг модели ----------------------------------------------------------------------
     def step(self, dt):
+        busy0 = self.busy_s
+        self._step(dt)
+        used = self.busy_s - busy0
+        self.block_busy_s += used
+        alpha = 1.0 - math.exp(-dt / UTIL_TAU_S)
+        self.util += alpha * (min(1.0, used / dt if dt > 0 else 0.0) - self.util)
+
+    def _step(self, dt):
         if self.first:
             self.first = False
             if self._pick():

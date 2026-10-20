@@ -137,6 +137,10 @@ export function update(ctx, twins) {
     if (ore === 'waste') text += ' · вскрыша';
     else text += ' · ' + fmtNum(fv(twin, 'cu_grade', 0), 2) + ' % Cu · глина ' + fmtNum(fv(twin, 'clay_pct', 0), 0) + ' %';
     if (fv(twin, 'blasted', true) !== true) text += ' · не взорван';
+    // предупреждение о нехватке бурения: только текст подписи
+    const status = fv(twin, 'drilling_ahead_status', 'ok');
+    if (status === 'critical') text += ' · нет взорванного запаса';
+    else if (status === 'low') text += ' · запас ' + fmtNum(fv(twin, 'blasted_ahead_h', 0), 0) + ' ч';
     rec.mesh.userData.label = text;
     const raw = fv(twin, 'block_preview', null);
     if (raw !== rec.previewRaw) { rec.previewRaw = raw; applyPreview(ctx, rec, raw); }
