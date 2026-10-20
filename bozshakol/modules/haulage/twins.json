@@ -96,6 +96,78 @@
      "value": 0,
      "unit": "шт"
     }
+   },
+   "avg_wait_dump": {
+    "properties": {
+     "value": 0.0,
+     "unit": "мин"
+    }
+   },
+   "trips_per_hour": {
+    "properties": {
+     "value": 0.0,
+     "unit": "рейсов/ч"
+    }
+   },
+   "tph_crusher": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "tph_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "tph_dump": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "fleet_utilization": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "fuel_used_l": {
+    "properties": {
+     "value": 0.0,
+     "unit": "л"
+    }
+   },
+   "refuels_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "clay_share_crusher": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "clay_limit": {
+    "properties": {
+     "value": 15,
+     "unit": "%"
+    }
+   },
+   "plan_crusher_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "plan_clay_tph": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
    }
   }
  },
@@ -108,7 +180,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -202,7 +278,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -296,7 +376,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -390,7 +474,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -484,7 +572,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -578,7 +670,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -672,7 +768,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -766,7 +866,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -860,7 +964,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -954,7 +1062,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1048,7 +1160,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1142,7 +1258,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1236,7 +1356,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1330,7 +1454,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1424,7 +1552,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1518,7 +1650,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1612,7 +1748,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1706,7 +1846,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1800,7 +1944,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1894,7 +2042,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -1988,7 +2140,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -2082,7 +2238,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 135,
    "make": "Caterpillar",
-   "model": "793 (135 т)"
+   "model": "785 (135 т)",
+   "gross_weight_t": 249.5,
+   "empty_weight_t": 114.5,
+   "power_kw": 1082,
+   "top_speed_loaded_kmh": 54.8
   },
   "features": {
    "state": {
@@ -2176,7 +2336,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2270,7 +2434,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2364,7 +2532,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2458,7 +2630,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2552,7 +2728,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2646,7 +2826,11 @@
    "_parents": "kz.bozshakol:dispatch",
    "capacity_t": 180,
    "make": "Caterpillar",
-   "model": "795 (180 т)"
+   "model": "789D (180 т)",
+   "gross_weight_t": 324.3,
+   "empty_weight_t": 144.3,
+   "power_kw": 1566,
+   "top_speed_loaded_kmh": 57.2
   },
   "features": {
    "state": {
@@ -2740,7 +2924,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -2801,7 +2987,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -2862,7 +3050,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -2923,7 +3113,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -2984,7 +3176,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -3045,7 +3239,9 @@
    "_parents": "kz.bozshakol:pit-central",
    "model": "Hitachi EX3600 (допущение)",
    "bucket_m3": 22,
-   "bucket_t": 40,
+   "bucket_fill": 0.9,
+   "loose_density_t_m3": 1.8,
+   "bucket_t": 35.6,
    "downstream": "kz.bozshakol:dispatch"
   },
   "features": {
@@ -3100,7 +3296,7 @@
  "kz.bozshakol:road-ramp-1": {
   "policyId": "default:basic_policy",
   "attributes": {
-   "name": "Съезд 1 (северный борт)",
+   "name": "Съезд 1 (юго-западный борт)",
    "kind": "road",
    "_isType": false,
    "_parents": "kz.bozshakol:pit-central"
@@ -3128,7 +3324,7 @@
  "kz.bozshakol:road-ramp-2": {
   "policyId": "default:basic_policy",
   "attributes": {
-   "name": "Съезд 2 (южный борт)",
+   "name": "Съезд 2 (юго-восточный борт)",
    "kind": "road",
    "_isType": false,
    "_parents": "kz.bozshakol:pit-central"
