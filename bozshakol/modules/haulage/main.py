@@ -889,10 +889,36 @@ class Haulage:
         truck.path = path[1:]
         truck.seg_pos = 0.0
 
+    def _nearest_reachable_excavator(self, truck, ore=None):
+        """Ближайший (по честному времени хода, та же формула, что у диспетчера — `_path_time_s`)
+        ДОСТИЖИМЫЙ СЕЙЧАС экскаватор, не сломанный; `ore` — опционально ограничить типом руды
+        забоя. Для «ручного»: закреплённый экскаватор отрезан закрытой дорогой — порожний
+        самосвал едет к ближайшему достижимому того же типа руды, а если такого нет — к любому
+        достижимому (часть 3 задачи «погоня за ожиданием»; план/«авто» не трогает — там то же
+        самое уже делает `choose_excavator`/`_best_candidate`, см. `_retry_pending_travel`).
+        None, если вообще никого не достать (все сломаны или отрезаны одновременно)."""
+        best, best_s = None, None
+        for ex in self.excavators.values():
+            if ex.down:
+                continue
+            if ore is not None and self.face_info(ex.id)["ore"] != ore:
+                continue
+            path = self.roads.path(truck.node, ex.node)
+            if path is None:
+                continue
+            dist_s = self._path_time_s(truck, truck.node, path[1:]) if len(path) > 1 else 0.0
+            if best_s is None or dist_s < best_s:
+                best, best_s = ex.id, dist_s
+        return best
+
     def _retry_pending_travel(self, truck):
         """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
         ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
-        чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора)."""
+        чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора).
+        Гружёный без пути к своему пункту разгрузки (`travel_kind == "depart"`) — ждёт и просто
+        повторяет попытку к ТОЙ ЖЕ цели, на отвал не переадресуем (п. «часть 3 текущей задачи»:
+        руду в отвал не возим, ждём, пока дорога откроется или diспетчер не переназначит при
+        следующем рейсе)."""
         if truck.travel_kind == "return" and self.mode == "auto":
             # «авто»: если прежний экскаватор всё ещё отрезан, пробуем выбрать другой —
             # choose_excavator сам исключает недостижимые (честный ETA = None у таких кандидатов)
@@ -907,6 +933,16 @@ class Haulage:
         else:
             return
         path = self.roads.path(truck.node, dest_node)
+        if path is None and truck.travel_kind == "return" and self.mode == "manual":
+            # «ручной»: закреплённый экскаватор отрезан — едем к ближайшему достижимому того
+            # же типа руды, иначе к любому достижимому (часть 3 задачи «погоня за ожиданием»)
+            home_ore = self.face_info(truck.home)["ore"]
+            sub = self._nearest_reachable_excavator(truck, ore=home_ore) or self._nearest_reachable_excavator(truck)
+            if sub is not None:
+                truck.excavator = sub
+                truck.destination = sub
+                dest_node = self.excavators[sub].node
+                path = self.roads.path(truck.node, dest_node)
         if path is None:
             return
         truck.travel_pending = False
