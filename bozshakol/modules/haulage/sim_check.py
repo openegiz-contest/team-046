@@ -256,7 +256,7 @@ def collect(model):
         wait_min = statistics.mean(v for _, v in wait_dq) if wait_dq else 0.0
         dump_stats[did] = dict(trips=d.trips, tph=d.received / (total_s / 3600.0), wait_min=wait_min)
 
-    # : снимок dispatch.* на конец прогона (окно — последний
+    # снимок dispatch.* на конец прогона (окно — последний
     # модельный час, та же логика, что у avg_wait_excavator/trips_per_hour выше) + среднее за
     # ВЕСЬ прогон для trucks_reserve (считается в run(), не окно в один час — снимок на конец
     # 12-часового прогона был бы не показателен, резерв колеблется)
