@@ -73,6 +73,33 @@ class Rules(unittest.TestCase):
         self.assertIn("14.0 %", a[0]["reason"])
         self.assertIn("3.6 %", a[0]["effect"])     # 0,4 × (14 − 5)
 
+    def test_clay_face_scenario_marked_as_clay(self):
+        # геология при clay_face помечает забой как clay и рекомендует склад глины; глина в питании ещё в норме
+        s = base_snap()
+        s["mine"]["scenario_clay_face"] = 1
+        s["scenarios_params"] = {"clay_face": {"value": True, "face": "face-03", "clay_pct": 45}}
+        s["face-03"].update(ore_type="clay", clay_pct=45, recommended_destination="stockpile-clay")
+        a = R.advise(s)
+        self.assertEqual([x["id"] for x in a], ["clay"])
+        self.assertEqual(a[0]["priority"], "info")
+        self.assertIn("Забой face-03 даёт глину 45 %", a[0]["text"])
+        self.assertIn("Геология уже рекомендует склад глины", a[0]["text"])
+        # два гружёных самосвала этого забоя ещё везут руду на дробилку — «важно»
+        s["truck-05"] = {"state": "hauling", "excavator": "excavator-03", "destination": "crusher-01", "payload": 135}
+        s["truck-07"] = {"state": "queued_dump", "excavator": "excavator-03", "destination": "crusher-01", "payload": 135}
+        a = R.advise(s)
+        self.assertEqual(a[0]["priority"], "important")
+        self.assertIn("Сейчас 2 гружёных самосвалов этого забоя везут руду на дробилку", a[0]["text"])
+        # сценарий включён, но геология ещё не обновила забой и глина в питании в норме — совета нет
+        s2 = base_snap(); s2["mine"]["scenario_clay_face"] = 1
+        s2["scenarios_params"] = {"clay_face": {"value": True, "face": "face-03", "clay_pct": 45}}
+        s2["face-03"]["clay_pct"] = 3; s2["plant-sulphide"]["feed_clay"] = 4.0
+        self.assertEqual(R.advise(s2), [])
+        # сценарий выключен — совета нет
+        s["mine"]["scenario_clay_face"] = 0
+        s["face-03"].update(ore_type="sulphide", clay_pct=5)
+        self.assertEqual(R.advise(s), [])
+
     def test_clay_without_face(self):
         s = base_snap()
         s["plant-sulphide"]["feed_clay"] = 12.0
@@ -133,24 +160,73 @@ class Rules(unittest.TestCase):
         self.assertEqual(a[0]["id"], "fleet")
         self.assertEqual(a[0]["target"], "kz.bozshakol:excavator-01")   # объект в сцене: экскаватор с очередью
         self.assertIn("3.2 мин", a[0]["text"])
-        self.assertIn("≈ 3", a[0]["text"])                  # 9 в очередях − 6 экскаваторов
-        s["dispatch"]["trucks_needed"] = 20
-        self.assertIn("≈ 6", R.advise(s)[0]["text"])         # 26 − 20
-        s["dispatch"]["mode"] = "manual"
+        self.assertIn("≈ 3", a[0]["text"])                  # 9 в очередях − 6 экскаваторов (нет данных модуля №2)
+        s["dispatch"]["trucks_needed"] = 20                 # только trucks_needed — прежняя оценка по очередям
+        self.assertIn("≈ 3", R.advise(s)[0]["text"])
+        s["dispatch"]["trucks_reserve"] = 2                 # модуль №2 публикует оба признака: K = в работе − нужно
+        a = R.advise(s)
+        self.assertIn("≈ 6", a[0]["text"])                  # нет двойников truck-*: в работе = trucks_hauling = 26; 26 − 20
+        self.assertIn("в резерве уже 2", a[0]["reason"])
+        # двойники truck-*: 24 в цикле (в пути только 10), 2 в резерве, 2 на заправке — в работе 24, а не 10
+        states = ["hauling"] * 6 + ["returning"] * 4 + ["loading"] * 5 + ["queued_load"] * 6 + ["dumping"] * 3 + ["reserve"] * 2 + ["refueling"] * 2
+        for i, st in enumerate(states, 1):
+            s[f"truck-{i:02d}"] = {"state": st, "speed": 25.0 if st in ("hauling", "returning") else 0.0}
+        s["dispatch"]["trucks_hauling"] = 10
+        a = R.advise(s)
+        self.assertIn("≈ 4", a[0]["text"])                  # 24 − 20
+        self.assertIn("в работе (в цикле) 24", a[0]["reason"])
+        s["dispatch"].update(trucks_needed=23.8)            # нужно ≈ столько, сколько в работе — совета нет
+        self.assertEqual(R.advise(s), [])
+        for i in range(1, 29):
+            s.pop(f"truck-{i:02d}", None)
+        s["dispatch"].update(trucks_hauling=26)
+        s["dispatch"].update(trucks_needed=20, mode="manual")
         self.assertEqual(R.advise(s), [])
 
-    def test_blizzard(self):
+    def _frames(self, minutes=60):
+        """Срезы парка до метели: каждые 5 модельных минут 28 самосвалов, как на стенде."""
+        frame = ([("hauling", 30.0)] * 4 + [("hauling", 12.0)] * 3 + [("hauling", 30.0)] * 2 +
+                 [("returning", 40.0)] * 5 + [("returning", 25.0)] * 2 +
+                 [("loading", 0.0)] * 4 + [("queued_load", 0.0)] * 4 + [("dumping", 0.0)] * 2 + [("queued_dump", 0.0)] * 2)
+        return [s for _ in range(0, minutes, 5) for s in frame]
+
+    def test_blizzard_from_fleet_speeds(self):
         s = base_snap()
         s["mine"].update(scenario_blizzard=1, speed_limit=20, visibility=300)
-        a = R.advise(s)
+        a = R.advise(s, ctx={"samples_before": self._frames()})
         self.assertEqual(a[0]["id"], "blizzard")
         self.assertEqual(a[0]["target"], "kz.bozshakol:stockpile-coarse")
-        self.assertIn("до 20 км/ч", a[0]["text"])
-        self.assertIn("на 47 %", a[0]["text"])               # 1 − 1/(0,4 + 0,6·50/20)
+        self.assertIn("ограничение 20 км/ч", a[0]["text"])
+        drop = a[0]["data"]["haul_drop_pct"]
+        self.assertTrue(10 <= drop <= 30, drop)               # порядок фактических −7…−24 %, а не прежние −47 %
+        self.assertAlmostEqual(a[0]["data"]["travel_share"], 16 / 28, places=2)
         self.assertIn("не меньше 4 ч (сейчас 4.5 ч)", a[0]["text"])
         self.assertEqual(a[0]["priority"], "important")
         s["stockpile-coarse"]["hours_left"] = 3.0
-        self.assertEqual(R.advise(s)[0]["priority"], "critical")
+        self.assertEqual(R.advise(s, ctx={"samples_before": self._frames()})[0]["priority"], "critical")
+
+    def test_blizzard_fallback_without_data(self):
+        s = base_snap()
+        s["mine"].update(scenario_blizzard=1, speed_limit=20)
+        a = R.advise(s)
+        drop = a[0]["data"]["haul_drop_pct"]
+        self.assertTrue(10 <= drop <= 35, drop)
+        self.assertIn("паспортным скоростям", a[0]["reason"])
+
+    def test_blizzard_measured_change(self):
+        # час до метели: руда 3750 т/ч, вскрыша 4500 т/ч; 40 мин метели: руда 3500 т/ч (−7 %), вскрыша 3420 т/ч (−24 %)
+        t0 = 1_000_000.0
+        dl = [(t0 + m * 60, 3750 * m / 60, 4500 * m / 60) for m in range(0, 61, 5)]
+        ore0, w0 = dl[-1][1], dl[-1][2]
+        dl += [(t0 + 3600 + m * 60, ore0 + 3500 * m / 60, w0 + 3420 * m / 60) for m in range(5, 41, 5)]
+        s = base_snap()
+        s["mine"].update(scenario_blizzard=1, speed_limit=20)
+        a = R.advise(s, ctx={"samples_before": self._frames(), "deliveries": dl, "blizzard_since": t0 + 3600})
+        self.assertIn("За 40 мин метели: руда -7 %, вскрыша -24 %", a[0]["text"])
+        self.assertIn("диспетчер держит руду", a[0]["text"])
+        # меньше 30 минут метели — факта ещё нет
+        a = R.advise(s, ctx={"samples_before": self._frames(), "deliveries": dl[:16], "blizzard_since": t0 + 3600})
+        self.assertNotIn("За ", a[0]["text"])
 
     def test_order_by_level(self):
         s = base_snap()
