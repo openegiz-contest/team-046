@@ -14,3 +14,10 @@ Makefile text eol=lf
 *.jpg binary
 *.pdf binary
 *.zip binary
+
+# Файлы шаблона платформы хранятся с CRLF или смешанными концами строк: не преобразовывать,
+# иначе после клонирования они показываются изменёнными (сами файлы не трогаем)
+charts/hono/charts/kafka/templates/broker/config-secrets.yaml -text
+charts/hono/charts/kafka/templates/controller-eligible/config-secrets.yaml -text
+examples/ar-lamp/lampa.html -text
+examples/ar-lamp/local/lampa.html -text
