@@ -191,7 +191,12 @@ def _bottlenecks(snap):
     causes, target = [], None
     d = snap.get("dispatch") or {}
     reserve = int(_f(d, "trucks_reserve"))
-    if reserve > 0:
+    wait = _f(d, "avg_wait_excavator")
+    if wait > WAIT_LIMIT_MIN and str(d.get("mode", "auto")) == "auto":
+        # самосвалы долго ждут у экскаваторов: не хватает погрузки, а не самосвалов — резерв не трогать
+        causes.append(f"самосвалы ждут у экскаваторов {wait:.1f} мин — узкое место погрузка, а не число самосвалов")
+        target = _busiest_excavator(snap)
+    elif reserve > 0:
         # недовоз руды при самосвалах в резерве: вернуть в работу K (по trucks_needed модуля транспорта)
         # trucks_needed модуля №2 — среднее число самосвалов, занятых делом (погрузка, рейс, разгрузка, возврат),
         # без очередей; сравниваем с тем же — самосвалами в работе без очередей

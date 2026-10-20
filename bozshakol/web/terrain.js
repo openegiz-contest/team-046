@@ -128,8 +128,8 @@ export async function loadTerrain(THREE, geometry) {
   // Участок вокруг рудника как макет на подставке: поверхность плоскими гранями (каждый треугольник —
   // свой цвет и своя нормаль, чёткий свет), спокойная палитра степи с резкими границами пятен,
   // ровные утрамбованные площадки; по краям — срез со слоями грунта, под макетом — подставка.
-  const STEPPE = [new THREE.Color(0xc4b97f), new THREE.Color(0xd3c48e), new THREE.Color(0xdfd3a8), new THREE.Color(0xbfa478)];
-  const PAD_SOIL = new THREE.Color(0xc4ab84), DUMP_SOIL = new THREE.Color(0xa7a29a), PIT_GROUND = new THREE.Color(0x9a8a70);
+  const STEPPE = [new THREE.Color(0xcbbf8a), new THREE.Color(0xd5c895), new THREE.Color(0xdfd3a9), new THREE.Color(0xc9b388)];
+  const PAD_SOIL = new THREE.Color(0xd0bd96), DUMP_SOIL = new THREE.Color(0xb3aea4), PIT_GROUND = new THREE.Color(0x9a8a70);
   function faceColor(x, y, out) {
     if (pit.inside(x, y)) return out.copy(PIT_GROUND);
     const pad = padAt(x, y);

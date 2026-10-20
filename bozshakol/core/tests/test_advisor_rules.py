@@ -167,6 +167,11 @@ class Rules(unittest.TestCase):
         self.assertIn("в резерве 4 самосвалов при нехватке руды — вернуть 3 в работу", a[0]["text"])
         self.assertIn("хватит на 4.5 ч", a[0]["text"])
         self.assertEqual(a[0]["target"], "kz.bozshakol:dispatch")
+        # самосвалы долго ждут у экскаваторов — «вернуть из резерва» не советуем (противоречило бы совету о лишних)
+        s["dispatch"]["avg_wait_excavator"] = 5.6
+        txt = " ".join(x["text"] for x in R.advise(s, history(3360.7, inflow=2400.0)))
+        self.assertNotIn("вернуть", txt)
+        self.assertIn("узкое место погрузка", txt)
 
     def test_fleet_wait_too_long(self):
         s = base_snap()

@@ -675,7 +675,7 @@ function buildRoads() {
     (roadMeshes[e.road] || (roadMeshes[e.road] = [])).push(m);
     // бровка: чуть шире и чуть ниже полотна — у всех дорог (на съездах шире — отбойный вал)
     const edge = new THREE.Mesh(new THREE.BoxGeometry(width + (isRamp ? 10 : 7), isRamp ? 2.6 : 1.4, len + width + 6), roadMats.edge);
-    edge.position.copy(m.position); edge.position.y -= isRamp ? 0.2 : 0.4; edge.quaternion.copy(m.quaternion);
+    edge.position.copy(m.position); edge.position.y -= isRamp ? 1.2 : 0.4; edge.quaternion.copy(m.quaternion);   // верх бровки ниже полотна
     terrain.add(edge);
     if (isRamp) (ramps[e.road] || (ramps[e.road] = [])).push(pa, pb);
   }
@@ -883,7 +883,7 @@ function decorateModels() {
 }
 // маршрут выбранного самосвала: кратчайший путь по графу дорог до пункта назначения — светящаяся линия
 let routeMesh = null, routeKey = '';
-const routeMat = new THREE.MeshBasicMaterial({ color: 0x3fe0d0, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+const routeMat = new THREE.MeshBasicMaterial({ color: 0x0fb3c9, transparent: true, opacity: 0.85, depthWrite: false });   // обычное смешение: на светлой степи сложение цветов выгорает в белое
 function nearestNode(x, y) {
   let best = null, bd = Infinity;
   for (const [n, p] of Object.entries(geometry.nodes)) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; best = n; } }
@@ -930,8 +930,12 @@ function updateRoute() {
   if (!key || from === dest) return;
   const path = shortestPath(from, dest);
   if (!path || path.length < 2) return;
-  const pts = [toScene(x, y, terrainApi.groundAt(x, y) + 4)];
-  for (const n of path) { const p = geometry.nodes[n]; pts.push(toScene(p[0], p[1], p[2] + 4)); }
+  // ближайший узел может остаться позади самосвала — тогда линия начинается со следующего
+  const n0 = geometry.nodes[path[0]], n1 = geometry.nodes[path[1]];
+  if (Math.hypot(n1[0] - x, n1[1] - y) < Math.hypot(n1[0] - n0[0], n1[1] - n0[1])) path.shift();
+  const z = Number(val(id, 'z', NaN));   // в карьере поверхность рельефа выше самосвала — берём его высоту из двойника
+  const pts = [toScene(x, y, (isFinite(z) ? z : terrainApi.groundAt(x, y)) + 2.5)];
+  for (const n of path) { const p = geometry.nodes[n]; pts.push(toScene(p[0], p[1], p[2] + 2.5)); }
   const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
   routeMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.min(400, pts.length * 12), 3.2, 6, false), routeMat);
   routeMesh.raycast = () => {};
@@ -956,7 +960,7 @@ function frame(now) {
   }
   if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
   if (frameNo % 15 === 0) updateRoute();
-  if (routeMesh) routeMat.opacity = 0.55 + 0.3 * Math.sin(now / 300);
+  if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
   renderer.render(scene, camera);
   if (qualityProbe) {                       // первые 3 с — замер кадров для выбора качества
     qualityProbe.frames++;
