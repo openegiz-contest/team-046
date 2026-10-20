@@ -121,8 +121,11 @@ class Rules(unittest.TestCase):
         a2 = R.advise(s2, history(0.0))
         self.assertIn("мельница на ремонте", a2[0]["text"])
         self.assertEqual(a2[0]["target"], "kz.bozshakol:sag-mill-01")
-        # мало данных (30 мин) — совета нет
-        self.assertEqual(R.advise(s, history(2900.0, minutes=30)), [])
+        # первый модельный час (30 мин данных) — «рудник разгоняется», правила привоза молчат
+        a = R.advise(s, history(2900.0, minutes=30))
+        self.assertEqual([x["id"] for x in a], ["warmup"])
+        self.assertEqual(a[0]["priority"], "info")
+        self.assertIn("рудник разгоняется", a[0]["text"])
         # план выполняется — совета нет
         self.assertEqual(R.advise(base_snap(), history(3300.0)), [])
 
@@ -142,7 +145,7 @@ class Rules(unittest.TestCase):
         self.assertIn("83 % плана (2800 из 3360 т/ч)", a[0]["text"])
         self.assertIn("хватит на 4.5 ч", a[0]["text"])
         self.assertIn("excavator-02 в аварии", a[0]["text"])
-        self.assertEqual(a[0]["priority"], "important")
+        self.assertEqual(a[0]["priority"], "info")
         # привоз в норме — совета нет
         self.assertEqual(R.advise(s, history(3360.7, inflow=4200.0)), [])
         # авария устранена, последние 15 мин привоз в норме — совет снят, хотя среднее за час ещё 84 %
@@ -150,6 +153,25 @@ class Rules(unittest.TestCase):
         h = history(3360.7, inflow=2800.0)
         h = [(t, f, p, 4100.0 if t >= h[-1][0] - 900 else i) for (t, f, p, i) in h]
         self.assertEqual(R.advise(s, h), [])
+
+    def test_inflow_with_reserve(self):
+        # недовоз руды, 4 самосвала в резерве, модуль транспорта считает нужными 19 при 16 в работе (без очередей) — вернуть 3
+        s = base_snap()
+        s["dispatch"].update(trucks_reserve=4, trucks_needed=19.0)
+        states = ["hauling"] * 8 + ["returning"] * 4 + ["loading"] * 4 + ["queued_load"] * 4 + ["reserve"] * 4
+        for i, st in enumerate(states, 1):
+            s[f"truck-{i:02d}"] = {"state": st, "speed": 25.0}
+        a = R.advise(s, history(3360.7, inflow=2400.0))
+        self.assertEqual(a[0]["id"], "inflow")
+        self.assertEqual(a[0]["priority"], "info")                # фабрика идёт со склада на план
+        self.assertIn("в резерве 4 самосвалов при нехватке руды — вернуть 3 в работу", a[0]["text"])
+        self.assertIn("хватит на 4.5 ч", a[0]["text"])
+        self.assertEqual(a[0]["target"], "kz.bozshakol:dispatch")
+        # самосвалы долго ждут у экскаваторов — «вернуть из резерва» не советуем (противоречило бы совету о лишних)
+        s["dispatch"]["avg_wait_excavator"] = 5.6
+        txt = " ".join(x["text"] for x in R.advise(s, history(3360.7, inflow=2400.0)))
+        self.assertNotIn("вернуть", txt)
+        self.assertIn("узкое место погрузка", txt)
 
     def test_fleet_wait_too_long(self):
         s = base_snap()

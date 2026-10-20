@@ -20,6 +20,7 @@
     </div>
     <!-- Подсказка по клавишам (controls.js): кнопка «?», клавиши ? или H -->
     <button id="help-hint" type="button" title="Показать клавиши управления">? — клавиши</button>
+    <button id="guide-open" type="button" title="Что это за двойник и как его посмотреть">Как посмотреть</button>
     <div id="help" hidden>
       <div class="card-head">
         <b>Управление с клавиатуры</b>
@@ -49,6 +50,7 @@
     <button type="button" data-view="crusher" title="Дробилка и магистральный конвейер">Дробилка и конвейер</button>
     <button type="button" data-view="plants" title="Сульфидная и глинистая фабрики">Фабрики</button>
     <button type="button" data-view="top" title="Карта сверху (ортографическая камера)">Сверху (карта)</button>
+    <button id="btn-map" type="button" title="Реальный рельеф со спутниковым снимком Sentinel-2 поверх макета">Карта местности</button>
     <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним">Следовать за самосвалом</button>
     <button id="btn-help" type="button" title="Клавиши управления (? или H)">?</button>
     <span id="load-status">загрузка…</span>
@@ -62,7 +64,8 @@
     <h1>Карьер Бозшаколь — диспетчер смены</h1>
     <div class="status-line">связь: <span id="conn">нет</span></div>
     <a id="grafana-link" href="#" target="_blank" rel="noopener" hidden>Дашборды Grafana</a>
-    <label class="status-line toggle-line" title="Наложить спутниковый снимок Sentinel-2 на рельеф"><input type="checkbox" id="imagery-toggle"> Снимок</label>
+    <label class="status-line toggle-line" title="«Высокое» — тени и огни; «Обычное» — быстрее на слабом компьютере">Качество:
+      <select id="quality"><option value="high">Высокое</option><option value="normal">Обычное</option></select></label>
 
     <section id="advice-block">
       <h2>Советы диспетчеру</h2>
@@ -116,6 +119,34 @@
       <div><i style="background:#a8a27e"></i> дно карьера</div>
     </section>
   </aside>
+
+  <!-- Путеводитель: открывается при первом посещении, потом — кнопкой «Как посмотреть» -->
+  <div id="guide" hidden>
+    <div class="guide-card">
+      <div class="card-head">
+        <b>Как посмотреть двойник</b>
+        <button id="guide-close" type="button" title="Закрыть">×</button>
+      </div>
+      <p><b>Что это.</b> Цифровой двойник медного карьера Бозшаколь (Павлодарская область) и пути руды от забоя
+        до двух фабрик — сульфидной и фабрики глинистой руды. Всё, что вы видите — самосвалы, экскаваторы,
+        дробилка, склады, фабрики, — живые двойники в Eclipse Ditto: положение, груз, очереди, запасы
+        и план обновляются каждую секунду.</p>
+      <p><b>Для кого.</b> Горный диспетчер смены: куда направлять самосвалы и как перестроиться при сбое.</p>
+      <ol>
+        <li><b>Осмотритесь.</b> Мышь или клавиши W/A/S/D, Q/E, R/F; виды 1–5 —
+          <a href="#" data-view-go="all">весь рудник</a>, <a href="#" data-view-go="pit">карьер</a>,
+          <a href="#" data-view-go="crusher">дробилка</a>, <a href="#" data-view-go="plants">фабрики</a>, <a href="#" data-view-go="top">сверху</a>.</li>
+        <li><b>Кликните самосвал</b> — справа откроется карточка с живыми данными двойника (груз, скорость, топливо);
+          «Следовать за самосвалом» — камера пойдёт за ним, голубая линия покажет его маршрут.</li>
+        <li><b>Включите «Остановка дробилки»</b> в панели слева («Сценарии «что если»») и нажмите «показать»:
+          у дробилки растёт очередь, склад перед фабрикой тает, появляется прогноз «фабрика встанет в …»
+          и совет диспетчеру вверху панели.</li>
+        <li><b>Выключите сценарий</b> — очередь рассасывается, дробилка снова принимает руду, совет снимается.</li>
+        <li><b>История</b> — ссылка «Дашборды Grafana» в панели: подача на фабрики, сценарии и советы во времени.</li>
+      </ol>
+      <div class="guide-foot"><button id="guide-ok" type="button">Понятно</button></div>
+    </div>
+  </div>
 
   <!-- Карточка двойника -->
   <div id="card" hidden>

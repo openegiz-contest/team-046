@@ -5,7 +5,7 @@ import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { loadTerrain } from './terrain.js';
 import { initKeyboard } from './controls.js';
 import { buildPit as buildPitModel } from './pit.js';
-import { buildEnvironment } from './environment.js';
+import { buildEnvironment, glowTexture } from './environment.js';
 import { createModels } from './models.js';
 
 // ---------------------------------------------------------------- палитра
@@ -26,6 +26,17 @@ const SCENARIO_NAMES = {
   blizzard: 'Метель', dispatch_off: 'Диспетчеризация выключена', road_closed: 'Дорога закрыта',
   excavator_down: 'Экскаватор сломан', clay_face: 'Глинистый забой', bad_blast: 'Неудачный взрыв',
   crusher_stop: 'Остановка дробилки', sag_maintenance: 'ТО мельницы',
+};
+// «Что смотреть» у каждого сценария в панели
+const SCENARIO_HINTS = {
+  blizzard: 'дымка и плашка с видимостью, ограничение 20 км/ч, совет о падении привоза и запасе склада',
+  dispatch_off: 'режим «ручной» в блоке «Транспорт», ожидание у экскаватора растёт',
+  road_closed: 'съезд красный, самосвалы ищут объезд; после отмены — снова по съезду',
+  excavator_down: 'экскаватор красный, его самосвалы уходят к другим; через модельный час — совет о привозе',
+  clay_face: 'забой меняет тип и цвет, самосвалы везут его руду на склад глины, совет советника',
+  bad_blast: 'крупность забоя 900 мм в карточке, погрузка медленнее, дробилка медленнее',
+  crusher_stop: 'очередь у дробилки, запас склада и прогноз остановки фабрики, совет вверху панели',
+  sag_maintenance: 'фабрика на ТО, склад растёт, при переполнении дробилка встаёт «склад полон»',
 };
 const MODE_NAMES = { auto: 'автоматический', fixed: 'закреплённый', manual: 'ручной' };
 const STATE_NAMES = {
@@ -59,7 +70,11 @@ const nameOf = (id) => attr(id, 'name', id.split(':')[1] || id);
 const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
 renderer.setPixelRatio(1);
-renderer.shadowMap.enabled = false;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // мягкая тональная кривая: светлые тона без пересвета
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = false;                   // тени — только в качестве «Высокое»
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 const SKY = 0xdde8f0;
 scene.background = new THREE.Color(SKY);   // до загрузки окружения (environment.js ставит небо и туман)
@@ -67,21 +82,21 @@ let environment = null;      // небо, туман, хвостохранили
 let terrainGround = null;    // группа земли (terrain.js), у неё setImagery(on)
 
 const perspCam = new THREE.PerspectiveCamera(50, 1, 2, 30000);
-perspCam.position.copy(toScene(0, -5200, 2800));
+perspCam.position.copy(toScene(-1500, -7900, 3600));
 const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
-orthoCam.position.set(0, 3000, -1200);
+orthoCam.position.set(-1100, 3000, 200);
 orthoCam.up.set(0, 0, -1);           // север — вверх экрана
-orthoCam.lookAt(0, 0, -1200);
+orthoCam.lookAt(-1100, 0, 200);
 let camera = perspCam;
 
 const controls = new OrbitControls(perspCam, canvas);
-controls.target.copy(toScene(0, 1500, 0));
+controls.target.copy(toScene(-1100, -300, 0));
 controls.maxPolarAngle = Math.PI * 0.49;
 controls.minDistance = 60;
 controls.maxDistance = 14000;
 controls.update();
 const topControls = new OrbitControls(orthoCam, canvas);
-topControls.target.set(0, 0, -1200);
+topControls.target.set(-1100, 0, 200);
 topControls.enableRotate = false;
 // в виде сверху левая кнопка — панорамирование (вращение запрещено)
 topControls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
@@ -91,16 +106,30 @@ topControls.minZoom = 0.3; topControls.maxZoom = 12;
 topControls.enabled = false;
 topControls.update();
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0xcdbd93, 1.6));
-const sun = new THREE.DirectionalLight(0xffffff, 2.6);
-sun.position.set(-2500, 2600, 1800);   // низкое солнце с юго-запада: стенки уступов дают разный тон
-scene.add(sun);
+// Свет: небо-полусфера (голубое сверху, тёплый отражённый снизу) и тёплое низкое солнце с юго-запада
+const hemi = new THREE.HemisphereLight(0xe3eef8, 0xb59c74, 1.35);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffe4bd, 3.1);
+sun.position.set(-4200, 3600, 2600);   // низкое солнце: стенки уступов и грани рельефа дают разный тон
+sun.target.position.set(-1100, 0, 200);
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -4600, right: 4600, top: 3600, bottom: -3600, near: 100, far: 14000 });
+sun.shadow.bias = -0.0008;
+scene.add(sun, sun.target);
 
+// Виды подобраны под окно 1920×1080 (холст ≈ 1,5 : 1); на более узком холсте камера отходит дальше,
+// чтобы макет не обрезался по краям
+let startFitted = false;
+function fitToAspect(pos, target) {
+  const k = Math.max(1, 1.5 / (perspCam.aspect || 1.5));
+  return pos.sub(target).multiplyScalar(k).add(target);
+}
 function resize() {
   const w = canvas.clientWidth || window.innerWidth, h = canvas.clientHeight || window.innerHeight;
   renderer.setSize(w, h, false);
   perspCam.aspect = w / h; perspCam.updateProjectionMatrix();
-  const half = 3200, asp = w / h;
+  if (!startFitted) { startFitted = true; fitToAspect(perspCam.position, controls.target); }
+  const half = 3000, asp = w / h;
   orthoCam.left = -half * asp; orthoCam.right = half * asp; orthoCam.top = half; orthoCam.bottom = -half;
   orthoCam.updateProjectionMatrix();
 }
@@ -347,12 +376,19 @@ function renderScenarios() {
       if (root.firstChild && root.firstChild.nodeType === 3) root.textContent = '';
       const div = document.createElement('div'); div.className = 'scenario';
       const row = document.createElement('div'); row.className = 'row';
-      const title = document.createElement('span'); title.textContent = SCENARIO_NAMES[name] || name;
+      const title = document.createElement('span'); title.className = 'title'; title.textContent = SCENARIO_NAMES[name] || name;
+      const show = document.createElement('button'); show.type = 'button'; show.className = 'show'; show.textContent = 'показать';
+      show.title = 'Камера к главному объекту сценария';
       const btn = document.createElement('button'); btn.type = 'button';
+      const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = SCENARIO_HINTS[name] ? 'Что смотреть: ' + SCENARIO_HINTS[name] : '';
       const params = document.createElement('div'); params.className = 'params';
-      row.append(title, btn); div.append(row, params); root.appendChild(div);
+      row.append(title, show, btn); div.append(row, hint, params); root.appendChild(div);
       rec = scenarioButtons[name] = { btn, params, value: null };
       btn.addEventListener('click', () => setScenario(name, !rec.value, btn));
+      show.addEventListener('click', () => {
+        const f = twins[NS + ':scenarios'] && twins[NS + ':scenarios'].features[name];
+        flyToThing(scenarioTarget(name, (f && f.properties) || {}));
+      });
     }
     rec.value = !!p.value;
     rec.btn.textContent = rec.value ? 'Выключить' : 'Включить';
@@ -385,6 +421,8 @@ async function setScenario(name, on, btn) {
 function scenarioTarget(name, p) {
   switch (name) {
     case 'crusher_stop': return NS + ':crusher-01';
+    case 'blizzard': return NS + ':stockpile-coarse';
+    case 'dispatch_off': return NS + ':excavator-01';
     case 'sag_maintenance': return NS + ':sag-mill-01';
     case 'road_closed': return p.road ? NS + ':' + p.road : null;
     case 'excavator_down': return p.excavator ? NS + ':' + p.excavator : null;
@@ -643,13 +681,11 @@ function buildRoads() {
     m.userData.road = e.road;
     terrain.add(m);
     (roadMeshes[e.road] || (roadMeshes[e.road] = [])).push(m);
-    if (isRamp) {
-      // тонкая тёмная обводка: чуть шире и чуть ниже самого полотна
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(width + 8, 0.8, len + width + 8), roadMats.edge);
-      edge.position.copy(m.position); edge.position.y -= 0.5; edge.quaternion.copy(m.quaternion);
-      terrain.add(edge);
-      (ramps[e.road] || (ramps[e.road] = [])).push(pa, pb);
-    }
+    // бровка: чуть шире и чуть ниже полотна — у всех дорог (на съездах шире — отбойный вал)
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(width + (isRamp ? 10 : 7), isRamp ? 2.6 : 1.4, len + width + 6), roadMats.edge);
+    edge.position.copy(m.position); edge.position.y -= isRamp ? 1.2 : 0.4; edge.quaternion.copy(m.quaternion);   // верх бровки ниже полотна
+    terrain.add(edge);
+    if (isRamp) (ramps[e.road] || (ramps[e.road] = [])).push(pa, pb);
   }
   for (const [rid, pts] of Object.entries(ramps)) {
     const mid = pts[Math.floor(pts.length / 2)].clone(); mid.y += 2;
@@ -674,10 +710,10 @@ function updateRoads() {
 // Координаты — рудника (м), по geometry.json: карьер в центре, дробилка на южном борту,
 // конвейер и фабрика к западу-юго-западу, отвалы к юго-востоку
 const VIEWS = {
-  all: { target: [-500, -500, -40], pos: [-500, -3800, 2700] },     // косой вид ≈ 40°: карьер в полкадра, дробилка, конвейер, фабрика
-  pit: { target: [0, 0, -120], pos: [250, -2300, 1000] },           // ближе: техника на уступах и дне
-  crusher: { target: [-1200, -560, 0], pos: [-1200, -2300, 900] },
-  plants: { target: [-2600, -800, 15], pos: [-2600, -1900, 700] },
+  all: { target: [-1100, -300, 0], pos: [-1500, -7900, 3600] },      // косой вид ≈ 35° на весь макет
+  pit: { target: [150, -50, -110], pos: [-300, -2500, 1250] },       // карьер: техника на уступах и дне
+  crusher: { target: [-420, -640, 0], pos: [-760, -1650, 430] },     // дробилка, заправка, начало конвейера
+  plants: { target: [-2600, -800, 15], pos: [-2950, -1850, 520] },   // фабрика, склад, подстанция
 };
 let tween = null;         // {fromPos, toPos, fromTgt, toTgt, t}
 let followId = null;      // thingId самосвала, за которым идёт камера
@@ -702,7 +738,8 @@ function setView(name) {
     camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
   } else {
     const v = VIEWS[name];
-    flyTo(toScene(...v.pos), toScene(...v.target));
+    const target = toScene(...v.target);
+    flyTo(fitToAspect(toScene(...v.pos), target), target);
   }
   markViewButton(name);
 }
@@ -746,9 +783,10 @@ function updateCamera(dt) {
     }
   }
   (camera === perspCam ? controls : topControls).update();
-  // масштаб значков: 1 вблизи (< 1,5 км до центра сцены), линейно до 4 на 8 км
+  // масштаб значков: 1 вблизи (< 1,1 км до точки взгляда), дальше пропорционально расстоянию, но не больше 6 —
+  // на общем виде (≈ 6 км) самосвал длиной 12 м занимает не меньше ~12 пикселей
   const dist = camera === orthoCam ? 3000 / orthoCam.zoom : perspCam.position.distanceTo(controls.target);
-  markerScale = Math.max(1, Math.min(4, 1 + (dist - 1500) / (8000 - 1500) * 3));
+  markerScale = Math.max(1, Math.min(6, dist / 1100));
 }
 
 // ---------------------------------------------------------------- слои
@@ -783,8 +821,134 @@ function initKeys() {
     stopFly: () => { tween = null; },
     groundAt: (x, y) => terrainApi.heightAt(x, y),
     toScene,
-    bounds: { minX: -area, maxX: area, minY: -area, maxY: area },
+    // границы движения камеры: макет и поле вокруг него (камера общего вида стоит южнее макета)
+    bounds: terrainApi && terrainApi.bounds
+      ? { minX: terrainApi.bounds.minX - 2500, maxX: terrainApi.bounds.maxX + 2500, minY: terrainApi.bounds.minY - 6000, maxY: terrainApi.bounds.maxY + 2500 }
+      : { minX: -area, maxX: area, minY: -area, maxY: area },
   });
+}
+
+// ---------------------------------------------------------------- качество, контактные тени, маршрут
+// «Высокое» — тени от солнца и ореолы огней; «Обычное» — без них (контактные тени-круги остаются всегда).
+// При старте 3 с замер кадров: меньше 25 к/с — автоматически «Обычное». Выбор пользователя запоминается.
+let quality = 'high', qualityAuto = true, qualityProbe = null;
+const shadowCasters = new WeakSet();
+function applyQuality(q) {
+  quality = q === 'normal' ? 'normal' : 'high';
+  const high = quality === 'high';
+  renderer.shadowMap.enabled = high;
+  sun.castShadow = high;
+  if (environment && environment.setQuality) environment.setQuality(high);
+  for (const s of glowSprites) s.visible = high;
+  scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+  const sel = document.getElementById('quality');
+  if (sel) sel.value = quality;
+}
+function initQuality() {
+  const sel = document.getElementById('quality');
+  let saved = null;
+  try { saved = localStorage.getItem('bz-quality'); } catch (e) { /* хранилище недоступно */ }
+  if (saved === 'high' || saved === 'normal') { qualityAuto = false; applyQuality(saved); }
+  else { applyQuality('high'); qualityProbe = { start: performance.now(), frames: 0 }; }
+  if (sel) sel.addEventListener('change', () => {
+    qualityAuto = false; qualityProbe = null; applyQuality(sel.value);
+    try { localStorage.setItem('bz-quality', sel.value); } catch (e) { /* хранилище недоступно */ }
+  });
+}
+// контактная тень — тёмный мягкий круг под техникой (дёшево, без карты теней)
+let blobTex = null;
+function blobTexture() {
+  if (blobTex) return blobTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 4, 32, 32, 32);
+  g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(0.6, 'rgba(0,0,0,0.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  blobTex = new THREE.CanvasTexture(c);
+  return blobTex;
+}
+const blobGeo = new THREE.PlaneGeometry(1, 1);
+let blobMat = null;
+const glowSprites = [];
+function decorateModels() {
+  for (const o of clickable) {
+    const id = o.userData.thingId || '';
+    if (o.userData.blob || !/:(truck|excavator|drill)-/.test(id)) continue;
+    const size = o.userData.size || {};
+    const L = (size.length || size.l || 14), W = (size.width || size.w || 8);
+    blobMat = blobMat || new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false, opacity: 0.85 });
+    const b = new THREE.Mesh(blobGeo, blobMat);
+    b.rotation.x = -Math.PI / 2; b.position.y = 0.25; b.scale.set(W * 1.7, L * 1.45, 1); b.renderOrder = -1;
+    b.userData.blob = true; b.raycast = () => {};
+    o.add(b); o.userData.blob = b;
+  }
+  // тени от солнца — у моделей техники и зданий (в «Высоком»)
+  if (quality === 'high') scene.traverse((m) => {
+    if (m.isMesh && !shadowCasters.has(m) && !m.userData.blob && m.parent && m.parent.name !== 'terrain') {
+      shadowCasters.add(m);
+      m.castShadow = !(m.material && m.material.transparent);
+      m.receiveShadow = true;
+    }
+  });
+}
+// маршрут выбранного самосвала: кратчайший путь по графу дорог до пункта назначения — светящаяся линия
+let routeMesh = null, routeKey = '';
+const routeMat = new THREE.MeshBasicMaterial({ color: 0x0fb3c9, transparent: true, opacity: 0.85, depthWrite: false });   // обычное смешение: на светлой степи сложение цветов выгорает в белое
+function nearestNode(x, y) {
+  let best = null, bd = Infinity;
+  for (const [n, p] of Object.entries(geometry.nodes)) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; best = n; } }
+  return best;
+}
+function destNode(dest) {
+  if (!dest) return null;
+  const nodes = geometry.nodes;
+  if (nodes[dest]) return dest;
+  const m = /^excavator-(\d+)$/.exec(dest);
+  if (m && nodes['face-' + m[1]]) return 'face-' + m[1];
+  if (/^crusher/.test(dest) && nodes.crusher) return 'crusher';
+  return null;
+}
+function shortestPath(a, b) {
+  const adj = {};
+  for (const e of geometry.edges) {
+    const w = e.length_m || 1;
+    (adj[e.from] || (adj[e.from] = [])).push([e.to, w]);
+    (adj[e.to] || (adj[e.to] = [])).push([e.from, w]);
+  }
+  const dist = { [a]: 0 }, prev = {}, todo = new Set(Object.keys(geometry.nodes));
+  while (todo.size) {
+    let u = null, du = Infinity;
+    for (const n of todo) if ((dist[n] ?? Infinity) < du) { du = dist[n]; u = n; }
+    if (u === null || u === b) break;
+    todo.delete(u);
+    for (const [v, w] of adj[u] || []) if (du + w < (dist[v] ?? Infinity)) { dist[v] = du + w; prev[v] = u; }
+  }
+  if (dist[b] === undefined) return null;
+  const path = [b];
+  while (path[0] !== a) path.unshift(prev[path[0]]);
+  return path;
+}
+function updateRoute() {
+  const id = openedThing && openedThing.startsWith(NS + ':truck-') ? openedThing : null;
+  const dest = id ? destNode(val(id, 'destination', '')) : null;
+  const x = id ? Number(val(id, 'x', NaN)) : NaN, y = id ? Number(val(id, 'y', NaN)) : NaN;
+  const from = id && isFinite(x) && isFinite(y) ? nearestNode(x, y) : null;
+  const key = id && dest && from ? id + from + dest : '';
+  if (key === routeKey) return;
+  routeKey = key;
+  if (routeMesh) { terrain.remove(routeMesh); routeMesh.geometry.dispose(); routeMesh = null; }
+  if (!key || from === dest) return;
+  const path = shortestPath(from, dest);
+  if (!path || path.length < 2) return;
+  // ближайший узел может остаться позади самосвала — тогда линия начинается со следующего
+  const n0 = geometry.nodes[path[0]], n1 = geometry.nodes[path[1]];
+  if (Math.hypot(n1[0] - x, n1[1] - y) < Math.hypot(n1[0] - n0[0], n1[1] - n0[1])) path.shift();
+  const z = Number(val(id, 'z', NaN));   // в карьере поверхность рельефа выше самосвала — берём его высоту из двойника
+  const pts = [toScene(x, y, (isFinite(z) ? z : terrainApi.groundAt(x, y)) + 2.5)];
+  for (const n of path) { const p = geometry.nodes[n]; pts.push(toScene(p[0], p[1], p[2] + 2.5)); }
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.1);
+  routeMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.min(400, pts.length * 12), 3.2, 6, false), routeMat);
+  routeMesh.raycast = () => {};
+  terrain.add(routeMesh);
 }
 
 // ---------------------------------------------------------------- цикл
@@ -803,7 +967,21 @@ function frame(now) {
     try { if (typeof L.mod.update === 'function') L.mod.update(L.ctx, twins); }
     catch (e) { if (L.errors++ % 300 === 0) console.error('Слой ' + L.name + ': ошибка в update', e); }
   }
+  if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
+  if (frameNo % 15 === 0) updateRoute();
+  if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
   renderer.render(scene, camera);
+  if (qualityProbe) {                       // первые 3 с — замер кадров для выбора качества
+    qualityProbe.frames++;
+    const el = now - qualityProbe.start;
+    if (el > 3000) {
+      const fps = qualityProbe.frames * 1000 / el;
+      qualityProbe = null;
+      if (qualityAuto && fps < 25) applyQuality('normal');
+      window.__qualityProbeFps = fps;
+    }
+  }
+  window.__quality = quality;
   window.__sceneFrames = (window.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
   window.__renderInfo = renderer.info.render;
   updateLabels();
@@ -819,7 +997,7 @@ function buildFuelStation() {
   addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
 }
 
-// ---------------------------------------------------------------- переключатель «Снимок» и подписи источников
+// ---------------------------------------------------------------- кнопка «Карта местности» (снимок) и подписи источников
 function updateAttribution() {
   const a = document.getElementById('attribution');
   if (!terrainApi || !terrainApi.attribution) { a.hidden = true; return; }
@@ -828,12 +1006,31 @@ function updateAttribution() {
   a.hidden = !a.textContent;
 }
 function initImagery() {
-  const box = document.getElementById('imagery-toggle');
-  if (box) {
-    box.checked = false;
-    box.addEventListener('change', () => { if (terrainGround) terrainGround.setImagery(box.checked); updateAttribution(); });
-  }
+  // «Карта местности»: реальный рельеф со спутниковым снимком Sentinel-2 поверх макета (по умолчанию выключено)
+  const btn = document.getElementById('btn-map');
+  if (btn) btn.addEventListener('click', () => {
+    const on = !(terrainGround && terrainGround.imageryEnabled && terrainGround.imageryEnabled());
+    if (terrainGround) terrainGround.setImagery(on);
+    btn.classList.toggle('active', on);
+    btn.textContent = on ? 'Макет' : 'Карта местности';
+    updateAttribution();
+  });
   updateAttribution();
+}
+
+// ---------------------------------------------------------------- путеводитель «Как посмотреть двойник»
+// При первом открытии показывается окно; закрывается; кнопка «Как посмотреть» в углу открывает снова.
+function initGuide() {
+  const box = document.getElementById('guide'), open = document.getElementById('guide-open');
+  if (!box) return;
+  const show = (on) => { box.hidden = !on; };
+  document.getElementById('guide-close').addEventListener('click', () => show(false));
+  document.getElementById('guide-ok').addEventListener('click', () => show(false));
+  if (open) open.addEventListener('click', () => show(box.hidden));
+  for (const a of box.querySelectorAll('[data-view-go]')) a.addEventListener('click', () => { setView(a.dataset.viewGo); show(false); });
+  let seen = false;
+  try { seen = localStorage.getItem('bz-guide-seen') === '1'; localStorage.setItem('bz-guide-seen', '1'); } catch (e) { /* хранилище недоступно */ }
+  if (!seen) show(true);
 }
 
 // ---------------------------------------------------------------- запуск
@@ -850,6 +1047,7 @@ function initImagery() {
     buildFuelStation();
     initImagery();
     initKeys();
+    initQuality();
   } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {
@@ -865,5 +1063,6 @@ function initImagery() {
   updateFollowButton();
   markViewButton('all');
   status.textContent = '';
+  initGuide();
   requestAnimationFrame(frame);
 })();
