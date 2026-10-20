@@ -168,6 +168,72 @@
      "value": 0.0,
      "unit": "т/ч"
     }
+   },
+   "trucks_needed": {
+    "properties": {
+     "value": 0.0,
+     "unit": "шт"
+    }
+   },
+   "trucks_reserve": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "fuel_saved_l_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "л"
+    }
+   },
+   "time_loading_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_hauling_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_returning_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_queue_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_dumping_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_refueling_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_reserve_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "time_down_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
    }
   }
  },

@@ -117,6 +117,7 @@ def run(hm, dispatch_off, seed):
     bunker_stock = 0.0
     last_delivered = 0.0
     bunker_integral = 0.0
+    reserve_integral = 0.0  # п.4 задачи «Резерв самосвалов»: trucks_reserve — среднее, не снимок
     cap = hm.CRUSHER_BUNKER_T_REF * hm.CRUSHER_ACCEPT_FRACTION
     for _ in range(steps):
         model.step(STEP_S)
@@ -129,8 +130,10 @@ def run(hm, dispatch_off, seed):
         watcher.crusher_throughput = crushed / STEP_S * 3600.0
         watcher.accepting["crusher-01"] = bunker_stock < cap
         bunker_integral += bunker_stock * STEP_S
+        reserve_integral += sum(1 for t in model.trucks if t.state == "reserve") * STEP_S
 
     model.avg_bunker_t = bunker_integral / (MODEL_HOURS * 3600.0)  # для отчёта (часть 4)
+    model.avg_trucks_reserve = reserve_integral / (MODEL_HOURS * 3600.0)  # среднее за весь прогон, не снимок
     return model
 
 
@@ -189,6 +192,15 @@ def collect(model):
         wait_min = statistics.mean(v for _, v in wait_dq) if wait_dq else 0.0
         dump_stats[did] = dict(trips=d.trips, tph=d.received / (total_s / 3600.0), wait_min=wait_min)
 
+    # часть 4 задачи «Резерв самосвалов»: снимок dispatch.* на конец прогона (окно — последний
+    # модельный час, та же логика, что у avg_wait_excavator/trips_per_hour выше) + среднее за
+    # ВЕСЬ прогон для trucks_reserve (считается в run(), не окно в один час — снимок на конец
+    # 12-часового прогона был бы не показателен, резерв колеблется)
+    time_pct = {k: fv(disp, k) for k in (
+        "time_loading_pct", "time_hauling_pct", "time_returning_pct", "time_queue_pct",
+        "time_dumping_pct", "time_refueling_pct", "time_reserve_pct", "time_down_pct",
+    )}
+
     return dict(
         avg_wait_excavator=fv(disp, "avg_wait_excavator"), avg_wait_dump=fv(disp, "avg_wait_dump"),
         trips_per_hour=fv(disp, "trips_per_hour"), fleet_utilization=fv(disp, "fleet_utilization"),
@@ -197,6 +209,9 @@ def collect(model):
         avg_bunker_t=getattr(model, "avg_bunker_t", 0.0),
         plan_crusher_tph=fv(disp, "plan_crusher_tph"), plan_clay_tph=fv(disp, "plan_clay_tph"),
         refuels_total=model.refuels_total,
+        trucks_needed=fv(disp, "trucks_needed"), trucks_reserve_now=fv(disp, "trucks_reserve"),
+        trucks_reserve_avg=getattr(model, "avg_trucks_reserve", 0.0),
+        fuel_saved_l_shift=fv(disp, "fuel_saved_l_shift"), time_pct=time_pct,
     )
 
 
@@ -214,6 +229,9 @@ def report_mode(label, runs):
         ("trips_per_hour", "Рейсов в час", ""),
         ("fleet_utilization", "Самосвалы в деле", "%"),
         ("refuels_total", f"Заправок за смену ({MODEL_HOURS} ч)", "шт"),
+        ("trucks_needed", "Нужно для плана (среднее за последний час прогона)", "шт"),
+        ("trucks_reserve_avg", "В резерве (среднее за весь прогон)", "шт"),
+        ("fuel_saved_l_shift", "Сэкономлено топлива (накоплено с начала смены к концу прогона)", "л"),
     ]:
         vals = [r[key] for r in runs]
         m, s = avg_spread(vals)
@@ -303,6 +321,32 @@ def main():
           f"({'OK, авто не хуже' if a_wait <= m_wait + 0.05 else 'ПЛОХО: авто хуже ручного'})")
     print(f"      т/ч руды: авто {a_tph:.0f} / ручной {m_tph:.0f} "
           f"({'OK' if a_tph >= m_tph - 1 else 'ПЛОХО: авто меньше'})")
+
+    print(f"\n{'=' * 60}\nРЕЗЕРВ САМОСВАЛОВ (часть 4 ТЕКУЩЕЙ задачи) — доли времени парка, авто vs ручной\n{'=' * 60}")
+    pct_names = [
+        ("time_loading_pct", "погрузка (установка+ковши)"), ("time_hauling_pct", "гружёный рейс"),
+        ("time_returning_pct", "порожний рейс"), ("time_queue_pct", "очередь (экскаватор+разгрузка)"),
+        ("time_dumping_pct", "разгрузка"), ("time_refueling_pct", "заправка"),
+        ("time_reserve_pct", "резерв"), ("time_down_pct", "авария (не реализовано, всегда 0)"),
+    ]
+    print(f"  {'доля времени':38s} {'авто, %':>10s} {'ручной, %':>10s}")
+    a_sum, m_sum = 0.0, 0.0
+    for key, title in pct_names:
+        a_m = avg_spread([r["time_pct"][key] for r in auto_runs])[0]
+        m_m = avg_spread([r["time_pct"][key] for r in manual_runs])[0]
+        a_sum += a_m
+        m_sum += m_m
+        print(f"  {title:38s} {a_m:>10.1f} {m_m:>10.1f}")
+    print(f"  {'СУММА (должна быть ≈100)':38s} {a_sum:>10.1f} {m_sum:>10.1f}")
+
+    a_needed = avg_spread([r["trucks_needed"] for r in auto_runs])[0]
+    a_reserve = avg_spread([r["trucks_reserve_avg"] for r in auto_runs])[0]
+    a_fuel = avg_spread([r["fuel_saved_l_shift"] for r in auto_runs])[0]
+    m_reserve = avg_spread([r["trucks_reserve_avg"] for r in manual_runs])[0]
+    print(f"\n  «Авто»: самосвалов в парке 28, нужно для плана ≈{a_needed:.0f}, в резерве ≈{a_reserve:.0f} "
+          f"(в среднем за {MODEL_HOURS} ч), экономия топлива ≈{a_fuel:.0f} л к концу прогона.")
+    print(f"  «Ручной»: резерва не существует вовсе (среднее в резерве за прогон: {m_reserve:.2f} шт — "
+          f"должно быть ≈0{'  — OK' if m_reserve < 0.05 else '  — ПРОБЛЕМА: резерв возник в ручном режиме!'}).")
 
     print(f"\n{'=' * 60}\nСВЕРКА (часть 2 и 3 ТЕКУЩЕЙ задачи: перебор руды в «авто» — причина и фикс) — "
           f"main.py, choose_excavator/_best_candidate/_update_plan\n{'=' * 60}")
