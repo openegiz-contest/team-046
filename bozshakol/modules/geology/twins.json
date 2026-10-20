@@ -66,6 +66,24 @@
     "properties": {
      "value": true
     }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 13,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
    }
   }
  },
@@ -135,6 +153,24 @@
    "blasted": {
     "properties": {
      "value": true
+    }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 13,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
     }
    }
   }
@@ -206,6 +242,24 @@
     "properties": {
      "value": true
     }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 13,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
    }
   }
  },
@@ -275,6 +329,24 @@
    "blasted": {
     "properties": {
      "value": true
+    }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 13,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
     }
    }
   }
@@ -346,6 +418,24 @@
     "properties": {
      "value": true
     }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 3,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
    }
   }
  },
@@ -415,6 +505,24 @@
    "blasted": {
     "properties": {
      "value": true
+    }
+   },
+   "block_preview": {
+    "properties": {
+     "value": "[]",
+     "unit": "м, м, % Cu"
+    }
+   },
+   "bench": {
+    "properties": {
+     "value": 3,
+     "unit": "№"
+    }
+   },
+   "panel_progress": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
     }
    }
   }
