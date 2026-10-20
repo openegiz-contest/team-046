@@ -186,7 +186,7 @@
     "properties": {
      "value": false,
      "face": "face-01",
-     "p80_mm": 450,
+     "p80_mm": 900,
      "owner": "geology"
     }
    },

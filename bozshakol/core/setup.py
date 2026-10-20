@@ -49,9 +49,17 @@ def main():
             if exc.code != 404:
                 raise
         if existing and thing_id.endswith(":scenarios"):
-            # состояние сценариев не сбрасываем, только добавляем новые
-            merged = dict(body.get("features", {}))
-            merged.update(existing.get("features", {}))
+            # включён ли сценарий (value) — сохраняем; параметры (face, p80_mm, road…) — из twins.json;
+            # сценарии, которых нет в twins.json, оставляем как есть
+            merged = {}
+            for name, feat_body in body.get("features", {}).items():
+                props = dict(feat_body.get("properties", {}))
+                old_props = (existing.get("features", {}).get(name) or {}).get("properties", {})
+                if "value" in old_props:
+                    props["value"] = old_props["value"]
+                merged[name] = {"properties": props}
+            for name, feat_body in existing.get("features", {}).items():
+                merged.setdefault(name, feat_body)
             body = dict(body, features=merged)
         status = ditto.retry(lambda: ditto.put_thing(thing_id, body))
         if status == 201:
