@@ -1046,6 +1046,7 @@ function frame(now) {
   shrinkFaceZones();
   schemaDetail();
   separateDrills();
+  lineUpQueues();
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
@@ -1265,6 +1266,43 @@ function updateDust(dt) {
     const back = new THREE.Vector3(-Math.sin(o.rotation.y), 0, -Math.cos(o.rotation.y)).multiplyScalar(7 * o.scale.x);
     d.sp.position.copy(p).add(back); d.sp.position.y += 1.5 * o.scale.x;
     d.size = 6 * o.scale.x; d.age = 0; d.sp.visible = true;
+  }
+}
+// Очереди: в схеме подъезды сжаты, а самосвалы — в натуральную величину, поэтому стоящие в очереди к одному
+// пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль подъезда с шагом в длину самосвала:
+// направление — от пункта к самосвалу, порядок — по удалённости (только в схеме, только картинка)
+const QUEUE_STEP = 16;
+function lineUpQueues() {
+  if (mode !== 'schema' || !dio) return;
+  const groups = {};
+  for (const o of clickable) {
+    const id = o.userData.thingId || '';
+    if (id.indexOf(':truck-') < 0 || o.isMesh || !o.parent) continue;
+    const st = val(id, 'state', '');
+    if (st !== 'queued_load' && st !== 'queued_dump') continue;
+    const node = destNode(val(id, 'destination', '')) || nearestNode(Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
+    if (!node || !dio.D.nodes[node]) continue;
+    (groups[node] || (groups[node] = [])).push(o);
+  }
+  for (const [node, list] of Object.entries(groups)) {
+    const n = dio.D.nodes[node], head = dio.s(n[0], n[1], n[2]);
+    list.sort((a, b) => a.position.distanceTo(head) - b.position.distanceTo(head) || (a.userData.thingId < b.userData.thingId ? -1 : 1));
+    let dir = null;
+    list.forEach((o, k) => {
+      if (!dir) {
+        dir = new THREE.Vector3(o.position.x - head.x, 0, o.position.z - head.z);
+        if (dir.lengthSq() < 9) {   // самосвал стоит в самом пункте — направление по ребру дороги, ведущему к пункту
+          const e = dio.edges.find((q) => q.from === node || q.to === node);
+          const other = e ? (e.from === node ? e.sb : e.sa) : [n[0], n[1] - 1];
+          dir.set(other[0] - n[0], 0, -(other[1] - n[1]));
+        }
+        dir.normalize();
+      }
+      const want = (k + 1) * QUEUE_STEP;
+      o.position.x = head.x + dir.x * want; o.position.z = head.z + dir.z * want;
+      o.position.y = Math.max(dio.surfaceAt(o.position.x, -o.position.z), head.y);
+      o.rotation.y = Math.atan2(-dir.x, -dir.z);   // носом к пункту
+    });
   }
 }
 // Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
