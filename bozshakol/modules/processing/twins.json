@@ -174,7 +174,9 @@
    "kind": "power",
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
-   "supply_mw": 120
+   "supply_mw": 120,
+   "ball_mills_mw": 44,
+   "ball_mills_note": "две шаровые мельницы 8,5 м по 22 МВт (ABB, automation.com)"
   },
   "features": {
    "load": {
@@ -226,9 +228,11 @@
    "rated_tph": 4500,
    "bunker_t": 900,
    "downstream": "kz.bozshakol:conveyor-01",
-   "rated_note": "допущение: номинал при p80 = 450 мм (нормальный взрыв по модулю №3) и крепости 12; выше плана фабрики 3 360 т/ч, т. к. дробилка работает ~75 % времени",
+   "rated_note": "допущение: номинал при p80 = 450 мм (нормальный взрыв по модулю №3) и крепости 11 (средняя руда модуля №3); план фабрики 3 360 т/ч ÷ 0,75 — дробилка работает ~75 % времени",
    "bunker_note": "допущение: 5 кузовов по 180 т (≈ 6–7 по 135 т)",
-   "p80_ref_mm": 450
+   "p80_ref_mm": 450,
+   "hardness_ref": 11,
+   "availability": 0.75
   },
   "features": {
    "state": {
@@ -302,7 +306,7 @@
    },
    "feed_hardness": {
     "properties": {
-     "value": 12.0,
+     "value": 11.0,
      "unit": "ед. Протодьяконова"
     }
    }
