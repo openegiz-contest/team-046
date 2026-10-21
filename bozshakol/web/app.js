@@ -768,9 +768,18 @@ function buildRoads() {
   const parts = {};   // 'дорога|материал' -> [{geo, matrix}]
   const add = (road, mat, geo, matrix) => (parts[road + '|' + mat] || (parts[road + '|' + mat] = [])).push({ geo, matrix });
   const R = mp().road, schema = mode === 'schema';
+  // в схеме ребро режется на куски ≈ 40 единиц: дорога идёт по поверхности (съезд выходит на борт, а не под землю)
+  const pieces = [];
   for (const e of geometry.edges) {
     const a = geometry.nodes[e.from], b = geometry.nodes[e.to];
     if (!a || !b) continue;
+    const n = schema ? Math.max(1, Math.ceil(nodePos(a).distanceTo(nodePos(b)) / 40)) : 1;
+    for (let i = 0; i < n; i++) {
+      const p = (t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+      pieces.push({ e, a: p(i / n), b: p((i + 1) / n), first: i === 0 });
+    }
+  }
+  for (const { e, a, b } of pieces) {
     const isRamp = /^road-ramp/.test(e.road);
     const pa = nodePos(a), pb = nodePos(b);
     const len = pa.distanceTo(pb);
@@ -1417,7 +1426,7 @@ function updateDust(dt) {
 // пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль дороги, по которой к пункту
 // приезжают (к забою — путь от дробилки, к дробилке — путь из карьера), с шагом в длину самосвала
 // (только в схеме, только картинка)
-const QUEUE_STEP = 16;   // единиц: самосвал 180 т (15 м × 2,5 / 3 ≈ 12,5) + зазор
+const QUEUE_STEP = 17;   // единиц: самосвал 180 т (15 м × 2,5 / 3 ≈ 12,5) + зазор (с запасом на повороты подъезда)
 const queueLanes = {};
 function queueLane(node) {
   if (queueLanes[node] !== undefined) return queueLanes[node];
@@ -1459,8 +1468,10 @@ function lineUpQueues() {
       const q = lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP);
       if (!q) return;
       const p = dio.s(q.x, q.y, q.z + mp().road.lift);
+      const yaw = Math.atan2(q.dx, -q.dy);      // носом к пункту (в сцене z = −север)
+      p.x += -Math.cos(yaw) * LANE; p.z += Math.sin(yaw) * LANE;   // очередь — на своей (правой) полосе, встречные проходят
       o.position.copy(p);
-      o.rotation.y = Math.atan2(q.dx, -q.dy);   // носом к пункту (в сцене z = −север)
+      o.rotation.y = yaw;
     });
   }
 }
@@ -1486,8 +1497,10 @@ function separateDrills() {
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
       const R = 15;   // единиц: полкорпуса экскаватора + полкорпуса самосвала + зазор
-      if (d >= R || d < 0.01) continue;
-      o.position.x = e.position.x + dx * R / d; o.position.z = e.position.z + dz * R / d;
+      if (d >= R) continue;
+      // самосвал в самой точке экскаватора (забой на заезде): отводим назад по его ходу — он стоит носом к экскаватору
+      const ux = d > 0.01 ? dx / d : -Math.sin(o.rotation.y), uz = d > 0.01 ? dz / d : -Math.cos(o.rotation.y);
+      o.position.x = e.position.x + ux * R; o.position.z = e.position.z + uz * R;
       if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
     }
   }
@@ -1524,6 +1537,7 @@ function adjustMachines(dt) {
     lineUpQueues();
     separateDrills();
     separateTrucks();
+    separateDrills();   // ещё раз: отведённый назад самосвал не должен въехать в экскаватор
   }
   updateMarkers();
 }
@@ -1543,15 +1557,19 @@ function laneOffsets() {
 const TRUCK_GAP = 14;   // единиц: самосвал 180 т ≈ 12,5 + зазор
 function separateTrucks() {
   const trucks = machineList.filter((o) => o.userData.thingId.indexOf(':truck-') >= 0);
-  for (let pass = 0; pass < 3; pass++) {
+  // под погрузкой и разгрузкой самосвал стоит у экскаватора / пункта — его не двигаем, отходит другой
+  const fixed = (o) => { const st = val(o.userData.thingId, 'state', ''); return st === 'loading' || st === 'dumping'; };
+  for (let pass = 0; pass < 5; pass++) {
     let moved = false;
     for (let i = 0; i < trucks.length; i++) for (let j = i + 1; j < trucks.length; j++) {
       const a = trucks[i], b = trucks[j];
       const dx = a.position.x - b.position.x, dz = a.position.z - b.position.z, d = Math.hypot(dx, dz);
       if (d >= TRUCK_GAP) continue;
+      if (fixed(a) && fixed(b)) continue;
       // кто впереди по ходу a: тот, у кого проекция на «вперёд» больше; задний отходит назад
       const fx = Math.sin(a.rotation.y), fz = Math.cos(a.rotation.y);
-      const back = (dx * fx + dz * fz) >= 0 ? b : a;
+      let back = (dx * fx + dz * fz) >= 0 ? b : a;
+      if (fixed(back)) back = back === a ? b : a;
       const bx = Math.sin(back.rotation.y), bz = Math.cos(back.rotation.y);
       const k = TRUCK_GAP - d + 0.5;
       back.position.x -= bx * k; back.position.z -= bz * k;
