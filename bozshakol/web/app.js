@@ -907,6 +907,9 @@ const shadowCasters = new WeakSet();
 function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
+  // «Обычное»: кадр в разрешении 0,85 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
+  renderer.setPixelRatio(high ? 1 : 0.85);
+  resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
   if (environment && environment.setQuality) environment.setQuality(high);
@@ -1188,15 +1191,23 @@ async function switchMode(next) {
     updateFollowButton();
   } finally { switching = false; }
 }
-// В схеме вся техника ближе 2,5 км «по метрам» слоёв — дальнюю (дальше 260 единиц от камеры) переводим
+// В схеме вся техника ближе 2,5 км «по метрам» слоёв — дальнюю (дальше 150 единиц от камеры) переводим
 // в упрощённую детализацию после update слоёв: силуэт тот же, кадров больше
 function schemaDetail() {
   if (mode !== 'schema') return;
   camera.getWorldPosition(_c);
   for (const o of clickable) {
     if (typeof o.setDetail !== 'function' || !/:(truck|excavator|drill)-/.test(o.userData.thingId || '')) continue;
+    // слой ставит детализацию по своему порогу (2,5 км) каждый кадр — в схеме решает сцена: перехватываем setDetail,
+    // иначе модель переключалась бы туда-обратно каждый кадр
+    if (!o.userData.schemaDetailOrig) {
+      const orig = o.setDetail;
+      o.userData.schemaDetailOrig = orig;
+      o.setDetail = (level) => orig.call(o, o.userData.schemaDetail || level);
+    }
     o.getWorldPosition(_v);
-    o.setDetail(camera === orthoCam || _v.distanceTo(_c) > 260 ? 'far' : 'full');
+    o.userData.schemaDetail = camera === orthoCam || _v.distanceTo(_c) > 150 ? 'far' : 'full';
+    o.setDetail(o.userData.schemaDetail);
   }
 }
 // Авария (state = down) у самосвала или экскаватора — значок над техникой (маячок модели — красный, корпус — красный)
