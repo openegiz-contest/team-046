@@ -5,6 +5,6 @@ COPY modules/processing/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY core/bzlib ./bzlib
 COPY core/geometry.json ./geometry.json
-COPY modules/processing/main.py modules/processing/twins.json ./
+COPY modules/processing/main.py modules/processing/energy.py modules/processing/twins.json ./
 USER nobody
 CMD ["python", "main.py"]

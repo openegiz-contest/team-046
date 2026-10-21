@@ -80,6 +80,47 @@
     "properties": {
      "value": 1
     }
+   },
+   "specific_energy": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт·ч/т"
+    }
+   },
+   "power_limited": {
+    "properties": {
+     "value": false
+    }
+   },
+   "power_limit_lost_ore": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т/ч"
+    }
+   },
+   "power_limit_lost_ore_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "power_limit_lost_cu_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
+   },
+   "shift_hour": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ч"
+    }
+   },
+   "shift_counted_from": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ч"
+    }
    }
   }
  },
@@ -164,6 +205,12 @@
      "value": 0.0,
      "unit": "т Cu"
     }
+   },
+   "specific_energy": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт·ч/т"
+    }
    }
   }
  },
@@ -174,9 +221,14 @@
    "kind": "power",
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
-   "supply_mw": 120,
+   "supply_mw": 130,
    "ball_mills_mw": 44,
-   "ball_mills_note": "две шаровые мельницы 8,5 м по 22 МВт (ABB, automation.com)"
+   "ball_mills_note": "две шаровые мельницы 8,5 м по 22 МВт (ABB, automation.com)",
+   "supply_note": "допущение: подключённая мощность фабрик с запасом над пиком ≈ 115 МВт при −40 °C",
+   "sag_mill_mw": 28,
+   "sag_mill_note": "мельница ПСИ 12,2 м, безредукторный привод 28 МВт (ABB, automation.com)",
+   "specific_ndt_kwh_t": "26,9–36,3",
+   "specific_ndt_note": "Справочник НДТ РК 2023 (zakon.uchet.kz P2300001101): 26,9–36,3 кВт·ч/т; 786,7 ГВт·ч в 2020 г."
   },
   "features": {
    "load": {
@@ -213,6 +265,141 @@
     "properties": {
      "value": 0.0,
      "unit": "МВт·ч"
+    }
+   },
+   "mills": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "crushing_conveyor": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "conveyor": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "flotation_other": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "clay_plant": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "heating": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "outside_temp": {
+    "properties": {
+     "value": -12.0,
+     "unit": "°C"
+    }
+   },
+   "energy_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт·ч"
+    }
+   },
+   "energy_sulphide_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт·ч"
+    }
+   },
+   "energy_clay_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт·ч"
+    }
+   },
+   "specific_sulphide": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт·ч/т"
+    }
+   },
+   "specific_clay": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт·ч/т"
+    }
+   },
+   "mills_share": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
+   "peak_15min": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "peak_15min_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "idle_power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт"
+    }
+   },
+   "idle_loss_shift": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт·ч"
+    }
+   },
+   "advice": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "supply_mw": {
+    "properties": {
+     "value": 130.0,
+     "unit": "МВт"
+    }
+   },
+   "limit_on": {
+    "properties": {
+     "value": false
+    }
+   },
+   "limit_mw": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "load_level": {
+    "properties": {
+     "value": "normal"
+    }
+   },
+   "sulphide_plant": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
     }
    }
   }
@@ -323,7 +510,9 @@
    "rated_tph": 4500,
    "downstream": "kz.bozshakol:stockpile-coarse",
    "length_note": "сумма отрезков трассы conveyor-01 в core/geometry.json",
-   "belt_speed_mps": 2.5
+   "belt_speed_mps": 2.5,
+   "lift_m": 19.9,
+   "lift_note": "перепад высот трассы conveyor-01 в core/geometry.json (0,5 → 20,4 м)"
   },
   "features": {
    "state": {
@@ -365,6 +554,28 @@
     "properties": {
      "value": 14.3,
      "unit": "мин"
+    }
+   },
+   "power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт"
+    }
+   },
+   "idle_power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "кВт"
+    }
+   },
+   "auto_stopped": {
+    "properties": {
+     "value": false
+    }
+   },
+   "advice": {
+    "properties": {
+     "value": ""
     }
    }
   }
@@ -468,6 +679,28 @@
      "value": 0,
      "unit": "мин"
     }
+   },
+   "overflow_forecast": {
+    "properties": {
+     "value": "запас в норме"
+    }
+   },
+   "overflow_expected": {
+    "properties": {
+     "value": false
+    }
+   },
+   "hours_to_full": {
+    "properties": {
+     "value": -1.0,
+     "unit": "ч"
+    }
+   },
+   "rising_min": {
+    "properties": {
+     "value": 0,
+     "unit": "мин"
+    }
    }
   }
  },
@@ -505,6 +738,18 @@
     "properties": {
      "value": 150,
      "unit": "мкм"
+    }
+   },
+   "ball_mills_power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
+    }
+   },
+   "mills_power": {
+    "properties": {
+     "value": 0.0,
+     "unit": "МВт"
     }
    }
   }

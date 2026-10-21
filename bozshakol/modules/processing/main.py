@@ -15,6 +15,7 @@ import json
 import math
 import time
 
+import energy as en
 from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging, value
 
 log = setup_logging("bz-processing")
@@ -56,9 +57,10 @@ REC_C0, REC_C_CU0, REC_C_CLAY0 = 60.0, 0.31, 55.0
 REC_C_PER_CU, REC_C_PER_CLAY = 20.0, 0.2
 CONC_CU = 24.0          # % Cu в концентрате (допущение заглушки)
 
-# -- энергия (как в заглушке; подробная энергетика — следующее задание) ------------------------
-P_SAG, P_CRUSHER, P_OTHER = 28.0, 1.0, 6.0  # МВт: мельница ПСИ 12,2 м — 28 МВт (ABB)
-P_BALL = 2 * 22.0       # МВт: две шаровые мельницы 8,5 м по 22 МВт (ABB)
+# -- энергия: мощности потребителей — в energy.py, источники и допущения — в README («Энергетика») ---
+ADVICE_IDLE_S = 15 * 60.0          # рекомендация «остановить конвейер»: дробилка не принимает дольше 15 модельных минут
+CONVEYOR_AUTOSTOP_S = 30 * 60.0    # свой конвейер сервис останавливает сам после 30 модельных минут холостого хода
+POWER_LIMIT_DEFAULT_MW = 80.0      # предел мощности по умолчанию, если у сценария power_limit нет параметра limit_mw
 
 FACES = [f"face-0{i}" for i in range(1, 7)]
 EXCAVATORS = [f"excavator-0{i}" for i in range(1, 7)]
@@ -103,6 +105,23 @@ def conveyor_length(twins):
     except (OSError, KeyError, StopIteration, ValueError) as exc:
         log.warning("geometry.json: нет трассы конвейера (%s), беру length_m из twins.json", exc)
         return float(twins["kz.bozshakol:conveyor-01"]["attributes"]["length_m"])
+
+
+def geometry_for_energy():
+    """Из core/geometry.json: подъём конвейера (м, от начала трассы до конца) и объёмы корпусов фабрик (м³)."""
+    lift, vols = 19.9, {"plant-sulphide": 320 * 170 * 30.0, "plant-clay": 160 * 100 * 22.0}
+    try:
+        with open("geometry.json", encoding="utf-8") as f:
+            geo = json.load(f)
+        objs = {o["id"]: o for o in geo["objects"]}
+        path = objs["conveyor-01"]["path"]
+        lift = path[-1][2] - path[0][2]
+        for k in vols:
+            l, w, h = objs[k]["size"]
+            vols[k] = float(l * w * h)
+    except (OSError, KeyError, ValueError, IndexError) as exc:
+        log.warning("geometry.json: нет данных для энергии (%s), беру значения по умолчанию", exc)
+    return lift, vols["plant-sulphide"], vols["plant-clay"]
 
 
 def face_quality(watcher, destination, defaults):
@@ -246,6 +265,10 @@ def main():
     belt_len = conveyor_length(twins)
     transit_s = belt_len / BELT_SPEED
     log.info("конвейер: %.0f м по geometry.json, руда едет %.1f мин", belt_len, transit_s / 60)
+    belt_lift, vol_sulph, vol_clay = geometry_for_energy()
+    supply_mw = twins["kz.bozshakol:power-grid"]["attributes"].get("supply_mw", 120)
+    log.info("энергия: подъём конвейера %.1f м, корпуса %.0f и %.0f тыс. м³, подключённая мощность %s МВт",
+             belt_lift, vol_sulph / 1000, vol_clay / 1000, supply_mw)
 
     ditto = DittoClient()
     # -- своё состояние: восстановить из Ditto (договор, раздел 4), иначе — twins.json --------------
@@ -270,10 +293,18 @@ def main():
             for i in range(10)] if belt_load > 0 else []   # [осталось ехать, с; тонны; показатели]
     cu_total = {"s": float(st("flotation-01", "cu_in_concentrate_total", 0.0)),
                 "c": float(st("plant-clay", "cu_in_concentrate_total", 0.0))}
-    saved_shift = {"shift": st("plant-sulphide", "shift", None),
+    saved_shift = {"shift": st("plant-sulphide", "shift", None), "hour": float(st("plant-sulphide", "shift_hour", 99.0)),   # нет часа — смену не продолжаем
+                   "from": float(st("plant-sulphide", "shift_counted_from", 0.0)),
                    "s_ore": float(st("plant-sulphide", "ore_shift_t", 0.0)), "s_cu": float(st("plant-sulphide", "cu_concentrate_shift", 0.0)),
                    "c_ore": float(st("plant-clay", "ore_shift_t", 0.0)), "c_cu": float(st("plant-clay", "cu_concentrate_shift", 0.0)),
-                   "energy": float(st("power-grid", "energy_shift", 0.0))}
+                   "energy": float(st("power-grid", "energy_shift", 0.0)),
+                   "idle_kwh": float(st("power-grid", "idle_loss_shift", 0.0)),
+                   "e_sulph": float(st("power-grid", "energy_sulphide_shift", 0.0)) * 1000.0,
+                   "e_clay": float(st("power-grid", "energy_clay_shift", 0.0)) * 1000.0,
+                   "peak15": float(st("power-grid", "peak_15min_shift", 0.0)) * 1000.0,
+                   "lost_ore": float(st("plant-sulphide", "power_limit_lost_ore_shift", 0.0)),
+                   "lost_cu": float(st("plant-sulphide", "power_limit_lost_cu_shift", 0.0))}
+    energy_total = float(st("power-grid", "energy_total", 0.0))   # МВт·ч с начала работы стенда
     log.info("состояние при старте: %d признаков из Ditto, %d из twins.json; бункер %.0f т, склад %.0f т, "
              "склад глины %.0f т, на ленте %.0f т, принято дробилкой %.0f т, медь в концентрате %.1f т",
              sources["Ditto"], sources["twins.json"], bunker.stock, coarse.stock, clay.stock, belt_load,
@@ -291,9 +322,15 @@ def main():
     blocked = coarse.stock >= COARSE_CAP   # склад полон — конвейер и дробилка стоят
     inflow_ema = PLAN_SULPH_TPH  # сглаженный приход на склад, т/ч (старт = план, без ложного прогноза остановки)
     declining_s = 0.0            # сколько модельных секунд подряд склад убывает
+    rising_s = 0.0               # сколько модельных секунд подряд склад растёт
+    not_accepting_s = 0.0        # сколько модельных секунд подряд дробилка не принимает руду
+    conveyor_on = True           # свой конвейер: включён (крутится) или остановлен по холостому ходу
+    p_window = []                # (шаг, кВт) за последние 15 модельных минут — для пиковой мощности
     energy_shift = 0.0
+    SHIFT_KEYS = ("s_ore", "s_cu", "c_ore", "c_cu", "idle_kwh", "e_sulph", "e_clay", "peak15", "lost_ore", "lost_cu")
     shift_acc = None
     shift_prev = None
+    count_from = 0.0             # с какого часа смены идут счётчики смены (не 0 — после перезапуска стенда посреди смены)
 
     while True:
         dt = clock.tick()
@@ -307,17 +344,22 @@ def main():
         else:
             shift, shift_hour = clock.shift()
         if shift != shift_prev:
-            if shift_prev is None and saved_shift["shift"] is not None and int(saved_shift["shift"]) == shift:
+            same_shift = (saved_shift["shift"] is not None and int(saved_shift["shift"]) == shift
+                          and shift_hour >= saved_shift["hour"] - 0.05)   # час смены не ушёл назад (часы mine не начались заново)
+            if shift_prev is None and same_shift:
                 # перезапуск внутри той же смены — продолжаем её счётчики
-                shift_acc = {k: saved_shift[k] for k in ("s_ore", "s_cu", "c_ore", "c_cu")}
+                shift_acc = {k: saved_shift[k] for k in SHIFT_KEYS}
                 energy_shift = saved_shift["energy"]
+                count_from = min(saved_shift["from"], shift_hour)
                 log.info("смена %d продолжается: руда за смену %.0f т, медь %.1f т", shift, shift_acc["s_ore"], shift_acc["s_cu"])
             else:   # новая смена (или смена прошла, пока сервис стоял) — счётчики смены с нуля
-                shift_acc = {"s_ore": 0.0, "s_cu": 0.0, "c_ore": 0.0, "c_cu": 0.0}
+                shift_acc = {k: 0.0 for k in SHIFT_KEYS}
                 energy_shift = 0.0
-                log.info("смена %d: счётчики смены с нуля", shift)
+                # счёт с середины смены (перезапуск стенда) — план считаем от этого часа, а не от начала смены
+                count_from = 0.0 if shift_prev is not None else shift_hour
+                log.info("смена %d: счётчики смены с нуля (с %.2f ч смены)", shift, count_from)
             shift_prev = shift
-        hours = max(shift_hour, 0.05)
+        hours = max(shift_hour - count_from, 0.05)
         now = sim_epoch(watcher.get("mine", "sim_time")) or clock.now()
 
         crusher_stop, _ = watcher.scenario("crusher_stop")
@@ -385,22 +427,63 @@ def main():
             crusher_state, reason = ("running", "") if crushed > 0 else ("idle", "нет руды в бункере")
         if crushed > 0:
             belt.append([transit_s, crushed, {k: bunker.q[k] for k in ("cu", "clay")}])
+            if not conveyor_on:
+                log.info("дробилка запустилась — конвейер снова пущен")
+            conveyor_on = True          # дробилка пошла — конвейер запускается
         crusher_tph = crushed / dt * 3600.0
         accepting = crusher_state != "stopped" and not overflow and bunker.stock <= BUNKER_T - TRUCK_MAX_T
         belt_t = sum(i[1] for i in belt)
+        # -- решение 1: лишний холостой ход конвейера ---------------------------------------------
+        not_accepting_s = not_accepting_s + dt if not accepting else 0.0
+        if belt_t > 0:
+            conveyor_on = True          # с рудой на ленте конвейер не останавливаем
+        elif conveyor_on and not_accepting_s >= CONVEYOR_AUTOSTOP_S:
+            conveyor_on = False         # дробилка не принимает дольше 30 мин, лента пуста — свой конвейер останавливаем
+            log.info("дробилка не принимает руду %.0f мин, лента пуста — конвейер остановлен (экономия холостого хода)",
+                     not_accepting_s / 60)
         if blocked:
             conveyor_state = "stopped"
         elif belt_t > 0:
             conveyor_state = "running"
         else:
-            conveyor_state = "stopped" if crusher_state == "stopped" else "idle"
+            conveyor_state = "idle" if conveyor_on else "stopped"   # idle — крутится пустым (холостой ход)
 
-        # -- сульфидная фабрика: питание = min(план, что может дать склад) ----------------------
+        # -- фабрика глинистой руды: своя линия от склада глинистой руды ------------------------
+        clay_fed = clay.take(PLAN_CLAY_TPH * dt / 3600.0)
+        clay_tph = clay_fed / dt * 3600.0
+        rec_c = recovery_clay(clay.q["cu"], clay.q["clay"])
+        cu_c = clay_fed * clay.q["cu"] / 100.0 * rec_c / 100.0
+        cu_total["c"] += cu_c
+        shift_acc["c_ore"] += clay_fed
+        shift_acc["c_cu"] += cu_c
+        plan_c = 100.0 * shift_acc["c_ore"] / (PLAN_CLAY_TPH * hours)
+        clay_accepting = not clay_overflow and clay.stock <= CLAY_CAP - TRUCK_MAX_T
+
+        # -- мощность, не зависящая от питания мельниц ------------------------------------------
+        temp_c = watcher.get("mine", "temperature")
+        temp_c = float(temp_c) if isinstance(temp_c, (int, float)) else -12.0
+        p_crusher = en.crusher_kw(crusher_tph, CRUSHER_TPH, crusher_state)
+        belt_tph = belt_t / (transit_s / 3600.0) if transit_s > 0 else 0.0   # поток руды по ленте, т/ч
+        p_conv, p_conv_idle = en.conveyor_kw(belt_tph, belt_len, belt_lift, BELT_SPEED, conveyor_state in ("running", "idle"))
+        x_clay = clay_tph / PLAN_CLAY_TPH
+        p_clay = en.linear_kw(en.CLAY_KW, x_clay, clay_tph > 0)
+        p_heat_s = en.heating_kw(vol_sulph, temp_c) + en.VENT_KW * vol_sulph / (vol_sulph + vol_clay)
+        p_heat_c = en.heating_kw(vol_clay, temp_c) + en.VENT_KW * vol_clay / (vol_sulph + vol_clay)
+        rest_kw = p_crusher + p_conv + p_clay + p_heat_s + p_heat_c + en.AUX_KW
+
+        # -- решение 2: ограничение мощности от энергосистемы (сценарий power_limit) ----------------
+        limit_on, limit_p = watcher.scenario("power_limit")
+        limit_mw = float(limit_p.get("limit_mw", POWER_LIMIT_DEFAULT_MW) or POWER_LIMIT_DEFAULT_MW) if limit_on else None
+        x_limit = en.limit_feed_fraction(limit_mw * 1000.0, rest_kw, not sag_maint) if limit_on else 1.0
+
+        # -- сульфидная фабрика: питание = min(план × доля по пределу мощности, что может дать склад) -
+        could = min(PLAN_SULPH_TPH * dt / 3600.0, coarse.stock)      # сколько взяла бы без ограничения
         if sag_maint:
             milled, sag_state = 0.0, "maintenance"
         else:
-            milled = coarse.take(PLAN_SULPH_TPH * dt / 3600.0)
+            milled = coarse.take(min(could, PLAN_SULPH_TPH * x_limit * dt / 3600.0))
             sag_state = "running" if milled > 0 else "idle"
+        lost_t = 0.0 if sag_maint else max(0.0, could - milled)         # недовзято из-за предела мощности
         feed_tph = milled / dt * 3600.0
         feed_cu, feed_clay = coarse.q["cu"], coarse.q["clay"]
         rec_s = recovery_sulphide(feed_cu, feed_clay)
@@ -410,6 +493,9 @@ def main():
         shift_acc["s_ore"] += milled
         shift_acc["s_cu"] += cu_s
         plan_s = 100.0 * shift_acc["s_ore"] / (PLAN_SULPH_TPH * hours)
+        lost_cu = lost_t * feed_cu / 100.0 * rec_s / 100.0
+        shift_acc["lost_ore"] += lost_t
+        shift_acc["lost_cu"] += lost_cu
 
         # -- запас склада и прогноз остановки фабрики -------------------------------------------
         inflow_tph = discharged / dt * 3600.0
@@ -435,23 +521,65 @@ def main():
         if not alarm and not sag_maint:
             forecast, h_stop = "запас в норме", None
 
-        # -- фабрика глинистой руды: своя линия от склада глинистой руды ------------------------
-        clay_fed = clay.take(PLAN_CLAY_TPH * dt / 3600.0)
-        clay_tph = clay_fed / dt * 3600.0
-        rec_c = recovery_clay(clay.q["cu"], clay.q["clay"])
-        cu_c = clay_fed * clay.q["cu"] / 100.0 * rec_c / 100.0
-        cu_total["c"] += cu_c
-        shift_acc["c_ore"] += clay_fed
-        shift_acc["c_cu"] += cu_c
-        plan_c = 100.0 * shift_acc["c_ore"] / (PLAN_CLAY_TPH * hours)
-        clay_accepting = not clay_overflow and clay.stock <= CLAY_CAP - TRUCK_MAX_T
+        # -- прогноз переполнения склада: при ремонте мельницы сразу, иначе — если склад растёт > 15 мин --
+        net_in = inflow_ema - feed_tph                              # т/ч: приход − расход
+        rising_s = rising_s + dt if net_in > 50.0 else 0.0
+        overflow_alarm = sag_maint or rising_s >= ALARM_DECLINE_S
+        if blocked:
+            ov_text, h_full = "склад полон — дробилка стоит", 0.0
+        elif overflow_alarm and net_in > 50.0:
+            h_full = (COARSE_CAP - coarse.stock) / net_in
+            ov_text = "склад переполнится в " + sim_hhmm(now + h_full * 3600.0, now) + " — дробилка встанет"
+        else:
+            ov_text, h_full = ("приход не больше расхода" if overflow_alarm else "запас в норме"), None
+        overflow_expected = blocked or (overflow_alarm and h_full is not None)
 
-        # -- энергия (упрощённо) -----------------------------------------------------------------
-        p_sag = P_SAG * feed_tph / PLAN_SULPH_TPH if sag_state == "running" else 0.0
-        p_ball = P_BALL * feed_tph / PLAN_SULPH_TPH if sag_state == "running" else 0.0
-        p_cr = P_CRUSHER * crusher_tph / CRUSHER_TPH if crusher_state == "running" else 0.0
-        load = p_sag + p_ball + p_cr + P_OTHER + (1.5 if clay_tph > 0 else 0.0)
-        energy_shift += load * dt / 3600.0
+        # -- энергия: мощность по потребителям, кВт ----------------------------------------------------
+        x_s = feed_tph / PLAN_SULPH_TPH
+        mills_on = sag_state in ("running", "idle")
+        p_sag, p_ball, p_other = en.sulphide_kw(x_s, mills_on, mills_on)
+        p_pebble = en.linear_kw(en.PEBBLE_KW, x_s, mills_on)
+        groups = {
+            "mills": p_sag + p_ball,
+            "crushing": p_crusher + p_pebble + p_conv,
+            "flotation_other": sum(p_other.values()) + en.AUX_KW,
+            "clay_plant": p_clay,
+            "heating": p_heat_s + p_heat_c,
+        }
+        total_kw = sum(groups.values())
+        sulph_kw = groups["mills"] + groups["crushing"] + groups["flotation_other"] + p_heat_s
+        # холостой ход: агрегаты включены, но работают без руды (это потери)
+        idle_kw = ((en.CRUSHER_IDLE_KW if crusher_state == "idle" else 0.0) + (p_conv_idle if conveyor_state == "idle" else 0.0)
+                   + ((p_sag + p_ball + sum(p_other.values()) + p_pebble) if sag_state == "idle" else 0.0))
+        e_step = total_kw * dt / 3600.0 / 1000.0                    # МВт·ч за шаг
+        energy_shift += e_step
+        energy_total += e_step
+        shift_acc["idle_kwh"] += idle_kw * dt / 3600.0
+        shift_acc["e_sulph"] += sulph_kw * dt / 3600.0
+        shift_acc["e_clay"] += (p_clay + p_heat_c) * dt / 3600.0
+        # удельный расход по фабрикам — за смену (кВт·ч ÷ т)
+        sp_sulph = shift_acc["e_sulph"] / shift_acc["s_ore"] if shift_acc["s_ore"] > 1.0 else 0.0
+        sp_clay = shift_acc["e_clay"] / shift_acc["c_ore"] if shift_acc["c_ore"] > 1.0 else 0.0
+        # пиковая 15-минутная мощность за смену: среднее за последние 15 модельных минут
+        p_window.append((dt, total_kw))
+        while sum(w for w, _ in p_window) - p_window[0][0] >= 900.0:
+            p_window.pop(0)
+        win_s = sum(w for w, _ in p_window)
+        p15 = sum(w * p for w, p in p_window) / win_s if win_s > 0 else total_kw
+        if win_s >= 900.0 * 0.9:
+            shift_acc["peak15"] = max(shift_acc["peak15"], p15)
+        # рекомендация по холостому ходу
+        conv_idle_long = conveyor_state == "idle" and not_accepting_s >= ADVICE_IDLE_S
+        if conv_idle_long:
+            advice = (f"остановить конвейер: дробилка не принимает руду {not_accepting_s / 60:.0f} мин, "
+                      f"лента пустая — потери {p_conv_idle:.0f} кВт·ч/ч")
+        elif conveyor_state == "stopped" and not conveyor_on and not blocked:
+            advice = "конвейер остановлен по холостому ходу — запустится вместе с дробилкой"
+        else:
+            advice = ""
+        supply_kw = float(supply_mw) * 1000.0
+        cap_kw = limit_mw * 1000.0 if limit_on else supply_kw
+        load_level = "over" if total_kw > cap_kw * 1.001 else ("near" if total_kw > cap_kw * 0.9 else "normal")
 
         # -- публикация --------------------------------------------------------------------------
         r = round
@@ -464,7 +592,7 @@ def main():
             "trucks_queued": feature(int(watcher.get("dispatch", "queue_crusher", 0) or 0), "шт"),
             "feed_cu": feature(r(bunker.q["cu"], 3), "% Cu"),
             "feed_p80": feature(r(bunker.q["p80"], 0), "мм"), "feed_hardness": feature(r(bunker.q["hardness"], 1), "ед. Протодьяконова"),
-            "power": feature(r(p_cr, 2), "МВт"),
+            "power": feature(r(p_crusher / 1000.0, 3), "МВт"),
         })
         telemetry.publish("conveyor-01", {
             "state": feature(conveyor_state),
@@ -473,6 +601,8 @@ def main():
             "speed": feature(0.0 if conveyor_state != "running" else BELT_SPEED, "м/с"),
             "load": feature(r(belt_t, 1), "т"),
             "length": feature(r(belt_len, 0), "м"), "transit_time": feature(r(transit_s / 60.0, 1), "мин"),
+            "power": feature(r(p_conv, 0), "кВт"), "idle_power": feature(r(p_conv_idle if conveyor_state == "idle" else 0.0, 0), "кВт"),
+            "auto_stopped": feature(not conveyor_on), "advice": feature(advice),
         })
         telemetry.publish("stockpile-coarse", {
             "stock": feature(r(coarse.stock, 1), "т"), "cu_grade": feature(r(feed_cu, 3), "% Cu"),
@@ -485,12 +615,16 @@ def main():
             "alarm": feature(alarm), "declining_min": feature(r(declining_s / 60.0, 0), "мин"),
             "inflow": feature(r(inflow_ema, 1), "т/ч"), "outflow": feature(r(feed_tph, 1), "т/ч"),
             "full": feature(blocked),
+            "overflow_forecast": feature(ov_text), "overflow_expected": feature(overflow_expected),
+            "hours_to_full": feature(r(h_full, 2) if h_full is not None else -1.0, "ч"),
+            "rising_min": feature(r(rising_s / 60.0, 0), "мин"),
             "received_total": feature(r(coarse.received, 1), "т"),
             "reclaimed_total": feature(r(coarse.reclaimed, 1), "т"),
         })
         telemetry.publish("sag-mill-01", {
             "state": feature(sag_state), "throughput": feature(r(feed_tph, 1), "т/ч"),
-            "power": feature(r(p_sag, 2), "МВт"), "p80_product": feature(150, "мкм"),
+            "power": feature(r(p_sag / 1000.0, 2), "МВт"), "ball_mills_power": feature(r(p_ball / 1000.0, 2), "МВт"),
+            "mills_power": feature(r(groups["mills"] / 1000.0, 2), "МВт"), "p80_product": feature(150, "мкм"),
         })
         telemetry.publish("flotation-01", {
             "state": feature("running" if feed_tph > 0 else ("maintenance" if sag_maint else "idle")),
@@ -502,12 +636,18 @@ def main():
         telemetry.publish("plant-sulphide", {
             "feed_rate": feature(r(feed_tph, 1), "т/ч"), "plan_rate": feature(r(PLAN_SULPH_TPH, 0), "т/ч"),
             "feed_cu": feature(r(feed_cu, 3), "% Cu"), "feed_clay": feature(r(feed_clay, 1), "%"),
-            "plan_fulfilment": feature(r(plan_s, 1), "%"), "shift": feature(shift),
+            "plan_fulfilment": feature(r(plan_s, 1), "%"), "shift": feature(shift), "shift_hour": feature(r(shift_hour, 2), "ч"),
+            "shift_counted_from": feature(r(count_from, 2), "ч"),
             "ore_shift_t": feature(r(shift_acc["s_ore"], 1), "т"),
             "cu_concentrate_shift": feature(r(shift_acc["s_cu"], 2), "т"),
             "cu_year_pace": feature(r(cu_s / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
             "recovery": feature(r(rec_s, 2), "%"),
             "state": feature("running" if feed_tph > 0 else ("maintenance" if sag_maint else "idle")),
+            "specific_energy": feature(r(sp_sulph, 1), "кВт·ч/т"),
+            "power_limited": feature(bool(limit_on and lost_t > 0)),
+            "power_limit_lost_ore": feature(r(lost_t / dt * 3600.0, 0), "т/ч"),
+            "power_limit_lost_ore_shift": feature(r(shift_acc["lost_ore"], 0), "т"),
+            "power_limit_lost_cu_shift": feature(r(shift_acc["lost_cu"], 2), "т"),
         })
         telemetry.publish("stockpile-clay", {
             "stock": feature(r(clay.stock, 1), "т"), "cu_grade": feature(r(clay.q["cu"], 3), "% Cu"),
@@ -528,11 +668,31 @@ def main():
             "cu_year_pace": feature(r(cu_c / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
             "recovery": feature(r(rec_c, 2), "%"),
             "state": feature("running" if clay_tph > 0 else "idle"),
+            "specific_energy": feature(r(sp_clay, 1), "кВт·ч/т"),
         })
+        mw = lambda kw: r(kw / 1000.0, 2)   # noqa: E731
         telemetry.publish("power-grid", {
-            "load": feature(r(load, 2), "МВт"), "sag_mill": feature(r(p_sag, 2), "МВт"),
-            "ball_mills": feature(r(p_ball, 2), "МВт"), "crusher": feature(r(p_cr, 2), "МВт"),
-            "other": feature(P_OTHER, "МВт"), "energy_shift": feature(r(energy_shift, 1), "МВт·ч"),
+            "load": feature(mw(total_kw), "МВт"),
+            "mills": feature(mw(groups["mills"]), "МВт"), "sag_mill": feature(mw(p_sag), "МВт"),
+            "ball_mills": feature(mw(p_ball), "МВт"),
+            "crushing_conveyor": feature(mw(groups["crushing"]), "МВт"), "crusher": feature(mw(p_crusher), "МВт"),
+            "conveyor": feature(mw(p_conv), "МВт"),
+            "flotation_other": feature(mw(groups["flotation_other"]), "МВт"),
+            "clay_plant": feature(mw(groups["clay_plant"]), "МВт"), "heating": feature(mw(groups["heating"]), "МВт"),
+            "other": feature(mw(groups["flotation_other"] + groups["heating"]), "МВт"),
+            "outside_temp": feature(r(temp_c, 1), "°C"),
+            "energy_shift": feature(r(energy_shift, 1), "МВт·ч"), "energy_total": feature(r(energy_total, 1), "МВт·ч"),
+            "energy_sulphide_shift": feature(r(shift_acc["e_sulph"] / 1000.0, 1), "МВт·ч"),
+            "energy_clay_shift": feature(r(shift_acc["e_clay"] / 1000.0, 1), "МВт·ч"),
+            "specific_sulphide": feature(r(sp_sulph, 1), "кВт·ч/т"), "specific_clay": feature(r(sp_clay, 1), "кВт·ч/т"),
+            "mills_share": feature(r(100.0 * groups["mills"] / sulph_kw, 1) if sulph_kw > 0 else 0.0, "%"),
+            "sulphide_plant": feature(mw(sulph_kw), "МВт"),
+            "peak_15min": feature(mw(p15), "МВт"), "peak_15min_shift": feature(mw(shift_acc["peak15"]), "МВт"),
+            "idle_power": feature(r(idle_kw, 0), "кВт"), "idle_loss_shift": feature(r(shift_acc["idle_kwh"], 0), "кВт·ч"),
+            "advice": feature(advice),
+            "supply_mw": feature(float(supply_mw), "МВт"),
+            "limit_on": feature(bool(limit_on)), "limit_mw": feature(float(limit_mw) if limit_on else 0.0, "МВт"),
+            "load_level": feature(load_level),
         })
         if telemetry.sent % 90 < 9:
             log.info("дробилка %s %.0f/%.0f т/ч (бункер %.0f т, accepting=%s); лента %.0f т; склад %.0f т (%.1f ч, %s); "
