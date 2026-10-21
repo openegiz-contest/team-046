@@ -176,6 +176,25 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
   display: inline-block; min-width: 14px; text-align: center; padding: 0 5px; font: 11px/16px "Segoe UI", Roboto, Arial, sans-serif;
   color: var(--ink); background: #fff; border: 1px solid #c9ccd2; border-bottom-width: 2px; border-radius: 4px;
 }
+/* --- сверка с реальностью --- */
+#reality { position: fixed; top: 92px; right: 14px; z-index: 15; }
+#reality[hidden] { display: none; }
+#reality .reality-card {
+  width: 600px; max-width: calc(100vw - 340px); max-height: calc(100vh - 120px); overflow-y: auto; box-sizing: border-box;
+  background: rgba(252, 251, 248, 0.97); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 16px; line-height: 1.4;
+}
+#reality .card-head b { font-size: 15px; }
+#reality-close { border: none; background: transparent; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); }
+#reality p { margin: 6px 0; }
+#reality-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+#reality-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+#reality-table td { padding: 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+#reality-table td.num { white-space: nowrap; text-align: right; }
+#reality-table .src { color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+#reality-table .dev { font-weight: 700; border-radius: 999px; padding: 2px 8px; display: inline-block; }
+#reality-table .dev.ok { background: rgba(47, 143, 107, 0.15); color: var(--ok); }
+#reality-table .dev.off { background: rgba(212, 154, 20, 0.18); color: #9a6c00; }
+#reality-table .dev.warmup, #reality-table .dev.no_data { background: rgba(110, 116, 128, 0.12); color: var(--muted); }
 #guide { position: fixed; inset: 0; background: rgba(30, 36, 44, 0.28); display: flex; align-items: center; justify-content: center; z-index: 20; }
 #guide[hidden] { display: none; }
 #guide .guide-card {
