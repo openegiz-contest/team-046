@@ -94,7 +94,8 @@ def reality_features(ctx, snap, t):
         samples.pop(0)
     rows, meta = reality_rows(samples, ctx["reality_t0"])
     out = {"reality": feature(json.dumps({"rows": rows, **meta}, ensure_ascii=False), "json"),
-           "reality_warmup": feature(meta["warmup"])}
+           "reality_warmup": feature(meta["warmup"]),
+           "real_window_min": feature(meta["window_min"], "мин")}   # число — для Grafana (логические Telegraf не хранит)
     for r in rows:   # числа для Grafana: среднее модели за час (нет данных — признак не публикуется)
         if r["model"] is not None:
             out["real_" + r["id"]] = feature(r["model"], r["unit"])
