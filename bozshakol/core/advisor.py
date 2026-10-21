@@ -18,7 +18,7 @@ log = setup_logging("bz-advisor")
 PERIOD_S = 5.0
 
 WATCH = ({"mine", "scenarios", "dispatch", "crusher-01", "stockpile-coarse", "stockpile-clay",
-          "plant-sulphide", "plant-clay", "power-grid", "road-ramp-1", "road-ramp-2", "road-crusher"}
+          "plant-sulphide", "plant-clay", "road-ramp-1", "road-ramp-2", "road-crusher"}
          | {f"face-{i:02d}" for i in range(1, 7)} | {f"excavator-{i:02d}" for i in range(1, 7)}
          | {f"truck-{i:02d}" for i in range(1, 29)})
 

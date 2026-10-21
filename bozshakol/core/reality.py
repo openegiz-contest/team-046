@@ -14,7 +14,7 @@ TOL_PCT = 10.0           # «в пределах» — отклонение не
 KAZ = ("KAZ Minerals, Q4 2025 Production report — "
        "https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf")
 HEXAGON = "im-mining.com, 28.03.2025 — https://im-mining.com/2025/03/28/hexagons-fleet-and-fatigue-management-in-tandem-at-bozshakol/"
-NDT = "Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101) — по данным модуля переработки"
+NDT = ("Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101) — диапазон приведён модулем переработки (ветка processing/energy), координатором не перепроверен")
 
 # id, название, единица, реальное значение или диапазон, источник, из чего модель
 ROWS = [
@@ -31,7 +31,7 @@ ROWS = [
     ("wait_excavator", "Ожидание самосвала у экскаватора (режим «авто»)", "мин", None, (1.0, 1.5),
      HEXAGON + " (было 3–5 мин до диспетчеризации)", "dispatch.avg_wait_excavator"),
     ("energy_kwh_t", "Удельная электроэнергия фабрики", "кВт·ч/т", None, (26.9, 36.3), NDT,
-     "plant-sulphide.specific_energy (публикует модуль переработки)"),
+     "plant-sulphide.specific_energy — модуль переработки пока не публикует"),
 ]
 
 
@@ -86,7 +86,10 @@ def reality_rows(samples, t0=None):
         model = sum(vals) / len(vals) if vals else None
         row = {"id": rid, "name": name, "unit": unit, "real": real, "real_range": list(rng) if rng else None,
                "model": None if model is None else round(model, 3), "dev_pct": None, "source": source,
-               "model_from": model_from}
+               "model_from": model_from,
+               # подача на фабрики — калибровка: план модуля переработки посчитан из того же отчёта (data/SOURCES.md),
+               # поэтому совпадение ожидаемо и не является независимой проверкой
+               "calibrated": rid in ("feed_sulphide", "feed_clay")}
         if model is None:
             row["status"] = "no_data"
         else:

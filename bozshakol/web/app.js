@@ -632,12 +632,13 @@ function renderReality() {
     'Зелёный — отклонение в пределах ±10 %, жёлтый — больше.';
   tbody.innerHTML = data.rows.map((r) => {
     const real = r.real_range ? fmtNum(r.real_range[0], r.unit) + '–' + fmtNum(r.real_range[1], r.unit) : fmtNum(r.real, r.unit);
-    const model = r.model === null || r.model === undefined ? '—' : fmtNum(r.model, r.unit);
+    const model = r.model === null || r.model === undefined ? null : fmtNum(r.model, r.unit);
     const dev = r.dev_pct === null || r.dev_pct === undefined ? REALITY_STATUS[r.status] || '—'
       : (r.dev_pct > 0 ? '+' : '') + fmt(r.dev_pct, 1) + ' %' + (r.status === 'warmup' ? ' · разгон' : '');
     return '<tr title="' + esc('Реальность: ' + r.source + '\nМодель: ' + r.model_from) + '">' +
-      '<td>' + esc(r.name) + '<div class="src">' + esc(r.source.split(' — ')[0]) + '</div></td>' +
-      '<td class="num">' + esc(model) + ' ' + esc(r.unit) + '</td>' +
+      '<td>' + esc(r.name) + '<div class="src">' + esc(r.source.split(' — ')[0]) +
+      (r.calibrated ? ' · калибровка: план модели взят из этого же отчёта' : '') + '</div></td>' +
+      '<td class="num">' + (model === null ? '—' : esc(model) + ' ' + esc(r.unit)) + '</td>' +
       '<td class="num">' + esc(real) + ' ' + esc(r.unit) + '</td>' +
       '<td class="num"><span class="dev ' + esc(r.status) + '">' + esc(dev) + '</span></td></tr>';
   }).join('');
