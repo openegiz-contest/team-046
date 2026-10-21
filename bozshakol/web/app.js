@@ -698,38 +698,54 @@ const roadMats = {
 function nodePos(n) {
   return toScene(n[0], n[1], n[2] + mp().road.lift);
 }
+// Коробки дорог сливаются в одну геометрию на (дорогу, материал): вызовов отрисовки в разы меньше
+function mergeBoxes(list) {
+  const pos = [], nor = [];
+  for (const { geo, matrix } of list) {
+    const g = geo.toNonIndexed(); g.applyMatrix4(matrix);
+    pos.push(...g.attributes.position.array); nor.push(...g.attributes.normal.array);
+    geo.dispose(); g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return out;
+}
 function buildRoads() {
   const ramps = {};   // road -> [точки] для подписи (середина съезда)
+  const parts = {};   // 'дорога|материал' -> [{geo, matrix}]
+  const add = (road, mat, geo, matrix) => (parts[road + '|' + mat] || (parts[road + '|' + mat] = [])).push({ geo, matrix });
+  const R = mp().road, schema = mode === 'schema';
   for (const e of geometry.edges) {
     const a = geometry.nodes[e.from], b = geometry.nodes[e.to];
     if (!a || !b) continue;
     const isRamp = /^road-ramp/.test(e.road);
     const pa = nodePos(a), pb = nodePos(b);
     const len = pa.distanceTo(pb);
-    const R = mp().road, schema = mode === 'schema';
     const width = isRamp ? R.ramp : R.w;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(width, R.h, len + width), isRamp ? roadMats.ramp : roadMats.open);
-    m.position.copy(pa).add(pb).multiplyScalar(0.5);
-    m.lookAt(pb);                       // ось Z коробки — вдоль ребра
-    m.userData.road = e.road;
-    terrain.add(m);
-    (roadMeshes[e.road] || (roadMeshes[e.road] = [])).push(m);
+    const o = new THREE.Object3D();
+    o.position.copy(pa).add(pb).multiplyScalar(0.5);
+    o.lookAt(pb);                       // ось Z коробки — вдоль ребра
+    o.updateMatrix();
+    add(e.road, isRamp ? 'ramp' : 'open', new THREE.BoxGeometry(width, R.h, len + width), o.matrix.clone());
+    const below = (dy) => new THREE.Matrix4().makeTranslation(0, -dy, 0).multiply(o.matrix);
     if (schema) {
       // схема: светлая обочина чуть ниже полотна; у съездов — отбойный вал по обеим сторонам
-      const sh = new THREE.Mesh(new THREE.BoxGeometry(width + 2.4, R.h, len + width + 1.2), roadMats.shoulder);
-      sh.position.copy(m.position); sh.position.y -= 0.2; sh.quaternion.copy(m.quaternion);
-      terrain.add(sh);
+      add(e.road, 'shoulder', new THREE.BoxGeometry(width + 2.4, R.h, len + width + 1.2), below(0.2));
       if (isRamp) for (const side of [-1, 1]) {
-        const v = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.3, len), roadMats.berm);
-        v.position.set(side * (width / 2 + 0.9), 0.5, 0); m.add(v);
+        add(e.road, 'berm', new THREE.BoxGeometry(1.1, 1.3, len), o.matrix.clone().multiply(new THREE.Matrix4().makeTranslation(side * (width / 2 + 0.9), 0.5, 0)));
       }
     } else {
-      // бровка: чуть шире и чуть ниже полотна — у всех дорог (на съездах шире — отбойный вал)
-      const edge = new THREE.Mesh(new THREE.BoxGeometry(width + (isRamp ? 10 : 7), isRamp ? 2.6 : 1.4, len + width + 6), roadMats.edge);
-      edge.position.copy(m.position); edge.position.y -= isRamp ? 1.2 : 0.4; edge.quaternion.copy(m.quaternion);   // верх бровки ниже полотна
-      terrain.add(edge);
+      // бровка: чуть шире и чуть ниже полотна — у всех дорог (на съездах шире — отбойный вал); верх бровки ниже полотна
+      add(e.road, 'edge', new THREE.BoxGeometry(width + (isRamp ? 10 : 7), isRamp ? 2.6 : 1.4, len + width + 6), below(isRamp ? 1.2 : 0.4));
     }
     if (isRamp) (ramps[e.road] || (ramps[e.road] = [])).push(pa, pb);
+  }
+  for (const [key, list] of Object.entries(parts)) {
+    const [road, mat] = key.split('|');
+    const m = new THREE.Mesh(mergeBoxes(list), roadMats[mat]);
+    terrain.add(m);
+    if (mat === 'open' || mat === 'ramp') { m.userData.road = road; (roadMeshes[road] || (roadMeshes[road] = [])).push(m); }
   }
   for (const [rid, pts] of Object.entries(ramps)) {
     const mid = pts[Math.floor(pts.length / 2)].clone(); mid.y += 2 * mp().unit;
@@ -907,8 +923,8 @@ const shadowCasters = new WeakSet();
 function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
-  // «Обычное»: кадр в разрешении 0,85 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
-  renderer.setPixelRatio(high ? 1 : 0.85);
+  // «Обычное»: кадр в разрешении 0,75 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
+  renderer.setPixelRatio(high ? 1 : 0.75);
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
@@ -1066,7 +1082,7 @@ function frame(now) {
   window.__quality = quality;
   window.__sceneFrames = (window.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
   window.__renderInfo = renderer.info.render;
-  updateLabels();
+  if (quality === 'high' || frameNo % 2 === 0 || tween) updateLabels();   // в «Обычном» подписи — через кадр
 }
 
 // ---------------------------------------------------------------- заправка (общая сцена)
