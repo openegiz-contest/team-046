@@ -216,7 +216,7 @@ function updateLabels() {
     const focused = id && (id === openedThing || id === hoverThing);
     let imp = L.importance;
     if (focused) imp = 4;
-    if (imp < 3 && dist > (LABEL_DIST[Math.max(1, Math.min(2, Math.round(imp)))] || 2600)) continue;
+    if (imp < 3 && dist > (LABEL_DIST[Math.max(1, Math.min(2, Math.round(imp)))] ?? 2600)) continue;
     _v.project(camera);
     if (_v.z > 1 || _v.x < -1.05 || _v.x > 1.05 || _v.y < -1.05 || _v.y > 1.05) continue;
     L.sx = (_v.x + 1) / 2 * w; L.sy = (1 - _v.y) / 2 * h; L.imp = imp; L.dist = dist;
@@ -1416,13 +1416,15 @@ function separateDrills() {
     }
   }
 }
-// Зоны забоев слоя геологии нарисованы плоскостями в метрах (120 × 60 м), слой каждый кадр ставит им
+// Зоны забоев слоя геологии нарисованы в метрах (плоскость или группа плиток ≈ 120 × 60 м), слой каждый кадр ставит им
 // масштаб ctx.markerScale — в схеме после обновления слоя уменьшаем их до ≈ 24 × 12 единиц
 function shrinkFaceZones() {
   if (mode !== 'schema') return;
   for (const o of clickable) {
-    if (!o.isMesh || !/:face-/.test(o.userData.thingId || '')) continue;
-    o.scale.set(markerScale * 0.2, markerScale * 0.2, markerScale);
+    if (!/:face-/.test(o.userData.thingId || '')) continue;
+    // плоскость (повёрнута в горизонталь: локальные x, y) или группа плиток (x, z сцены)
+    if (o.isMesh) o.scale.set(markerScale * 0.2, markerScale * 0.2, markerScale);
+    else o.scale.set(markerScale * 0.2, markerScale, markerScale * 0.2);
   }
 }
 // В схеме дороги повёрнуты не так, как в жизни: самосвал разворачивается носом по направлению своего движения в сцене
