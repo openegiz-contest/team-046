@@ -160,9 +160,10 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   // --- полный перенос точки: место в схеме, высота дороги/поверхности, «земля» в реальных координатах
   const clampX = (v) => Math.max(bx0 + 3, Math.min(bx1 - 3, v)), clampY = (v) => Math.max(by0 + 3, Math.min(by1 - 3, v));
   function resolve(x, y) {
-    const cv = onConveyor(x, y);
+    const ne0 = nearestEdge(x, y);
+    const cv = ne0 && ne0.d < 2 ? null : onConveyor(x, y);   // на самой дороге — дорога главнее трассы конвейера
     if (cv) return { xs: clampX(cv[0]), ys: clampY(cv[1]), base: surfaceAt(cv[0], cv[1]), ground: terrainApi.groundAt(x, y) };
-    const ne = nearestEdge(x, y);
+    const ne = ne0;
     const ex = exactAt(x, y);
     let xs, ys, base, ground;
     let road = null;

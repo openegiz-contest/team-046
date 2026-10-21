@@ -19,7 +19,8 @@ PIT = {"center": [40, 55], "semi_axes": [160, 88], "benches": 7, "bench_height":
 
 # Наземные узлы и объекты: реальное место (м) → место в схеме (единицы); север — вверх (+y)
 SURFACE_NODES = {
-    "r1-top": [-4, -40], "r2-top": [84, -40], "crusher": [26, -56], "rim-ne": [6, -86],
+    "r1-top": [-4, -29.8], "r2-top": [84, -29.8],   # выезды съездов — на самом борту: весь спуск внутри карьера схемы
+    "crusher": [26, -56], "rim-ne": [6, -86],
     "fuel-station": [-12, -76], "rim-w": [-50, -52], "rim-sw": [130, -74], "rim-e": [92, -74],
     "dump-waste-1": [182, -92], "stockpile-clay": [-28, -128],
 }
@@ -131,6 +132,19 @@ def main():
             objects[oid] = {"position": [round(xs, 2), round(ys, 2)], "scale": 1.0}
         else:
             raise SystemExit(f"объект {oid} без места в схеме")
+    # забой дальше от дороги, чем его экскаватор (как в жизни): за экскаватором по той же линии
+    for o in g["objects"]:
+        if o.get("kind") != "excavator" or o.get("face") not in nodes:
+            continue
+        face_o = next((f for f in g["objects"] if f["id"] == o["face"]), None)
+        if not face_o:
+            continue
+        node_r, node_s = g["nodes"][o["face"]], nodes[o["face"]]
+        d_exc = math.hypot(o["position"][0] - node_r[0], o["position"][1] - node_r[1])
+        d_face = math.hypot(face_o["position"][0] - node_r[0], face_o["position"][1] - node_r[1])
+        if d_face > d_exc > 1:
+            ex = objects[o["id"]]["position"]
+            objects[face_o["id"]]["position"] = [round(node_s[0] + (ex[0] - node_s[0]) * 1.6, 2), round(node_s[1] + (ex[1] - node_s[1]) * 1.6, 2)]
     # опорные точки поверхности: реальное место → схема
     anchors = []
     for n, (xs, ys) in SURFACE_NODES.items():

@@ -1166,6 +1166,8 @@ function teardownWorld() {
   for (const k of Object.keys(badges)) delete badges[k];
   for (const k of Object.keys(adviceBadges)) delete adviceBadges[k];
   for (const k of Object.keys(downBadges)) delete downBadges[k];
+  // кнопки, которые слои добавили в верхнюю панель (их обработчики — у старой копии модуля): слой создаст заново
+  for (const id of ['btn-geo-cu']) { const el = document.getElementById(id); if (el) el.remove(); }
   for (const d of dust) d.sp.visible = false;
   lastAdviceRaw = null;
   followId = null; tween = null;

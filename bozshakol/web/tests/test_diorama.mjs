@@ -42,6 +42,14 @@ for (const e of dio.edges) {
     if (q.d < 0.01) ok(Math.abs(q.t - t) < 0.01, `${e.from}–${e.to}: доля пути ${q.t.toFixed(3)} вместо ${t}`);
   }
 }
+// 2б. дорога нигде не уходит под поверхность схемы (самосвал не «тонет» на выезде из карьера)
+for (const e of dio.edges) {
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40, x = e.ra[0] + (e.rb[0] - e.ra[0]) * t, y = e.ra[1] + (e.rb[1] - e.ra[1]) * t, z = e.ra[2] + (e.rb[2] - e.ra[2]) * t;
+    const p = dio.toScene(x, y, z), surf = dio.surfaceAt(p.x, -p.z);
+    ok(p.y >= surf - 0.3, `${e.from}–${e.to} t=${t.toFixed(2)}: дорога ниже поверхности на ${(surf - p.y).toFixed(2)}`);
+  }
+}
 // 3. сетка реальных точек вокруг рудника — внутри макета
 for (let x = -6000; x <= 5000; x += 250) for (let y = -4000; y <= 3000; y += 250) ok(inside(dio.mapXY(x, y)), `точка ${x}, ${y} вне макета`);
 
