@@ -72,7 +72,7 @@ const groundAt = (x, y) => (mode === 'schema' && dio ? dio.groundAt(x, y) : terr
 // расстояния и размеры объектов сжаты в 3 раза, подвижная техника крупнее зданий в 2,5 раза (MACHINE_SCALE).
 const MODE_PARAMS = {
   map: {
-    unit: 1, labelDist: { 2: 3500, 1: 700 }, hit: 1, follow: [-45, 22, 50], fly: [60, 3], markerFar: 1500,
+    unit: 1, labelDist: { 2: 3500, 1: 700 }, hit: 1, follow: [-90, 45, 100], fly: [60, 3], markerFar: 1500,
     road: { w: 26, ramp: 50, lift: 1.5, h: 1.2 }, route: { r: 3.2, lift: 2.5 },
     cam: { near: 1, far: 30000, min: 12, max: 14000 }, orthoHalf: 3000, orthoAt: [-1100, 3000, 200],
     sun: { pos: [-4200, 3600, 2600], tgt: [-1100, 0, 200], box: [4600, 3600], near: 100, far: 14000 },
@@ -856,7 +856,7 @@ function markViewButton(name) {
 }
 // Виды схемы — в координатах схемы [x — восток, y — север, z — высота], единицы
 const VIEWS_SCHEMA = {
-  all: { target: [-470, -130, 0], pos: [-560, -1500, 1000] },    // косой вид ≈ 35° на весь рудник
+  all: { target: [-400, -130, 0], pos: [-480, -1500, 1000] },    // косой вид ≈ 35° на весь рудник
   pit: { target: [-60, -20, -40], pos: [-140, -560, 330] },      // карьер: 13 уступов, съезды, техника на дне
   crusher: { target: [-100, -200, 0], pos: [-150, -330, 90] },   // дробилка, заправка, начало конвейера
   plants: { target: [-860, -270, 5], pos: [-920, -480, 150] },   // фабрика, склад, подстанция
@@ -1559,26 +1559,40 @@ function laneOffsets() {
     o.position.x += -Math.cos(m.cur) * LANE; o.position.z += Math.sin(m.cur) * LANE;   // вправо от направления движения
   }
 }
-// Если два самосвала всё равно ближе длины машины — задний отходит назад вдоль своего хода
-const TRUCK_GAP = 14;   // единиц: самосвал 180 т ≈ 12,5 + зазор
+// Если два самосвала всё равно налезают (по габаритам с учётом курса) — задний отходит назад вдоль своего хода;
+// два стоящих на разгрузке в одной точке — второй сдвигается в сторону
+const TRUCK_L = 15 * 2.5 / 3 + 1.5, TRUCK_W = 8 * 2.5 / 3 + 0.8;   // единиц: самосвал 180 т + зазор
+function truckBox(o) { return { cx: o.position.x, cz: o.position.z, ux: Math.sin(o.rotation.y), uz: Math.cos(o.rotation.y) }; }
+function boxesOverlap(A, B) {   // разделяющая ось для двух прямоугольников TRUCK_L × TRUCK_W
+  const hl = TRUCK_L / 2, hw = TRUCK_W / 2, dx = B.cx - A.cx, dz = B.cz - A.cz;
+  for (const [ax, az] of [[A.ux, A.uz], [-A.uz, A.ux], [B.ux, B.uz], [-B.uz, B.ux]]) {
+    const ra = hl * Math.abs(A.ux * ax + A.uz * az) + hw * Math.abs(-A.uz * ax + A.ux * az);
+    const rb = hl * Math.abs(B.ux * ax + B.uz * az) + hw * Math.abs(-B.uz * ax + B.ux * az);
+    if (Math.abs(dx * ax + dz * az) >= ra + rb) return false;
+  }
+  return true;
+}
 function separateTrucks() {
   const trucks = machineList.filter((o) => o.userData.thingId.indexOf(':truck-') >= 0);
   // под погрузкой и разгрузкой самосвал стоит у экскаватора / пункта — его не двигаем, отходит другой
   const fixed = (o) => { const st = val(o.userData.thingId, 'state', ''); return st === 'loading' || st === 'dumping'; };
-  for (let pass = 0; pass < 5; pass++) {
+  for (let pass = 0; pass < 8; pass++) {
     let moved = false;
     for (let i = 0; i < trucks.length; i++) for (let j = i + 1; j < trucks.length; j++) {
       const a = trucks[i], b = trucks[j];
-      const dx = a.position.x - b.position.x, dz = a.position.z - b.position.z, d = Math.hypot(dx, dz);
-      if (d >= TRUCK_GAP) continue;
-      if (fixed(a) && fixed(b)) continue;
-      // кто впереди по ходу a: тот, у кого проекция на «вперёд» больше; задний отходит назад
-      const fx = Math.sin(a.rotation.y), fz = Math.cos(a.rotation.y);
-      let back = (dx * fx + dz * fz) >= 0 ? b : a;
-      if (fixed(back)) back = back === a ? b : a;
-      const bx = Math.sin(back.rotation.y), bz = Math.cos(back.rotation.y);
-      const k = TRUCK_GAP - d + 0.5;
-      back.position.x -= bx * k; back.position.z -= bz * k;
+      if (!boxesOverlap(truckBox(a), truckBox(b))) continue;
+      let back, ux, uz;
+      if (fixed(a) && fixed(b)) {          // оба стоят в одной точке разгрузки: второй — вбок на ширину машины
+        back = b; ux = Math.cos(b.rotation.y); uz = -Math.sin(b.rotation.y);
+      } else {
+        const fx = Math.sin(a.rotation.y), fz = Math.cos(a.rotation.y);
+        const dx = a.position.x - b.position.x, dz = a.position.z - b.position.z;
+        back = (dx * fx + dz * fz) >= 0 ? b : a;          // кто сзади по ходу a
+        if (fixed(back)) back = back === a ? b : a;
+        ux = Math.sin(back.rotation.y); uz = Math.cos(back.rotation.y);
+      }
+      const step = fixed(a) && fixed(b) ? TRUCK_W : TRUCK_L * 0.5;
+      back.position.x -= ux * step; back.position.z -= uz * step;
       if (dio) back.position.y = Math.max(back.position.y, dio.surfaceAt(back.position.x, -back.position.z));
       moved = true;
     }
