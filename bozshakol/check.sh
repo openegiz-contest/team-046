@@ -178,12 +178,13 @@ print(json.dumps(out))
 PY
 }
 # сравнение состояния до и после: бункер и склады в пределах ёмкости и без скачка, счётчики dispatch не уменьшились
-compare_state() {
-  python3 - "$1" "$2" <<'PY2'
+compare_state() {   # $1 — до, $2 — после, $3 — сколько реальных секунд прошло (по умолчанию ~40 с перезапуска)
+  python3 - "$1" "$2" "${3:-40}" "${SIM_SPEEDUP:-10}" <<'PY2'
 import json, sys
 b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2] or "{}")
 problems = []
-JUMP_T = 600   # т: больше, чем склад может измениться за время перезапуска
+# т: больше, чем склад может измениться за это время (≈ 4 000 т/ч модельного времени + запас 300 т)
+JUMP_T = max(600, float(sys.argv[3]) * float(sys.argv[4]) / 3600 * 4000 + 300)
 num = lambda x: float(x) if isinstance(x, (int, float)) else None
 if num(a.get("bunker")) is None or num(a.get("bunker_t")) is None or not (0 <= a["bunker"] <= a["bunker_t"]):
     problems.append(f"бункер дробилки {a.get('bunker')} т при ёмкости {a.get('bunker_t')} т")
@@ -192,7 +193,7 @@ for k, cap in (("coarse", "coarse_cap"), ("clay", "clay_cap")):
     if num(a.get(k)) is None or num(a.get(cap)) is None or not (0 <= a[k] <= a[cap]):
         problems.append(f"склад {names[k]}: {a.get(k)} т при ёмкости {a.get(cap)} т")
     elif num(b.get(k)) is not None and abs(a[k] - b[k]) > JUMP_T:
-        # за ~40 с перезапуска (≈ 7 модельных минут) запас меняется на сотни тонн, а не возвращается к начальному
+        # за время проверки запас меняется на сотни тонн, а не возвращается к начальному
         problems.append(f"склад {names[k]} скачком {b[k]:.0f} → {a[k]:.0f} т (запас не восстановлен из Ditto)")
 for k in ("delivered_crusher_t", "delivered_clay_t", "delivered_dump_t", "trips_total"):
     if num(b.get(k)) is not None and (num(a.get(k)) is None or a[k] < b[k]):
@@ -226,10 +227,10 @@ before="$(read_state 2>/dev/null)"
 probe_put="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" -X PUT -H 'Content-Type: application/json'   -d '{"properties":{"value":"повторный make bozshakol"}}' "$PROBE")"
 if [ -z "$before" ] || { [ "$probe_put" != 201 ] && [ "$probe_put" != 204 ]; }; then
   bad "повторный make bozshakol: не удалось прочитать двойники или поставить метку (HTTP $probe_put)"
-elif timeout 600 make -C "$ROOT" bozshakol >/dev/null 2>&1; then
+elif t0=$(date +%s) && timeout 600 make -C "$ROOT" bozshakol >/dev/null 2>&1; then
   probe_get="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$PROBE")"
   sleep 30
-  verdict="$(compare_state "$before" "$(read_state 2>/dev/null)")"
+  verdict="$(compare_state "$before" "$(read_state 2>/dev/null)" "$(( $(date +%s) - t0 ))")"
   if [ "$probe_get" != 200 ]; then
     lost="bz-setup переписал признаки существующего двойника (метка pit-central.check_probe пропала)"
     if [ "$verdict" = "OK" ]; then verdict="$lost"; else verdict="$lost; $verdict"; fi
