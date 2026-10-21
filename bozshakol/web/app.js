@@ -1408,7 +1408,7 @@ function lineUpQueues() {
   }
 }
 // Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
-// после update слоёв отводим буровые не ближе 16 единиц от экскаваторов (только в схеме, только картинка)
+// после update слоёв отводим буровые не ближе 24 единиц от экскаваторов (только в схеме, только картинка)
 function separateDrills() {
   if (mode !== 'schema') return;
   const ex = clickable.filter((o) => /:excavator-/.test(o.userData.thingId || '') && !o.isMesh);
@@ -1416,7 +1416,7 @@ function separateDrills() {
     if (!/:drill-/.test(o.userData.thingId || '') || o.isMesh) continue;
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      const R = 16 * markerScale / 1.12;
+      const R = 24 * markerScale / 1.12;   // экскаватор ×1,4 (EX3600) — отводим дальше
       if (d >= R) continue;
       const k = d > 0.01 ? R / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
