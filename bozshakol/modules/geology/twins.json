@@ -123,6 +123,12 @@
      "value": 1,
      "unit": "№"
     }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -249,6 +255,12 @@
     "properties": {
      "value": 1,
      "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }
@@ -377,6 +389,12 @@
      "value": 1,
      "unit": "№"
     }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -503,6 +521,12 @@
     "properties": {
      "value": 1,
      "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }
@@ -631,6 +655,12 @@
      "value": 1,
      "unit": "№"
     }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -757,6 +787,12 @@
     "properties": {
      "value": 1,
      "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }

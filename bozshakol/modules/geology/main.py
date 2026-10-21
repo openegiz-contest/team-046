@@ -38,7 +38,8 @@ def read_prev_state(twins):
     Возвращает {thingId: {признак: значение}}. Если Ditto недоступен, двойников или значений нет — пустой словарь:
     сервис начинает с начальных значений и пишет об этом в журнал; ни при каких ответах не падает."""
     try:
-        snapshot = DittoClient().search()
+        ditto = DittoClient()
+        snapshot = ditto.retry(ditto.search, attempts=5, delay=3)      # Ditto мог ещё не подняться: несколько повторов
     except Exception as exc:          # недоступен, нет пароля, неверный ответ — всё равно стартуем
         log.warning("прежнее состояние из Ditto не прочитано (%s) — начинаем с начальных значений", exc)
         return {}
@@ -105,11 +106,16 @@ class Face:
         for _ in range(max(0, min(int(no), 200) - 1)):        # перестраиваем уже отработанные панели
             self.panel_no += 1
             self._new_panel()
-        rem = num(prev.get("remaining"))
-        if num(prev.get("panel_progress"), 0.0) > 0.0 and rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
-            self.extracted = max(0.0, self.panel.total - rem)
-            if self.extracted > 0 or self.panel_no > 1:
-                log.info("%s: продолжаем с панели %d, остаток %.0f т (из Ditto)", self.id, self.panel_no, rem)
+        done = num(prev.get("panel_extracted"), 0.0)          # точный тоннаж, отработанный в панели (публикуется каждые 10 с)
+        if done > 0.0 and done <= self.panel.total * 1.02:
+            self.extracted = done
+        elif num(prev.get("panel_progress"), 0.0) > 0.0:        # запасной путь: по остатку (признак панели старого сервиса)
+            rem = num(prev.get("remaining"))
+            if rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
+                self.extracted = max(0.0, self.panel.total - rem)
+        if self.extracted > 0 or self.panel_no > 1:
+            log.info("%s: продолжаем с панели %d, отработано %.0f т, остаток %.0f т (из Ditto)", self.id, self.panel_no, self.extracted,
+                     max(0.0, self.panel.total - self.extracted))
 
     def _new_panel(self):
         m = self.model
@@ -118,6 +124,8 @@ class Face:
         self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, self.claimed, levels)
         if self.panel is None:         # свободных блоков рядом нет — берём блоки повторно
             self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, set(), levels)
+        if self.panel is None:         # совсем нечего взять (пустой пул): панель из одного ближайшего блока, роль не выполнена
+            self.panel = bm.Panel(m, self.level, [m.locate(self.level, self.x, self.y)], 0.0)
         p = self.panel
         self.level = p.level
         self.role_mismatch = bool(p.mismatch)
@@ -282,6 +290,7 @@ class Face:
             "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
             "drilling_ahead_status": feature(self.ahead_status()),
             "panel_no": feature(self.panel_no, "№"),
+            "panel_extracted": feature(round(self.extracted, 0), "т"),
             "face_role": feature(self.role),
             "role_mismatch": feature(self.role_mismatch),
         }
@@ -310,11 +319,11 @@ def main():
     drills = []
     geo_ids = {o["id"] for o in geometry["objects"]}
     drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
-    for i, thing in enumerate(drill_ids):
+    for thing in drill_ids:
         if thing.split(":")[1] not in geo_ids:      # места для станка в core/geometry.json нет — пропускаем, не падаем
             log.warning("буровой %s: нет места в core/geometry.json — станок пропущен", thing)
             continue
-        drill = Drill(thing, geometry, model, rng, i)
+        drill = Drill(thing, geometry, model, rng, len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
         old = prev.get(thing, {})
         drill.meters = max(0.0, num(old.get("meters_total"), 0.0))      # накопительные метры и скважины продолжаются
         drill.holes = max(0, int(num(old.get("holes_total"), 0.0)))
@@ -334,7 +343,7 @@ def main():
             drill.step(dt)
             telemetry.publish(drill.id, drill.features())
         n = max(1, len(drills))
-        rate = {k: sum(d.rates[k] for d in drills) / n for k in ("ore", "waste")}    # т/ч одного станка по типам работ
+        rate = {k: (sum(d.rates[k] for d in drills) / n) or 1.0 for k in ("ore", "waste")}    # т/ч одного станка по типам работ
         demand = need = 0.0
         for f in faces:
             r = min(f.rate_tph, RATE_MAX_TPH)

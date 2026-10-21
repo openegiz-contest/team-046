@@ -358,6 +358,7 @@ def build_panel(model, role, x, y, z, target_t, claimed, levels=None):
     Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе лучшая из найденных
     (role_mismatch, если нужного типа меньше MATCH_MIN)."""
     want = ROLE_TYPES.get(role)
+    target_t = max(float(target_t), 1.0)
     k0 = model.level_of(z)
     cand = levels or [k0, min(k0 + 1, model.levels - 1)]
     best = None
