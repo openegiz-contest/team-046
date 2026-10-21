@@ -1042,6 +1042,7 @@ function frame(now) {
   orientTrucks(dt);
   shrinkFaceZones();
   schemaDetail();
+  separateDrills();
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
@@ -1247,6 +1248,22 @@ function updateDust(dt) {
     const back = new THREE.Vector3(-Math.sin(o.rotation.y), 0, -Math.cos(o.rotation.y)).multiplyScalar(7 * o.scale.x);
     d.sp.position.copy(p).add(back); d.sp.position.y += 1.5 * o.scale.x;
     d.size = 6 * o.scale.x; d.age = 0; d.sp.visible = true;
+  }
+}
+// Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
+// после update слоёв отводим буровые не ближе 16 единиц от экскаваторов (только в схеме, только картинка)
+function separateDrills() {
+  if (mode !== 'schema') return;
+  const ex = clickable.filter((o) => /:excavator-/.test(o.userData.thingId || '') && !o.isMesh);
+  for (const o of clickable) {
+    if (!/:drill-/.test(o.userData.thingId || '') || o.isMesh) continue;
+    for (const e of ex) {
+      const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
+      if (d >= 16) continue;
+      const k = d > 0.01 ? 16 / d : 1;
+      o.position.x = e.position.x + (d > 0.01 ? dx * k : 16); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
+      if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
+    }
   }
 }
 // Зоны забоев слоя геологии нарисованы плоскостями в метрах (120 × 60 м), слой каждый кадр ставит им
