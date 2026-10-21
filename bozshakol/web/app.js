@@ -1262,7 +1262,7 @@ function separateDrills() {
       if (d >= 16) continue;
       const k = d > 0.01 ? 16 / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : 16); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
-      if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
+      if (dio) o.position.y = dio.surfaceAt(o.position.x, -o.position.z);   // на поверхность схемы в новом месте
     }
   }
 }
