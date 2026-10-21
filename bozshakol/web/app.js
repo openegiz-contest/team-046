@@ -214,7 +214,7 @@ function updateLabels() {
   const cand = [];
   for (const L of labels) {
     L.show = false;
-    if (!L.enabled || !L.obj.visible || !L.obj.parent) continue;
+    if (!L.enabled || !(L.obj.visible || L.obj.userData.farHidden) || !L.obj.parent) continue;
     L.obj.getWorldPosition(_v);
     // у уменьшенных в схеме зданий и складов отступ подписи (в метрах) уменьшается так же
     const so = L.obj.userData.schemaScaled ? L.obj : (L.obj.parent && L.obj.parent.userData.schemaScaled ? L.obj.parent : null);
@@ -282,9 +282,11 @@ function pick(clientX, clientY) {
   }
   if (best && MACHINE_RE.test(best)) return best;   // прямое попадание в технику главнее «хитбоксов» соседних зон
   for (const o of clickable) {
-    if (!o.visible || !o.parent || !o.userData.hitRadius) continue;
+    if ((!o.visible && !o.userData.farHidden) || !o.parent || !o.userData.hitRadius) continue;
     o.getWorldPosition(_v);
-    const rad = o.userData.hitRadius * markerScale * mp().hit;
+    // вдали в технику попасть трудно — радиус «хитбокса» растёт с расстоянием (как значок)
+    const rad = Math.max(o.userData.hitRadius * markerScale * mp().hit,
+      o.userData.farHidden ? raycaster.ray.origin.distanceTo(_v) * 0.012 : 0);
     if (raycaster.ray.distanceToPoint(_v) > rad) continue;
     const along = raycaster.ray.origin.distanceTo(_v);
     if (along < bestD + rad) { best = o.userData.thingId; bestD = along; }   // «хитбокс» важнее поверхности за ним
@@ -769,12 +771,12 @@ function buildRoads() {
   const parts = {};   // 'дорога|материал' -> [{geo, matrix}]
   const add = (road, mat, geo, matrix) => (parts[road + '|' + mat] || (parts[road + '|' + mat] = [])).push({ geo, matrix });
   const R = mp().road, schema = mode === 'schema';
-  // в схеме ребро режется на куски ≈ 40 единиц: дорога идёт по поверхности (съезд выходит на борт, а не под землю)
+  // в схеме ребро режется на куски ≈ 80 единиц: дорога идёт по поверхности (съезд выходит на борт, а не под землю)
   const pieces = [];
   for (const e of geometry.edges) {
     const a = geometry.nodes[e.from], b = geometry.nodes[e.to];
     if (!a || !b) continue;
-    const n = schema ? Math.max(1, Math.ceil(nodePos(a).distanceTo(nodePos(b)) / 40)) : 1;
+    const n = schema ? Math.max(1, Math.ceil(nodePos(a).distanceTo(nodePos(b)) / 80)) : 1;
     for (let i = 0; i < n; i++) {
       const p = (t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
       pieces.push({ e, a: p(i / n), b: p((i + 1) / n), first: i === 0 });
@@ -908,7 +910,7 @@ function updateCamera(dt) {
     if (tween.t >= 1) tween = null;
   } else if (followId && camera === perspCam) {
     const obj = byThing(followId);
-    if (obj && obj.visible) {
+    if (obj && (obj.visible || obj.userData.farHidden)) {
       obj.getWorldPosition(_v);
       _d.subVectors(_v, controls.target).multiplyScalar(Math.min(1, dt * 4));   // камера догоняет плавно
       controls.target.add(_d); perspCam.position.add(_d);
@@ -993,6 +995,7 @@ function applyQuality(q) {
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
   if (environment && environment.setQuality) environment.setQuality(high || lighting === 'night');   // ночью огни горят всегда
+  if (environment && environment.setLook) environment.setLook({ cheap: !high, night: lighting === 'night' });
   for (const s of glowSprites) s.visible = high;
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   const sel = document.getElementById('quality');
@@ -1026,6 +1029,7 @@ function applyLighting(l) {
   renderer.toneMappingExposure = night ? 1.15 : 1.05;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
   if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
+  if (environment && environment.setLook) environment.setLook({ cheap: quality !== 'high', night });
   if (night) nightSky();
   else renderScenarioBannerSafe();   // днём фон и туман — по погоде (метель)
   updateHeadlights();
@@ -1272,6 +1276,7 @@ function buildSchemaEnvironment() {
   return {
     group: null,
     setQuality: d.setQuality,
+    setLook: d.setLook,
     setWeather({ blizzard = false } = {}) {
       scene.background.setHex(blizzard ? 0xdfe3e7 : 0xdde5ea);
       scene.fog.color.setHex(blizzard ? 0xdfe2e5 : 0xdde5ea);
@@ -1604,9 +1609,12 @@ function updateMarkers() {
   const far = mp().markerFar, ortho = camera === orthoCam;
   let n = 0;
   for (const o of machineList) {
-    if (n >= 64 || !o.visible) continue;
     o.getWorldPosition(_v);
     const dist = ortho ? mp().orthoHalf / orthoCam.zoom * 2 : _v.distanceTo(_c);
+    // совсем далеко (машина — пара пикселей) модель не рисуется, только значок; клик и подписи работают (farHidden)
+    const hide = !ortho && dist > far * 1.6;
+    o.userData.farHidden = hide; o.visible = !hide;   // каждый кадр: модели и слои сами включают видимость
+    if (n >= 64) continue;
     if (!ortho && dist < far) continue;
     const size = dist * 0.0055;                                  // ≈ одинаковый размер на экране
     _ms.setScalar(size);

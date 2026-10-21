@@ -34,7 +34,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   shape.moveTo(x0, y0); shape.lineTo(x1, y0); shape.lineTo(x1, y1); shape.lineTo(x0, y1); shape.closePath();
   const hole = new THREE.Path(); hole.absellipse(pit.cx, pit.cy, pit.a, pit.b, 0, Math.PI * 2, true, 0);
   shape.holes.push(hole);
-  const groundGeo = new THREE.ShapeGeometry(shape, 200);
+  const groundGeo = new THREE.ShapeGeometry(shape, 96);
   const uv = groundGeo.attributes.uv, gp = groundGeo.attributes.position;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, (gp.getX(i) - x0) / (x1 - x0), (gp.getY(i) - y0) / (y1 - y0));
   const groundTex = steppeTexture(THREE, dio, colors, [x0, y0, x1, y1], u);
@@ -123,8 +123,19 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
     group.add(sp); glows.push(sp);
     return sp;
   }
+  // Земля в «Обычном» — без расчёта освещения (ровная степь освещена одинаково): заметно быстрее без видеокарты.
+  // Цвет подобран под освещённую днём землю; ночью — тёмный; в «Высоком» — обычный материал (тени от солнца)
+  const litMats = new Map([[ground, ground.material], [far, far.material]]);
+  const flatMats = new Map([[ground, new THREE.MeshBasicMaterial({ map: groundTex })], [far, new THREE.MeshBasicMaterial({ color: GROUND })]]);
+  function setLook({ cheap = false, night = false } = {}) {
+    for (const [mesh, lit] of litMats) {
+      const flat = flatMats.get(mesh);
+      flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : 0xffffff));
+      mesh.material = cheap ? flat : lit;
+    }
+  }
   return {
-    group, anchors, glowAt,
+    group, anchors, glowAt, setLook,
     setQuality(high) { for (const s of glows) s.visible = !!high; },
     update() {},
   };
@@ -134,7 +145,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
 // дно с приглушёнными пятнами руды у забоев, съезды и площадки забоев — светлые
 function buildPitMesh(THREE, dio, colors, u) {
   const { pit, D } = dio;
-  const SEG = 400;
+  const SEG = 256;
   const insets = [];
   for (let k = 0; k < pit.benches; k++) {
     const o = k * pit.inset;
@@ -288,7 +299,7 @@ function rocks(THREE, dio, [x0, y0, x1, y1], u) {
     return true;
   };
   const pts = [];
-  for (let i = 0; i < 9000 && pts.length < 900; i++) {
+  for (let i = 0; i < 6000 && pts.length < 420; i++) {
     let x, y;
     if (i % 3 === 0) {   // треть — у борта карьера
       const t = rnd() * Math.PI * 2, r = 1.04 + rnd() * 0.12;
