@@ -78,7 +78,7 @@ def rule_crusher(snap):
     why = reason or f"дробилка: {state or '—'}"
     if TIME_RE.match(forecast):
         head = f"Фабрика встанет в {forecast} (запас склада {hours:.1f} ч)."
-    elif forecast and forecast != "не ожидается":
+    elif forecast and forecast not in ("не ожидается", "запас в норме"):   # оба текста «остановки не ждём» (модуль №4)
         head = f"Остановка фабрики: {forecast} (запас склада {hours:.1f} ч)."
     else:
         head = f"Запас склада фабрики {hours:.1f} ч."
