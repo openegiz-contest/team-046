@@ -534,7 +534,10 @@ def main():
             ov_text = "склад переполнится в " + sim_hhmm(now + h_full * 3600.0, now) + " — дробилка встанет"
         else:
             ov_text, h_full = ("приход не больше расхода" if overflow_alarm else "запас в норме"), None
-        overflow_expected = blocked or (overflow_alarm and h_full is not None)
+        # при ремонте мельницы — всегда; при обычном росте — если до переполнения меньше суток (как для убывания)
+        overflow_expected = blocked or (h_full is not None and (sag_maint or h_full < STOP_WARN_H))
+        if not overflow_expected and not blocked:
+            ov_text = "запас в норме"
 
         # -- энергия: мощность по потребителям, кВт ----------------------------------------------------
         x_s = feed_tph / PLAN_SULPH_TPH
