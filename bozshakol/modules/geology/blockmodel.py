@@ -352,7 +352,31 @@ def _select(model, level, want, x, y, target_t, claimed):
     return ordered, (good / total if total else 0.0)
 
 
-def build_panel(model, role, x, y, z, target_t, claimed, levels=None):
+EARLY_BLOCKS = 12         # сколько первых блоков панели (около 600 кт) учитываем отдельно при выборе панели для усреднения
+EARLY_W = 0.6            # вес среднего Cu первых блоков в оценке панели (остальное — вся панель)
+SHIFTS_M = (0.0, 400.0, -400.0, 800.0, -800.0, 1200.0, -1200.0)   # сдвиги якоря вдоль уступа при поиске панелей для усреднения
+
+
+def mean_cu(model, blocks):
+    """Среднее содержание Cu блоков, взвешенное тоннажем."""
+    t = sum(model.tonnes(i) for i in blocks)
+    return sum(model.cu[i] * model.tonnes(i) for i in blocks) / t if t > 0 else 0.0
+
+
+def _shifted(model, level, x, y, shift_m):
+    """Якорь, сдвинутый вдоль контура уступа на shift_m метров (по простиранию)."""
+    if not shift_m:
+        return x, y
+    a, b = model.level_axes(level)
+    u0, v0 = x / a, y / b
+    r0 = max(0.05, math.hypot(u0, v0))
+    th0 = math.atan2(v0, u0)
+    arc = r0 * math.sqrt((a * math.sin(th0)) ** 2 + (b * math.cos(th0)) ** 2)
+    th = th0 + shift_m / arc
+    return r0 * a * math.cos(th), r0 * b * math.sin(th)
+
+
+def build_panel(model, role, x, y, z, target_t, claimed, levels=None, desired_cu=None):
     """Рудоконтроль: панель для забоя с ролью role (sulphide / clay / waste) на уступе точки (x, y, z) или на уступе ниже.
 
     Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе лучшая из найденных
@@ -362,7 +386,24 @@ def build_panel(model, role, x, y, z, target_t, claimed, levels=None):
     k0 = model.level_of(z)
     cand = levels or [k0, min(k0 + 1, model.levels - 1)]
     best = None
-    for lv in dict.fromkeys(cand):
+    if desired_cu is not None:
+        # усреднение (шихтовка): из подходящих по типу панелей (на том же уступе и ниже, со сдвигами вдоль уступа)
+        # берём ту, средняя Cu которой ближе всего к нужной — победнее, если питание богаче цели, и побогаче, если беднее
+        pick = None
+        for lv in dict.fromkeys(cand):
+            for sh in SHIFTS_M:
+                ax, ay = _shifted(model, lv, x, y, sh)
+                blocks, share = _select(model, lv, want, ax, ay, target_t, claimed)
+                if not blocks or share < MATCH_OK:
+                    continue
+                # первые блоки панели отрабатываются первыми, поэтому в оценке они весят больше, чем вся панель
+                err = abs(EARLY_W * mean_cu(model, blocks[:EARLY_BLOCKS]) + (1.0 - EARLY_W) * mean_cu(model, blocks) - desired_cu)
+                if pick is None or err < pick[0]:
+                    pick = (err, lv, blocks, share)
+        if pick is not None:
+            best = (pick[1], pick[2], pick[3])
+    if best is None:
+      for lv in dict.fromkeys(cand):
         blocks, share = _select(model, lv, want, x, y, target_t, claimed)
         if not blocks:
             continue
