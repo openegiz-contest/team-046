@@ -1,4 +1,4 @@
-// Схема-макет рудника (режим «Схема», по умолчанию): компактный макет ≈ 600 × 400 единиц сцены на подставке.
+// Схема рудника (режим «Схема», по умолчанию): карта рудника в масштабе 1 : 3 (core/diorama.json, scale).
 // Места узлов дорог и объектов — core/diorama.json (генератор core/tools/make_diorama.py). Здесь —
 // перенос реальных координат (м, geometry.json и двойники) в схему и постройка макета.
 //
@@ -20,8 +20,8 @@
 // Объекты с точным местом в diorama.json (здания, склады, экскаваторы) встают ровно туда.
 
 const ROAD_NEAR = 20, ROAD_BLEND = 35, SIDE_K = 0.4;   // м, м, множитель бокового сдвига у дороги
-const CORRIDOR = 7.5, CORRIDOR_BLEND = 5;                // единицы: врезка съездов в уступы схемы
-const FACE_PAD = 8;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
+const CORRIDOR = 10, CORRIDOR_BLEND = 6;                // единицы: врезка съездов в уступы схемы
+const FACE_PAD = 16;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
 
 export async function loadDiorama(THREE, geometry, terrainApi) {
   const r = await fetch('/diorama.json');

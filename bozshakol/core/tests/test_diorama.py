@@ -56,6 +56,22 @@ class DioramaTest(unittest.TestCase):
         self.assertGreater(o["dump-waste-1"]["position"][0], self.d["pit"]["center"][0] + self.d["pit"]["semi_axes"][0] * 0.5)
         self.assertLess(o["plant-clay"]["position"][1], self.d["pit"]["center"][1] - self.d["pit"]["semi_axes"][1])
 
+    def test_compression_at_most_3(self):
+        # расстояния между узлами и объектами сжаты не больше чем в 3 раза от реальных
+        pts = {n: (x, y, self.d["nodes"][n][0], self.d["nodes"][n][1]) for n, (x, y, _) in self.g["nodes"].items()}
+        for o in self.g["objects"]:
+            if "position" in o:
+                pts[o["id"]] = (o["position"][0], o["position"][1]) + tuple(self.d["objects"][o["id"]]["position"])
+        keys = sorted(pts)
+        for i, k1 in enumerate(keys):
+            for k2 in keys[i + 1:]:
+                x1, y1, s1, t1 = pts[k1]; x2, y2, s2, t2 = pts[k2]
+                real = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+                if real < 50:
+                    continue
+                sch = ((s1 - s2) ** 2 + (t1 - t2) ** 2) ** 0.5
+                self.assertLessEqual(real / sch, 3.0 + 1e-3, (k1, k2))
+
 
 if __name__ == "__main__":
     unittest.main()
