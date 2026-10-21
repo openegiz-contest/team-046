@@ -280,6 +280,7 @@ function pick(clientX, clientY) {
     while (o && !o.userData.thingId) o = o.parent;
     if (o && hit.distance < bestD) { best = o.userData.thingId; bestD = hit.distance; }
   }
+  if (best && MACHINE_RE.test(best)) return best;   // прямое попадание в технику главнее «хитбоксов» соседних зон
   for (const o of clickable) {
     if (!o.visible || !o.parent || !o.userData.hitRadius) continue;
     o.getWorldPosition(_v);
@@ -1619,6 +1620,13 @@ function updateMarkers() {
   markerMesh.instanceMatrix.needsUpdate = true;
   if (markerMesh.instanceColor) markerMesh.instanceColor.needsUpdate = true;
 }
+// для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
+window.__screenOf = (thingId) => {
+  const o = byThing(thingId); if (!o) return null;
+  o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
+  const r = canvas.getBoundingClientRect();
+  return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
+};
 // для проверок: места и курсы техники в сцене (после поправок)
 window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
