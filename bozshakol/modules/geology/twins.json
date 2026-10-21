@@ -107,6 +107,28 @@
     "properties": {
      "value": "ok"
     }
+   },
+   "face_role": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -217,6 +239,28 @@
    "drilling_ahead_status": {
     "properties": {
      "value": "ok"
+    }
+   },
+   "face_role": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }
@@ -329,6 +373,28 @@
     "properties": {
      "value": "ok"
     }
+   },
+   "face_role": {
+    "properties": {
+     "value": "sulphide"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -439,6 +505,28 @@
    "drilling_ahead_status": {
     "properties": {
      "value": "ok"
+    }
+   },
+   "face_role": {
+    "properties": {
+     "value": "clay"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }
@@ -551,6 +639,28 @@
     "properties": {
      "value": "ok"
     }
+   },
+   "face_role": {
+    "properties": {
+     "value": "waste"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
+    }
    }
   }
  },
@@ -661,6 +771,28 @@
    "drilling_ahead_status": {
     "properties": {
      "value": "ok"
+    }
+   },
+   "face_role": {
+    "properties": {
+     "value": "waste"
+    }
+   },
+   "role_mismatch": {
+    "properties": {
+     "value": false
+    }
+   },
+   "panel_no": {
+    "properties": {
+     "value": 1,
+     "unit": "№"
+    }
+   },
+   "panel_extracted": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т"
     }
    }
   }
@@ -948,6 +1080,182 @@
     "properties": {
      "value": 0.0,
      "unit": "шт"
+    }
+   },
+   "feed_cu_target": {
+    "properties": {
+     "value": 0.39,
+     "unit": "% Cu"
+    }
+   },
+   "feed_cu_actual": {
+    "properties": {
+     "value": 0.39,
+     "unit": "% Cu"
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-04": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровой станок 04",
+   "kind": "drill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "буровой станок класса DM45 (допущение)",
+   "hole_diameter_mm": 251
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "drilling"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "block": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "meters_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
+    }
+   }
+  }
+ },
+ "kz.bozshakol:drill-05": {
+  "policyId": "default:basic_policy",
+  "attributes": {
+   "name": "Буровой станок 05",
+   "kind": "drill",
+   "_isType": false,
+   "_parents": "kz.bozshakol:pit-central",
+   "model": "буровой станок класса DM45 (допущение)",
+   "hole_diameter_mm": 251
+  },
+  "features": {
+   "state": {
+    "properties": {
+     "value": "drilling"
+    }
+   },
+   "x": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "y": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "z": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "block": {
+    "properties": {
+     "value": ""
+    }
+   },
+   "meters_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_total": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "penetration_rate": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м/ч"
+    }
+   },
+   "rock_hardness_mwd": {
+    "properties": {
+     "value": 0.0,
+     "unit": "ед. Протодьяконова"
+    }
+   },
+   "hole_depth_m": {
+    "properties": {
+     "value": 0.0,
+     "unit": "м"
+    }
+   },
+   "holes_in_block": {
+    "properties": {
+     "value": 0,
+     "unit": "шт"
+    }
+   },
+   "block_ready": {
+    "properties": {
+     "value": false
     }
    }
   }
