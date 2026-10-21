@@ -20,7 +20,7 @@ import random
 import time
 from collections import deque
 
-from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging
+from bzlib import NAMESPACE, DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging
 
 log = setup_logging("bz-haulage")
 
@@ -1488,6 +1488,82 @@ class Haulage:
         }
 
 
+def read_prev_state(ditto, thing_ids):
+    """Прежние значения своих накопительных счётчиков из Ditto (договор, §4: «свои счётчики и
+    запасы при перезапуске сервиса восстанавливать из текущего состояния своего двойника в
+    Ditto, а не начинать с нуля»). Один снимок всех двойников (`ditto.search`, не по одному —
+    быстрее и даёт единый бюджет повторов), до 10 попыток с паузой 3 с (задача — «долгое
+    восстановление», часть 1). Ditto недоступен или ответ не разобрать — пустой словарь: счётчики
+    стартуют с нуля (новый стенд), в журнал пишется предупреждение; никогда не бросает исключение
+    дальше, чтобы не ронять старт сервиса из-за недоступности Ditto."""
+    try:
+        snapshot = ditto.retry(ditto.search, attempts=10, delay=3)
+    except Exception as exc:  # noqa: BLE001 — недоступен, нет пароля, неверный ответ — всё равно стартуем
+        log.warning("прежнее состояние из Ditto не прочитано (%s) — счётчики начинаются с нуля", exc)
+        return {}
+    prev = {}
+    try:
+        for name in thing_ids:
+            item = snapshot.get(f"{NAMESPACE}:{name}") if isinstance(snapshot, dict) else None
+            feats = item.get("features") if isinstance(item, dict) else None
+            if not isinstance(feats, dict):
+                continue
+            vals = {}
+            for fname, feat_val in feats.items():
+                props = feat_val.get("properties") if isinstance(feat_val, dict) else None
+                if isinstance(props, dict) and props.get("value") is not None:
+                    vals[fname] = props["value"]
+            if vals:
+                prev[name] = vals
+    except Exception as exc:  # noqa: BLE001 — ответ неожиданной формы — всё равно стартуем
+        log.warning("ответ Ditto не разобран (%s) — счётчики начинаются с нуля", exc)
+        return {}
+    return prev
+
+
+def restore_counters(model, prev):
+    """Применить прежние значения счётчиков (см. `read_prev_state`) к только что созданной модели,
+    ДО первого такта. Восстанавливаются ровно те признаки, что только растут и принадлежат нам
+    (договор §4 + свои, не упомянутые в таблице явно, но накопительные): у `dispatch` —
+    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total; у каждого
+    excavator-NN — loaded_total, passes_total; у каждого truck-NN — trips_total; у dump-waste-1 —
+    received_total. Остальные признаки (состояния, очереди, координаты) не накопительные —
+    пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно по договору."""
+    restored = []
+    d = prev.get("dispatch")
+    if d:
+        pairs = (("delivered_crusher_t", "crusher-01", 0), ("delivered_crusher_cu_t", "crusher-01", 1),
+                 ("delivered_clay_t", "stockpile-clay", 0), ("delivered_clay_cu_t", "stockpile-clay", 1),
+                 ("delivered_dump_t", "dump-waste-1", 0))
+        for fname, dump_id, idx in pairs:
+            if fname in d:
+                model.delivered[dump_id][idx] = float(d[fname])
+                restored.append(f"dispatch.{fname}")
+        if "trips_total" in d:
+            model.trips = int(d["trips_total"])
+            restored.append("dispatch.trips_total")
+    dw = prev.get("dump-waste-1")
+    if dw and "received_total" in dw:
+        model.dumps["dump-waste-1"].received = float(dw["received_total"])
+        restored.append("dump-waste-1.received_total")
+    for ex in model.excavators.values():
+        e = prev.get(ex.id)
+        if not e:
+            continue
+        if "loaded_total" in e:
+            ex.loaded_total = float(e["loaded_total"])
+            restored.append(f"{ex.id}.loaded_total")
+        if "passes_total" in e:
+            ex.passes_total = int(e["passes_total"])
+            restored.append(f"{ex.id}.passes_total")
+    for truck in model.trucks:
+        t = prev.get(truck.id)
+        if t and "trips_total" in t:
+            truck.trips = int(t["trips_total"])
+            restored.append(f"{truck.id}.trips_total")
+    return restored
+
+
 def main():
     with open("geometry.json", encoding="utf-8") as f:
         geometry = json.load(f)
@@ -1497,6 +1573,12 @@ def main():
     telemetry = Telemetry(client_id="bz-haulage").connect()
     clock = SimClock()
     model = Haulage(geometry, watcher, clock)
+    own_ids = ["dispatch", "dump-waste-1"] + [ex_id for ex_id in model.excavators] + [t.id for t in model.trucks]
+    restored = restore_counters(model, read_prev_state(ditto, own_ids))
+    if restored:
+        log.info("счётчики восстановлены из Ditto (%d признаков): %s", len(restored), ", ".join(restored))
+    else:
+        log.warning("прежних значений счётчиков в Ditto не найдено — начинаем с нуля (новый стенд или Ditto недоступен)")
     model.speed_limit = 50.0
     last_slow = 0.0
     while True:
