@@ -32,19 +32,102 @@ RATE_MAX_TPH = 3000.0     # верхняя граница оценки скор�
 BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
 
 
+def read_prev_state(twins):
+    """Прежние значения своих двойников из Ditto (HTTP GET; адрес и пароль — из переменных окружения).
+
+    Возвращает {thingId: {признак: значение}}. Если Ditto недоступен, двойников или значений нет — пустой словарь:
+    сервис начинает с начальных значений и пишет об этом в журнал; ни при каких ответах не падает."""
+    try:
+        ditto = DittoClient()
+        snapshot = ditto.retry(ditto.search, attempts=5, delay=3)      # Ditto мог ещё не подняться: несколько повторов
+    except Exception as exc:          # недоступен, нет пароля, неверный ответ — всё равно стартуем
+        log.warning("прежнее состояние из Ditto не прочитано (%s) — начинаем с начальных значений", exc)
+        return {}
+    prev = {}
+    try:
+        for thing_id in twins:
+            item = snapshot.get(thing_id) if isinstance(snapshot, dict) else None
+            feats = item.get("features") if isinstance(item, dict) else None
+            if not isinstance(feats, dict):
+                continue
+            vals = {}
+            for name, feat in feats.items():
+                props = feat.get("properties") if isinstance(feat, dict) else None
+                if isinstance(props, dict) and props.get("value") is not None:
+                    vals[name] = props["value"]
+            if vals:
+                prev[thing_id] = vals
+    except Exception as exc:
+        log.warning("ответ Ditto не разобран (%s) — начинаем с начальных значений", exc)
+        return {}
+    if not prev:
+        log.info("в Ditto нет прежних значений своих двойников — начинаем с начальных значений")
+    return prev
+
+
+def num(v, default=None):
+    """Число из значения признака; всё остальное (None, строка, пусто) — default."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else default
+
+
+FEED_CU_TARGET = 0.39    # % Cu — целевое содержание в питании дробилки (среднее по руднику 2025 г.)
+FEED_CU_LOW, FEED_CU_HIGH = 0.35, 0.43   # допустимый коридор, % Cu
+BLEND_OFFSET = 0.0       # % Cu — поправка к «желаемому» содержанию новых блоков (доступные сульфидные блоки в среднем богаче цели)
+BLEND_GAIN = 0.3         # во сколько раз сильнее цели отодвигаем «желаемое» содержание новых блоков при отклонении питания
+BLEND_WINDOW_S = 86400.0  # окно оценки питания — модельные сутки
+BLEND_LOOKAHEAD = 8      # из скольких ближайших невзорванных блоков панели выбирается следующий блок для бурения
+
+
+class FeedTracker:
+    """Содержание Cu в питании дробилки за последние модельные сутки: тоннаж-взвешенное среднее по сульфидным забоям, везущим руду на crusher-01."""
+
+    def __init__(self, target=FEED_CU_TARGET, window_s=BLEND_WINDOW_S):
+        self.target, self.window_s = target, window_s
+        self.q = []              # (время, тонны, тонны·Cu)
+        self.now = 0.0
+        self.sum_t = self.sum_cu = 0.0
+
+    def tick(self, dt):
+        self.now += dt
+        while self.q and self.q[0][0] < self.now - self.window_s:
+            _, t, c = self.q.pop(0)
+            self.sum_t -= t
+            self.sum_cu -= c
+
+    def add(self, tonnes, cu):
+        if tonnes > 0:
+            self.q.append((self.now, tonnes, tonnes * cu))
+            self.sum_t += tonnes
+            self.sum_cu += tonnes * cu
+
+    def actual(self):
+        return self.sum_cu / self.sum_t if self.sum_t > 2000.0 else None
+
+    def desired(self):
+        """Какое содержание нужно у новых блоков: цель, смещённая против отклонения питания (богато — берём победнее, и наоборот)."""
+        a = self.actual()
+        if a is None:
+            return self.target
+        return min(0.65, max(0.25, self.target + BLEND_OFFSET - BLEND_GAIN * (a - self.target)))
+
+
 def same_face(param, face_id):
     return str(param or "").split(":")[-1] == face_id
 
 
 class Face:
-    def __init__(self, thing_id, body, geometry, model, claimed, rng):
+    def __init__(self, thing_id, body, geometry, model, claimed, rng, prev=None, blend=None):
         self.id = thing_id.split(":")[1]
         f = body["features"]
         self.base = {k: value(f, k) for k in ("remaining",)}
         obj = next(o for o in geometry["objects"] if o["id"] == self.id)
-        self.x, self.y, z = obj["position"]
+        self.x, self.y, self.z0 = obj["position"]
         self.model, self.claimed, self.rng = model, claimed, rng
-        self.level = model.level_of(z)
+        self.blend = blend                              # FeedTracker: усреднение питания дробилки (только для сульфидных забоев)
+        self.last_delta = 0.0
+        self.role = obj.get("ore_type", "waste")        # роль забоя: sulphide / clay / waste (из core/geometry.json)
+        self.role_mismatch = False
+        self.level = model.level_of(self.z0)
         self.target_t = float(self.base["remaining"])      # тоннаж одной панели — как в twins.json
         self.excavator = f"excavator-{self.id[-2:]}"
         self.last_loaded = None
@@ -54,23 +137,52 @@ class Face:
         self.win_x = self.win_t = 0.0
         self.rate_tph = 700.0          # скорость отгрузки экскаватора, т/ч (скользящая оценка по loaded_total)
         self._new_panel()
+        self._restore(prev or {})
         self.preview = json.dumps(bm.preview(model, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
         self.cur = {}
         self.update_values(False, {}, False, {})
 
     # -- панель и взрыв ----------------------------------------------------------------
+    def _restore(self, prev):
+        """Продолжение с прежних значений из Ditto: номер панели и остаток (положение в панели)."""
+        no = num(prev.get("panel_no"), 1.0)
+        for _ in range(max(0, min(int(no), 200) - 1)):        # перестраиваем уже отработанные панели
+            self.panel_no += 1
+            self._new_panel()
+        done = num(prev.get("panel_extracted"), 0.0)          # точный тоннаж, отработанный в панели (публикуется каждые 10 с)
+        if done > 0.0 and done <= self.panel.total * 1.02:
+            self.extracted = done
+        elif num(prev.get("panel_progress"), 0.0) > 0.0:        # запасной путь: по остатку (признак панели старого сервиса)
+            rem = num(prev.get("remaining"))
+            if rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
+                self.extracted = max(0.0, self.panel.total - rem)
+        if self.extracted > 0 or self.panel_no > 1:
+            log.info("%s: продолжаем с панели %d, отработано %.0f т, остаток %.0f т (из Ditto)", self.id, self.panel_no, self.extracted,
+                     max(0.0, self.panel.total - self.extracted))
+
     def _new_panel(self):
         m = self.model
-        self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, self.claimed)
-        if not self.panel.blocks:      # нижний уступ исчерпан другими панелями — берём блоки повторно
-            self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, set())
+        # рудоконтроль: панель вдоль уступа, преобладающий тип которой совпадает с ролью забоя; ищем на текущем уступе и ниже
+        levels = [self.level, min(self.level + 1, m.levels - 1)]
+        desired = self.blend.desired() if (self.blend is not None and self.role == "sulphide") else None
+        self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, self.claimed, levels, desired)
+        if self.panel is None:         # свободных блоков рядом нет — берём блоки повторно
+            self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, set(), levels)
+        if self.panel is None:         # совсем нечего взять (пустой пул): панель из одного ближайшего блока, роль не выполнена
+            self.panel = bm.Panel(m, self.level, [m.locate(self.level, self.x, self.y)], 0.0)
         p = self.panel
+        self.level = p.level
+        self.role_mismatch = bool(p.mismatch)
+        if p.mismatch:
+            log.warning("%s: роль «%s» не выполнена — подходящих блоков рядом нет (нужного типа %.0f %% тоннажа); берём ближайшую панель",
+                        self.id, self.role, 100.0 * p.match)
         n = len(p.blocks)
-        p.level = self.level
         p.reserved = set()                       # блоки, которые сейчас бурит станок
         p.blasted = bytearray(n)
         p.p80 = [0.0] * n
         p.hard_b = [0.0] * n
+        if n:
+            self._blend_frontier(0)                  # усреднение: первый блок панели — из ближайших по содержанию Cu к нужному
         for j in range(min(INITIAL_BLASTED, n)):   # взорванный запас на старте: крепость с небольшим разбросом
             self.blast(p, j, m.hard[p.blocks[j]] * (1.0 + self.rng.gauss(0.0, 0.03)))
 
@@ -125,8 +237,30 @@ class Face:
         p = self.panel
         for j in range(self.cur_index(), len(p.blocks)):
             if not p.blasted[j] and j not in p.reserved:
+                self._blend_frontier(j)
                 return j
         return None
+
+    def _blend_frontier(self, j):
+        """Усреднение внутри панели: из ближайших невзорванных блоков в очередь на бурение ставим тот, чьё Cu ближе к нужному
+        (питание богаче цели — победнее, беднее — побогаче). Переставляются только ещё не тронутые блоки."""
+        if self.blend is None or self.role != "sulphide":
+            return
+        p, m = self.panel, self.model
+        end = j
+        while end < len(p.blocks) and end < j + BLEND_LOOKAHEAD and not p.blasted[end] and end not in p.reserved:
+            end += 1
+        if end - j < 2:
+            return
+        want = self.blend.desired()
+        q = min(range(j, end), key=lambda i: abs(m.cu[p.blocks[i]] - want) + 0.004 * (i - j))
+        if q != j:
+            p.blocks[j], p.blocks[q] = p.blocks[q], p.blocks[j]
+            total = p.cum[j]
+            for i in range(j, len(p.blocks)):
+                p.cum[i] = total
+                total += m.tonnes(p.blocks[i])
+            p.total = total
 
     # -- отработка ---------------------------------------------------------------------
     def absorb(self, loaded, dt=0.0):
@@ -135,6 +269,7 @@ class Face:
         Нулевое или отсутствующее значение — это начальное значение двойника, а не показание счётчика: ждём первого
         настоящего (положительного) значения и только от него считаем прирост. Скачок больше возможного за тик
         (счётчик перезапущен, пропуск сообщений) пропускается."""
+        self.last_delta = 0.0
         if loaded is None or loaded <= 0:
             return
         if self.last_loaded is None or loaded < self.last_loaded:
@@ -146,6 +281,7 @@ class Face:
             log.warning("%s: скачок loaded_total на %.0f т за тик — пропущен", self.id, delta)
             return
         self.extracted += delta
+        self.last_delta = delta
         self.win_x += delta               # скорость отгрузки считаем по окну в 10 модельных минут, а не по тику
         self.win_t += dt
         if self.win_t >= 600.0:
@@ -159,13 +295,12 @@ class Face:
     def next_panel(self):
         m = self.model
         old = self.level
-        self.level = min(self.level + 1, m.levels - 1)
         self.panel_no += 1
         self._new_panel()
         self.preview = json.dumps(bm.preview(m, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
-        where = "на уступ %d" % (self.level + 1) if self.level != old else "на следующий ряд нижнего уступа %d" % (self.level + 1)
-        log.info("%s: панель отработана, забой переходит %s (панель %d, %.2f млн т, блоков %d)",
-                 self.id, where, self.panel_no, self.panel.total / 1e6, len(self.panel.blocks))
+        where = "на уступ %d" % (self.level + 1) if self.level != old else "на соседнюю панель уступа %d" % (self.level + 1)
+        log.info("%s: панель отработана, забой переходит %s (панель %d, %.2f млн т, блоков %d, нужного типа %.0f %%)",
+                 self.id, where, self.panel_no, self.panel.total / 1e6, len(self.panel.blocks), 100.0 * self.panel.match)
 
     def update_values(self, clay_on, clay_p, blast_on, blast_p):
         p = self.panel
@@ -224,6 +359,10 @@ class Face:
             "reserve_blocks": feature(self.reserve(), "шт"),
             "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
             "drilling_ahead_status": feature(self.ahead_status()),
+            "panel_no": feature(self.panel_no, "№"),
+            "panel_extracted": feature(round(self.extracted, 0), "т"),
+            "face_role": feature(self.role),
+            "role_mismatch": feature(self.role_mismatch),
         }
 
 
@@ -244,9 +383,22 @@ def main():
         log.info("взрыв (%s): скважина %.0f мм, сетка %.1f×%.1f м, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f",
                  kind, d["d_mm"], d["burden"], d["spacing"], ch["mass"], ch["powder_factor"], bl.uniformity_n(kind))
     log.info("P80 опорное (руда, f=11): %.0f мм", bl.P80_REF)
+    prev = read_prev_state(twins)
     claimed = set()
-    faces = [Face(t, b, geometry, model, claimed, rng) for t, b in twins.items() if ":face-" in t]
-    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if t.split(":")[1].startswith("drill-") and t.split(":")[1][6:].isdigit()))]
+    tracker = FeedTracker()
+    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
+    drills = []
+    geo_ids = {o["id"] for o in geometry["objects"]}
+    drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
+    for thing in drill_ids:
+        if thing.split(":")[1] not in geo_ids:      # места для станка в core/geometry.json нет — пропускаем, не падаем
+            log.warning("буровой %s: нет места в core/geometry.json — станок пропущен", thing)
+            continue
+        drill = Drill(thing, geometry, model, rng, len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
+        old = prev.get(thing, {})
+        drill.meters = max(0.0, num(old.get("meters_total"), 0.0))      # накопительные метры и скважины продолжаются
+        drill.holes = max(0, int(num(old.get("holes_total"), 0.0)))
+        drills.append(drill)
     for drill in drills:    # общий пул: любой станок может бурить любой забой, выбирая самый нуждающийся
         drill.faces = list(faces)
     ditto = DittoClient()
@@ -262,7 +414,7 @@ def main():
             drill.step(dt)
             telemetry.publish(drill.id, drill.features())
         n = max(1, len(drills))
-        rate = {k: sum(d.rates[k] for d in drills) / n for k in ("ore", "waste")}    # т/ч одного станка по типам работ
+        rate = {k: (sum(d.rates[k] for d in drills) / n) or 1.0 for k in ("ore", "waste")}    # т/ч одного станка по типам работ
         demand = need = 0.0
         for f in faces:
             r = min(f.rate_tph, RATE_MAX_TPH)
@@ -276,13 +428,19 @@ def main():
             "blasting_demand_tph": feature(round(demand, 0), "т/ч"),
             "drills_needed": feature(round(need, 2), "шт"),
             "drills_working": feature(sum(1 for d in drills if d.state != "idle"), "шт"),
+            "feed_cu_target": feature(FEED_CU_TARGET, "% Cu"),
+            "feed_cu_actual": feature(round(tracker.actual() if tracker.actual() is not None else FEED_CU_TARGET, 3), "% Cu"),
         })
+        tracker.tick(dt)
         for face in faces:
             if watcher.get(face.excavator, "face") == face.id:
                 face.absorb(watcher.get(face.excavator, "loaded_total"), dt)
             else:
                 face.last_loaded = None    # экскаватор в другом забое: счётчик чужой, отсчёт заново
+                face.last_delta = 0.0      # и прироста в этот тик нет (иначе старый прирост снова попал бы в оценку питания)
             face.update_values(clay_on, clay_p, blast_on, blast_p)
+            if face.last_delta > 0 and face.role == "sulphide" and face.cur.get("recommended_destination") == "crusher-01":
+                tracker.add(face.last_delta, face.cur["cu_grade"])
             telemetry.publish(face.id, face.features())
         log.info("забои: %s", ", ".join(
             f"{f.id} {f.cur['cu_grade']:.2f}%Cu P80 {f.cur['p80']:.0f} мм lf {f.cur['loading_factor']:.2f} "
