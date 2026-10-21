@@ -58,6 +58,9 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   ground.name = 'diorama-ground';
   group.add(ground);
 
+  // --- россыпь камней по степи и у борта карьера (один InstancedMesh): не на дорогах и не на площадках
+  group.add(rocks(THREE, dio, [x0, y0, x1, y1]));
+
   // --- карьер: кольца по отступу от борта, высоты — dio.surfaceAt (уступы и врезанные съезды)
   group.add(buildPitMesh(THREE, dio, colors));
 
@@ -277,6 +280,50 @@ function roundRect(g, x, y, w, h, r) {
   g.beginPath(); g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
   g.lineTo(x + w, y + h - r); g.quadraticCurveTo(x + w, y + h, x + w - r, y + h); g.lineTo(x + r, y + h);
   g.quadraticCurveTo(x, y + h, x, y + h - r); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath();
+}
+
+function rocks(THREE, dio, [x0, y0, x1, y1]) {
+  const { pit, D } = dio;
+  let seed = 11;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const segDist = (x, y, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+    return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t);
+  };
+  const busy = Object.values(D.objects).filter((o) => o.position && (o.scale || 1) < 1 || false).map((o) => o.position);
+  const keep = (x, y) => {
+    const e = ((x - pit.cx) / (pit.a + 4)) ** 2 + ((y - pit.cy) / (pit.b + 4)) ** 2;
+    if (e < 1) return false;                                                   // не в карьере
+    for (const ed of dio.edges) if (segDist(x, y, ed.sa, ed.sb) < 10) return false;   // не на дорогах
+    for (const p of busy) if (Math.hypot(x - p[0], y - p[1]) < 40) return false;      // не на площадках
+    const tl = D.extra && D.extra.tailings;
+    if (tl && ((x - tl.center[0]) / (tl.radii[0] + 12)) ** 2 + ((y - tl.center[1]) / (tl.radii[1] + 12)) ** 2 < 1) return false;
+    return true;
+  };
+  const pts = [];
+  for (let i = 0; i < 4000 && pts.length < 320; i++) {
+    let x, y;
+    if (i % 3 === 0) {   // треть — у борта карьера
+      const t = rnd() * Math.PI * 2, r = 1.06 + rnd() * 0.18;
+      x = pit.cx + pit.a * r * Math.cos(t); y = pit.cy + pit.b * r * Math.sin(t);
+    } else { x = x0 + 6 + rnd() * (x1 - x0 - 12); y = y0 + 6 + rnd() * (y1 - y0 - 12); }
+    if (keep(x, y)) pts.push([x, y, 0.5 + rnd() * rnd() * 2.6, rnd() * Math.PI]);
+  }
+  const geo = new THREE.IcosahedronGeometry(1, 0);
+  geo.scale(1, 0.62, 1);
+  const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ flatShading: true }), pts.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
+  const tones = [0x9a6a4a, 0x8a5c40, 0xb08463, 0x7c6a5a];
+  pts.forEach(([x, y, s, r], i) => {
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r);
+    m.compose(new THREE.Vector3(x, s * 0.3, -y), q, new THREE.Vector3(s, s, s));
+    inst.setMatrixAt(i, m);
+    inst.setColorAt(i, c.setHex(tones[i % tones.length]));
+  });
+  inst.raycast = () => {};
+  inst.name = 'rocks';
+  return inst;
 }
 
 // мягкая тень под макетом (радиальный градиент)

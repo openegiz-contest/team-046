@@ -855,8 +855,8 @@ function updateCamera(dt) {
   // масштаб значков: 1 вблизи (< 1,1 км до точки взгляда), дальше пропорционально расстоянию, но не больше 6 —
   // на общем виде (≈ 6 км) самосвал длиной 12 м занимает не меньше ~12 пикселей
   const dist = camera === orthoCam ? mp().orthoHalf / orthoCam.zoom : perspCam.position.distanceTo(controls.target);
-  // в схеме техника и так крупная (самосвал ≈ 13 единиц), значки растут чуть-чуть только при сильном отдалении
-  markerScale = mode === 'schema' ? Math.max(1.12, Math.min(2.4, dist / 620)) : Math.max(1, Math.min(6, dist / 1100));
+  // в схеме техника в натуральную величину (самосвал ≈ 13 единиц) вблизи; на общем виде — крупнее, как на макете
+  markerScale = mode === 'schema' ? Math.max(1.12, Math.min(2.2, dist / 430)) : Math.max(1, Math.min(6, dist / 1100));
 }
 
 // ---------------------------------------------------------------- слои
@@ -1324,7 +1324,7 @@ function lineUpQueues() {
     if (!lane) continue;
     list.sort((a, b) => (a.userData.thingId < b.userData.thingId ? -1 : 1));
     list.forEach((o, k) => {
-      const q = lanePoint(lane, (k + 1) * QUEUE_STEP);
+      const q = lanePoint(lane, (k + 1) * QUEUE_STEP * markerScale / 1.12);   // шаг растёт вместе с техникой
       if (!q) return;
       const p = dio.s(q.x, q.y, q.z + mp().road.lift);
       o.position.copy(p);
@@ -1341,9 +1341,10 @@ function separateDrills() {
     if (!/:drill-/.test(o.userData.thingId || '') || o.isMesh) continue;
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      if (d >= 16) continue;
-      const k = d > 0.01 ? 16 / d : 1;
-      o.position.x = e.position.x + (d > 0.01 ? dx * k : 16); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
+      const R = 16 * markerScale / 1.12;
+      if (d >= R) continue;
+      const k = d > 0.01 ? R / d : 1;
+      o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
       if (dio) o.position.y = dio.surfaceAt(o.position.x, -o.position.z);   // на поверхность схемы в новом месте
     }
   }
