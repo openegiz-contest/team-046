@@ -70,18 +70,61 @@ def num(v, default=None):
     return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else default
 
 
+FEED_CU_TARGET = 0.39    # % Cu — целевое содержание в питании дробилки (среднее по руднику 2025 г.)
+FEED_CU_LOW, FEED_CU_HIGH = 0.35, 0.43   # допустимый коридор, % Cu
+BLEND_OFFSET = 0.0       # % Cu — поправка к «желаемому» содержанию новых блоков (доступные сульфидные блоки в среднем богаче цели)
+BLEND_GAIN = 0.3         # во сколько раз сильнее цели отодвигаем «желаемое» содержание новых блоков при отклонении питания
+BLEND_WINDOW_S = 86400.0  # окно оценки питания — модельные сутки
+BLEND_LOOKAHEAD = 8      # из скольких ближайших невзорванных блоков панели выбирается следующий блок для бурения
+
+
+class FeedTracker:
+    """Содержание Cu в питании дробилки за последние модельные сутки: тоннаж-взвешенное среднее по сульфидным забоям, везущим руду на crusher-01."""
+
+    def __init__(self, target=FEED_CU_TARGET, window_s=BLEND_WINDOW_S):
+        self.target, self.window_s = target, window_s
+        self.q = []              # (время, тонны, тонны·Cu)
+        self.now = 0.0
+        self.sum_t = self.sum_cu = 0.0
+
+    def tick(self, dt):
+        self.now += dt
+        while self.q and self.q[0][0] < self.now - self.window_s:
+            _, t, c = self.q.pop(0)
+            self.sum_t -= t
+            self.sum_cu -= c
+
+    def add(self, tonnes, cu):
+        if tonnes > 0:
+            self.q.append((self.now, tonnes, tonnes * cu))
+            self.sum_t += tonnes
+            self.sum_cu += tonnes * cu
+
+    def actual(self):
+        return self.sum_cu / self.sum_t if self.sum_t > 2000.0 else None
+
+    def desired(self):
+        """Какое содержание нужно у новых блоков: цель, смещённая против отклонения питания (богато — берём победнее, и наоборот)."""
+        a = self.actual()
+        if a is None:
+            return self.target
+        return min(0.65, max(0.25, self.target + BLEND_OFFSET - BLEND_GAIN * (a - self.target)))
+
+
 def same_face(param, face_id):
     return str(param or "").split(":")[-1] == face_id
 
 
 class Face:
-    def __init__(self, thing_id, body, geometry, model, claimed, rng, prev=None):
+    def __init__(self, thing_id, body, geometry, model, claimed, rng, prev=None, blend=None):
         self.id = thing_id.split(":")[1]
         f = body["features"]
         self.base = {k: value(f, k) for k in ("remaining",)}
         obj = next(o for o in geometry["objects"] if o["id"] == self.id)
         self.x, self.y, self.z0 = obj["position"]
         self.model, self.claimed, self.rng = model, claimed, rng
+        self.blend = blend                              # FeedTracker: усреднение питания дробилки (только для сульфидных забоев)
+        self.last_delta = 0.0
         self.role = obj.get("ore_type", "waste")        # роль забоя: sulphide / clay / waste (из core/geometry.json)
         self.role_mismatch = False
         self.level = model.level_of(self.z0)
@@ -121,7 +164,8 @@ class Face:
         m = self.model
         # рудоконтроль: панель вдоль уступа, преобладающий тип которой совпадает с ролью забоя; ищем на текущем уступе и ниже
         levels = [self.level, min(self.level + 1, m.levels - 1)]
-        self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, self.claimed, levels)
+        desired = self.blend.desired() if (self.blend is not None and self.role == "sulphide") else None
+        self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, self.claimed, levels, desired)
         if self.panel is None:         # свободных блоков рядом нет — берём блоки повторно
             self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, set(), levels)
         if self.panel is None:         # совсем нечего взять (пустой пул): панель из одного ближайшего блока, роль не выполнена
@@ -191,8 +235,30 @@ class Face:
         p = self.panel
         for j in range(self.cur_index(), len(p.blocks)):
             if not p.blasted[j] and j not in p.reserved:
+                self._blend_frontier(j)
                 return j
         return None
+
+    def _blend_frontier(self, j):
+        """Усреднение внутри панели: из ближайших невзорванных блоков в очередь на бурение ставим тот, чьё Cu ближе к нужному
+        (питание богаче цели — победнее, беднее — побогаче). Переставляются только ещё не тронутые блоки."""
+        if self.blend is None or self.role != "sulphide":
+            return
+        p, m = self.panel, self.model
+        end = j
+        while end < len(p.blocks) and end < j + BLEND_LOOKAHEAD and not p.blasted[end] and end not in p.reserved:
+            end += 1
+        if end - j < 2:
+            return
+        want = self.blend.desired()
+        q = min(range(j, end), key=lambda i: abs(m.cu[p.blocks[i]] - want) + 0.004 * (i - j))
+        if q != j:
+            p.blocks[j], p.blocks[q] = p.blocks[q], p.blocks[j]
+            total = p.cum[j]
+            for i in range(j, len(p.blocks)):
+                p.cum[i] = total
+                total += m.tonnes(p.blocks[i])
+            p.total = total
 
     # -- отработка ---------------------------------------------------------------------
     def absorb(self, loaded, dt=0.0):
@@ -201,6 +267,7 @@ class Face:
         Нулевое или отсутствующее значение — это начальное значение двойника, а не показание счётчика: ждём первого
         настоящего (положительного) значения и только от него считаем прирост. Скачок больше возможного за тик
         (счётчик перезапущен, пропуск сообщений) пропускается."""
+        self.last_delta = 0.0
         if loaded is None or loaded <= 0:
             return
         if self.last_loaded is None or loaded < self.last_loaded:
@@ -212,6 +279,7 @@ class Face:
             log.warning("%s: скачок loaded_total на %.0f т за тик — пропущен", self.id, delta)
             return
         self.extracted += delta
+        self.last_delta = delta
         self.win_x += delta               # скорость отгрузки считаем по окну в 10 модельных минут, а не по тику
         self.win_t += dt
         if self.win_t >= 600.0:
@@ -315,7 +383,8 @@ def main():
     log.info("P80 опорное (руда, f=11): %.0f мм", bl.P80_REF)
     prev = read_prev_state(twins)
     claimed = set()
-    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t)) for t, b in twins.items() if ":face-" in t]
+    tracker = FeedTracker()
+    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
     drills = []
     geo_ids = {o["id"] for o in geometry["objects"]}
     drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
@@ -357,13 +426,18 @@ def main():
             "blasting_demand_tph": feature(round(demand, 0), "т/ч"),
             "drills_needed": feature(round(need, 2), "шт"),
             "drills_working": feature(sum(1 for d in drills if d.state != "idle"), "шт"),
+            "feed_cu_target": feature(FEED_CU_TARGET, "% Cu"),
+            "feed_cu_actual": feature(round(tracker.actual() if tracker.actual() is not None else FEED_CU_TARGET, 3), "% Cu"),
         })
+        tracker.tick(dt)
         for face in faces:
             if watcher.get(face.excavator, "face") == face.id:
                 face.absorb(watcher.get(face.excavator, "loaded_total"), dt)
             else:
                 face.last_loaded = None    # экскаватор в другом забое: счётчик чужой, отсчёт заново
             face.update_values(clay_on, clay_p, blast_on, blast_p)
+            if face.last_delta > 0 and face.role == "sulphide" and face.cur.get("recommended_destination") == "crusher-01":
+                tracker.add(face.last_delta, face.cur["cu_grade"])
             telemetry.publish(face.id, face.features())
         log.info("забои: %s", ", ".join(
             f"{f.id} {f.cur['cu_grade']:.2f}%Cu P80 {f.cur['p80']:.0f} мм lf {f.cur['loading_factor']:.2f} "
