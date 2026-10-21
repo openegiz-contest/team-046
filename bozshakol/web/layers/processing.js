@@ -129,13 +129,19 @@ export function update(ctx, twins) {
       rec.model.setVolume(Number(fv(twin, 'volume', stock / BULK_DENSITY)));
       rec.lamp.position.y = (rec.model.userData.height || 0) + 6;
       const hours = fv(twin, 'hours_left', null);
-      text += ' · ' + fmtNum(stock / 1000, 1) + ' тыс. т' + (hours !== null ? ' · хватит на ' + fmtNum(hours, 1) + ' ч' : '');
+      text += ' · ' + fmtNum(stock / 1000, 1) + ' тыс. т';
       if (id.endsWith(':stockpile-coarse')) {
-        const full = fv(twin, 'full', false) === true, expect = fv(twin, 'stop_expected', false) === true;
+        // тревога — только по правилу модели (alarm): дробилка не принимает или склад убывает > 15 модельных минут
+        const full = fv(twin, 'full', false) === true, alarm = fv(twin, 'alarm', false) === true;
+        const expect = alarm && fv(twin, 'stop_expected', false) === true;
         lamp = full ? 'red' : (expect ? 'amber' : 'green');
         if (full) text += ' · полон';
-        else if (expect) text += ' · фабрика встанет в ' + fv(twin, 'stop_forecast', '—');
+        else if (alarm && hours !== null) {
+          text += ' · хватит на ' + fmtNum(hours, 1) + ' ч';
+          if (expect) text += ' · фабрика встанет в ' + fv(twin, 'stop_forecast', '—');
+        } else text += ' · запас в норме';
       } else {
+        if (hours !== null) text += ' · хватит на ' + fmtNum(hours, 1) + ' ч';
         const accepting = fv(twin, 'accepting', true) !== false;
         lamp = accepting ? 'green' : 'red';
         if (!accepting) text += ' · не принимает';

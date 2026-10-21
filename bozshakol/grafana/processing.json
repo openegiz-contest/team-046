@@ -7,7 +7,7 @@
  ],
  "timezone": "browser",
  "schemaVersion": 39,
- "version": 2,
+ "version": 3,
  "editable": true,
  "graphTooltip": 1,
  "refresh": "5s",
@@ -34,7 +34,7 @@
    "gridPos": {
     "x": 0,
     "y": 0,
-    "w": 4,
+    "w": 3,
     "h": 4
    },
    "targets": [
@@ -115,9 +115,9 @@
     "uid": "opentwins-influxdb"
    },
    "gridPos": {
-    "x": 4,
+    "x": 3,
     "y": 0,
-    "w": 4,
+    "w": 3,
     "h": 4
    },
    "targets": [
@@ -189,9 +189,9 @@
     "uid": "opentwins-influxdb"
    },
    "gridPos": {
-    "x": 8,
+    "x": 6,
     "y": 0,
-    "w": 4,
+    "w": 3,
     "h": 4
    },
    "targets": [
@@ -253,9 +253,9 @@
     "uid": "opentwins-influxdb"
    },
    "gridPos": {
-    "x": 12,
+    "x": 9,
     "y": 0,
-    "w": 4,
+    "w": 3,
     "h": 4
    },
    "targets": [
@@ -304,13 +304,13 @@
      "fields": "",
      "values": false
     },
-    "colorMode": "background",
+    "colorMode": "none",
     "graphMode": "none",
     "justifyMode": "auto",
     "orientation": "auto",
     "textMode": "value"
    },
-   "description": "Склад крупнодроблёной руды ÷ текущее питание сульфидной фабрики (при остановке фабрики — ÷ план)"
+   "description": "Склад крупнодроблёной руды ÷ текущее питание сульфидной фабрики. Справочно: тревогу показывает панель «Тревога по складу» (дробилка не принимает руду или склад убывает дольше 15 модельных минут)"
   },
   {
    "id": 5,
@@ -368,7 +368,7 @@
     "orientation": "auto",
     "textMode": "value"
    },
-   "description": "Прогноз: если подача на склад прекратилась — когда кончится запас при плановом питании; если приход меньше питания — когда склад опустеет; иначе «не ожидается»"
+   "description": "В режиме тревоги — когда кончится запас (подача прекратилась) или когда склад опустеет (приход меньше питания); без тревоги — «запас в норме»"
   },
   {
    "id": 6,
@@ -1158,6 +1158,80 @@
     "orientation": "auto",
     "textMode": "auto"
    }
+  },
+  {
+   "id": 18,
+   "type": "stat",
+   "title": "Тревога по складу",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "opentwins-influxdb"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 4,
+    "h": 4
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "opentwins-influxdb"
+     },
+     "query": "from(bucket: \"default\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"mqtt_consumer\" and r.thingId == \"kz.bozshakol:stockpile-coarse\" and r._field == \"value_alarm_properties_value\")\n  |> keep(columns: [\"_time\", \"_value\"])",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "false": {
+         "text": "запас в норме",
+         "color": "green",
+         "index": 0
+        },
+        "true": {
+         "text": "тревога",
+         "color": "red",
+         "index": 1
+        }
+       }
+      }
+     ]
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "auto",
+    "orientation": "auto",
+    "textMode": "value"
+   },
+   "description": "stockpile-coarse.alarm: тревога только если дробилка не принимает руду или склад убывает дольше 15 модельных минут подряд; в первые минуты после запуска тревоги нет"
   }
  ]
 }
