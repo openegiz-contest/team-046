@@ -109,7 +109,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
       for (let i = 0; i <= n; i++) pts.push(S(from[0] + (to[0] - from[0]) * i / n, from[1] + (to[1] - from[1]) * i / n, 0));
       const g = models.powerLine(pts, { height: 20 }); g.scale.y = 1.5 / K; group.add(g);
     };
-    line([B.minX + 40, B.minY + 200], sub, u(250));
+    line([sub[0] - u(1800), sub[1] - u(1500)], sub, u(250));   // ЛЭП приходит с юго-запада
     if (plant) line(sub, [plant[0] + u(170), plant[1] - u(60)], u(120));
   }
 
