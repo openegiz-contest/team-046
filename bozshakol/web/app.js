@@ -1648,8 +1648,15 @@ canvas.addEventListener('dblclick', (e) => {
   if (!obj || camera !== perspCam) return;
   followId = null; updateFollowButton();
   obj.getWorldPosition(_v);
-  const len = ((obj.userData.size && (obj.userData.size.length || obj.userData.size[0])) || 30) * (obj.scale.x || 1);
-  const d = Math.max(mp().cam.min * 2.5, len * 1.8);
+  let d;
+  if (MACHINE_RE.test(id)) {   // техника — крупный план: 20–30 м местности
+    const len = ((obj.userData.size && (obj.userData.size.length || obj.userData.size[0])) || 13) * (obj.scale.x || 1);
+    d = Math.max(mp().cam.min * 2.5, len * 1.8);
+  } else {                     // здания и площадки — по габаритам, снаружи (≈ 135 м и дальше)
+    const box = new THREE.Box3().setFromObject(obj), sz = box.getSize(new THREE.Vector3());
+    d = Math.max(45 * mp().unit * 3, Math.max(sz.x, sz.z) * 1.4);
+    if (!box.isEmpty()) box.getCenter(_v);
+  }
   flyTo(_v.clone().add(new THREE.Vector3(-d * 0.75, d * 0.45, d * 0.8)), _v.clone());
   orbitId = id; controls.autoRotate = true; controls.autoRotateSpeed = 1.2;
   markViewButton('');
