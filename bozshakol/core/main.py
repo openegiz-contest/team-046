@@ -52,6 +52,17 @@ def main():
                           client_id="bz-core-watch").start()
     telemetry = Telemetry(client_id="bz-core").connect()
     clock = SimClock()
+    # модельное время продолжается с mine.sim_time в Ditto (повторный make bozshakol, перезапуск bz-core):
+    # иначе часы снова 08:00 смены 1, а модули восстановили накопители этой «смены» — план смены > 100 %.
+    # После make clean двойника с sim_time нет — время с начала смены.
+    try:
+        mine = ditto.retry(lambda: ditto.get_thing("kz.bozshakol:mine", "features"))
+        iso = (((mine or {}).get("features") or {}).get("sim_time") or {}).get("properties", {}).get("value")
+        if iso:
+            clock.resume(iso)
+            log.info("модельное время продолжается с %s (смена %d)", iso, clock.shift()[0])
+    except Exception as exc:  # нет двойника или Ditto не ответил — начинаем с начала смены
+        log.info("модельное время с начала смены (%s)", exc)
     rng = random.Random(7)
     weather_t = 0.0
 
