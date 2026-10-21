@@ -362,6 +362,55 @@ def report_mode(label, runs):
           f"{REAL_BUNKER_T - REAL_TRUCK_MAX_T:.0f} т — цифры модуля №4, см. REAL_* выше)")
 
 
+def run_cold_start(hm, seed, dispatch_off=False, hours=2, bucket_min=10):
+    """Первые несколько модельных часов после старта («холодный старт» — проверка, что
+    резерв не раздувается на старте, пока план ещё не накопил цель): каждые `bucket_min`
+    модельных минут — число самосвалов в резерве, среднее ожидание у экскаватора, суммарная
+    очередь по всем экскаваторам."""
+    random.seed(seed)
+    with open(GEOMETRY_PATH, encoding="utf-8") as f:
+        geometry = json.load(f)
+    watcher = FakeWatcher(CONST_FACES, dict(CONST_ACCEPTING), dispatch_off=dispatch_off)
+    model = hm.Haulage(geometry, watcher, clock=None, seed=seed)
+    model.speed_limit = 50.0
+    steps_per_bucket = int(bucket_min * 60 / STEP_S)
+    bunker_state = {"stock": 0.0, "last_delivered": 0.0}
+    buckets = []
+    for i in range(int(hours * 3600 / STEP_S)):
+        model.step(STEP_S)
+        _step_bunker(watcher, model, bunker_state)
+        if (i + 1) % steps_per_bucket == 0:
+            reserve_n = sum(1 for t in model.trucks if t.state == "reserve")
+            queue_sum = sum(len(ex.queue) for ex in model.excavators.values())
+            wait = fv(model.dispatch_features(), "avg_wait_excavator")
+            buckets.append((model._sim_t / 60.0, reserve_n, wait, queue_sum))
+    return buckets
+
+
+def report_cold_start(all_runs):
+    """Отчёт по `run_cold_start` для нескольких seed — среднее и максимум резерва по бакетам
+    (часть задачи «долгое восстановление», п.2: на старте резерв не должен раздувать до
+    половины парка — было 17 из 28)."""
+    print(f"\n{'=' * 60}\nХОЛОДНЫЙ СТАРТ (первые 2 модельных часа, по 10 модельных минут, "
+          f"{len(all_runs)} seed) — резерв/ожидание/очередь\n{'=' * 60}")
+    n_buckets = len(all_runs[0])
+    print(f"  {'t, мин':>7s} {'в резерве (сред±разброс, макс)':>32s} {'ожидание, мин':>16s} {'очередь (сумма)':>18s}")
+    max_reserve_ever = 0
+    for b in range(n_buckets):
+        t = all_runs[0][b][0]
+        reserves = [run[b][1] for run in all_runs]
+        waits = [run[b][2] for run in all_runs]
+        queues = [run[b][3] for run in all_runs]
+        m_r, s_r = avg_spread(reserves)
+        m_w, s_w = avg_spread(waits)
+        m_q, s_q = avg_spread(queues)
+        max_reserve_ever = max(max_reserve_ever, max(reserves))
+        print(f"  {t:>7.0f} {m_r:>6.1f}±{s_r:<4.1f} (макс {max(reserves):>2d})      "
+              f"{m_w:>6.2f}±{s_w:<4.2f}   {m_q:>6.1f}±{s_q:<4.1f}")
+    print(f"\n  Максимум резерва за всё окно (по всем seed): {max_reserve_ever} из 28 "
+          f"({'OK, не больше половины парка' if max_reserve_ever < 14 else 'ПЛОХО: половина парка или больше'}).")
+
+
 def report_scenarios(hm, auto, manual):
     """Отчёт по режиму «со сценариями» (24 модельных часа, 5 seed): ожидание у экскаватора
     по часам — растёт ли со временем, возвращается ли к прежнему уровню после каждого сценария."""
@@ -423,6 +472,9 @@ def main():
     hm = _load_main()
     _HM = hm
     print(f"Прогон {MODEL_HOURS} модельных часов × {len(SEEDS)} seed, постоянные данные забоёв.")
+
+    cold_start_runs = [run_cold_start(hm, seed=s, dispatch_off=False) for s in SEEDS]
+    report_cold_start(cold_start_runs)
 
     auto_runs = [collect(run(hm, dispatch_off=False, seed=s)) for s in SEEDS]
     manual_runs = [collect(run(hm, dispatch_off=True, seed=s)) for s in SEEDS]
