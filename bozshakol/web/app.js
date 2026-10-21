@@ -1269,9 +1269,28 @@ function updateDust(dt) {
   }
 }
 // Очереди: в схеме подъезды сжаты, а самосвалы — в натуральную величину, поэтому стоящие в очереди к одному
-// пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль подъезда с шагом в длину самосвала:
-// направление — от пункта к самосвалу, порядок — по удалённости (только в схеме, только картинка)
+// пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль дороги, по которой к пункту
+// приезжают (к забою — путь от дробилки, к дробилке — путь из карьера), с шагом в длину самосвала
+// (только в схеме, только картинка)
 const QUEUE_STEP = 16;
+const queueLanes = {};
+function queueLane(node) {
+  if (queueLanes[node] !== undefined) return queueLanes[node];
+  const from = node === 'crusher' ? 'floor-c' : 'crusher';
+  const path = geometry.nodes[from] ? shortestPath(node, from) : null;
+  return (queueLanes[node] = path && path.length > 1 ? path.map((n) => dio.D.nodes[n]) : null);
+}
+function lanePoint(lane, dist) {   // точка на ломаной на расстоянии dist от начала + направление к началу
+  for (let i = 0; i < lane.length - 1; i++) {
+    const a = lane[i], b = lane[i + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (dist <= L || i === lane.length - 2) {
+      const t = L > 0 ? Math.min(1, dist / L) : 0;
+      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, z: a[2] + (b[2] - a[2]) * t, dx: a[0] - b[0], dy: a[1] - b[1] };
+    }
+    dist -= L;
+  }
+  return null;
+}
 function lineUpQueues() {
   if (mode !== 'schema' || !dio) return;
   const groups = {};
@@ -1285,23 +1304,15 @@ function lineUpQueues() {
     (groups[node] || (groups[node] = [])).push(o);
   }
   for (const [node, list] of Object.entries(groups)) {
-    const n = dio.D.nodes[node], head = dio.s(n[0], n[1], n[2]);
-    list.sort((a, b) => a.position.distanceTo(head) - b.position.distanceTo(head) || (a.userData.thingId < b.userData.thingId ? -1 : 1));
-    let dir = null;
+    const lane = queueLane(node);
+    if (!lane) continue;
+    list.sort((a, b) => (a.userData.thingId < b.userData.thingId ? -1 : 1));
     list.forEach((o, k) => {
-      if (!dir) {
-        dir = new THREE.Vector3(o.position.x - head.x, 0, o.position.z - head.z);
-        if (dir.lengthSq() < 9) {   // самосвал стоит в самом пункте — направление по ребру дороги, ведущему к пункту
-          const e = dio.edges.find((q) => q.from === node || q.to === node);
-          const other = e ? (e.from === node ? e.sb : e.sa) : [n[0], n[1] - 1];
-          dir.set(other[0] - n[0], 0, -(other[1] - n[1]));
-        }
-        dir.normalize();
-      }
-      const want = (k + 1) * QUEUE_STEP;
-      o.position.x = head.x + dir.x * want; o.position.z = head.z + dir.z * want;
-      o.position.y = Math.max(dio.surfaceAt(o.position.x, -o.position.z), head.y);
-      o.rotation.y = Math.atan2(-dir.x, -dir.z);   // носом к пункту
+      const q = lanePoint(lane, (k + 1) * QUEUE_STEP);
+      if (!q) return;
+      const p = dio.s(q.x, q.y, q.z + mp().road.lift);
+      o.position.copy(p);
+      o.rotation.y = Math.atan2(q.dx, -q.dy);   // носом к пункту (в сцене z = −север)
     });
   }
 }
