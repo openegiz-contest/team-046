@@ -171,7 +171,14 @@ class Rules(unittest.TestCase):
         s["dispatch"]["avg_wait_excavator"] = 5.6
         txt = " ".join(x["text"] for x in R.advise(s, history(3360.7, inflow=2400.0)))
         self.assertNotIn("вернуть", txt)
-        self.assertIn("узкое место погрузка", txt)
+        self.assertIn("Узкое место: цикл экскаватора (ожидание/погрузка у экскаватора), а не число самосвалов — "
+                      "самосвалы ждут у экскаваторов 5.6 мин", txt)
+        self.assertEqual(txt.lower().count("узкое место"), 1)       # без повтора
+        self.assertNotIn("loading_factor", txt)                      # забои грузятся нормально — геологию не упоминаем
+        # неудачный взрыв замедлил погрузку в забое — его называем
+        s["face-01"] = {"loading_factor": 0.7, "ore_type": "sulphide"}
+        txt = " ".join(x["text"] for x in R.advise(s, history(3360.7, inflow=2400.0)))
+        self.assertIn("погрузка медленнее в face-01 (loading_factor 0.70)", txt)
 
     def test_fleet_wait_too_long(self):
         s = base_snap()
