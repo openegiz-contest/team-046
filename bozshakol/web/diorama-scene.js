@@ -86,6 +86,14 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const plant = D.objects['plant-sulphide'] && D.objects['plant-sulphide'].position;
   if (plant) group.add(fence(THREE, S, [[plant[0] - 54, plant[1] - 32], [plant[0] + 50, plant[1] - 32], [plant[0] + 50, plant[1] + 36], [plant[0] - 54, plant[1] + 36]]));
 
+  // --- сгустители у фабрик (круглые резервуары с мостом) — окружение схемы, не двойники
+  if (models && models.building) {
+    const tk = (xs, ys, d) => { const g = models.building('thickener', { size: [d, d, 6] }); g.scale.setScalar(0.55); g.position.copy(S(xs, ys, 0)); group.add(g); };
+    if (plant) { tk(plant[0] - 30, plant[1] - 46, 34); tk(plant[0] + 4, plant[1] - 46, 34); }
+    const pc = D.objects['plant-clay'] && D.objects['plant-clay'].position;
+    if (pc) tk(pc[0] + 36, pc[1] - 4, 30);
+  }
+
   // --- мачты освещения по борту карьера (прожекторы — ореолы)
   for (let i = 0; i < 8; i++) {
     const t = (i + 0.5) / 8 * Math.PI * 2;
@@ -263,7 +271,6 @@ function steppeTexture(THREE, dio, colors, [x0, y0, x1, y1]) {
   g.beginPath(); g.ellipse(px(p.cx), py(p.cy), pr(p.a + 3), pr(p.b + 3), 0, 0, Math.PI * 2); g.stroke(); g.restore();
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
   return tex;
 }
 function roundRect(g, x, y, w, h, r) {

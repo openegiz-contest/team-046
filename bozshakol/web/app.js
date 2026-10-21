@@ -77,7 +77,7 @@ const MODE_PARAMS = {
     sun: { pos: [-4200, 3600, 2600], tgt: [-1100, 0, 200], box: [4600, 3600], near: 100, far: 14000 },
   },
   schema: {
-    unit: 0.1, labelDist: { 2: 560, 1: 230 }, hit: 0.4, follow: [-32, 24, 34], fly: [70, 2.5],
+    unit: 0.1, labelDist: { 2: 560, 1: 200 }, hit: 0.4, follow: [-32, 24, 34], fly: [70, 2.5],
     road: { w: 12, ramp: 13, lift: 0.3, h: 0.5 }, route: { r: 0.45, lift: 1.0 },
     cam: { near: 0.5, far: 6000, min: 10, max: 1700 }, orthoHalf: 230, orthoAt: [0, 400, 0],
     sun: { pos: [-420, 430, 300], tgt: [0, 0, 0], box: [380, 300], near: 10, far: 2000 },
@@ -963,7 +963,7 @@ function decorateModels() {
 }
 // маршрут выбранного самосвала: кратчайший путь по графу дорог до пункта назначения — светящаяся линия
 let routeMesh = null, routeKey = '';
-const routeMat = new THREE.MeshBasicMaterial({ color: 0x0fb3c9, transparent: true, opacity: 0.85, depthWrite: false });   // обычное смешение: на светлой степи сложение цветов выгорает в белое
+const routeMat = new THREE.MeshBasicMaterial({ color: 0x12c8e8, transparent: true, opacity: 0.9, depthWrite: false });   // тонкая яркая линия; обычное смешение: на светлой степи сложение цветов выгорает в белое
 function nearestNode(x, y) {
   let best = null, bd = Infinity;
   for (const [n, p] of Object.entries(geometry.nodes)) { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; best = n; } }
@@ -1041,6 +1041,9 @@ function frame(now) {
   }
   orientTrucks(dt);
   shrinkFaceZones();
+  schemaDetail();
+  updateDust(dt);
+  if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
   if (frameNo % 15 === 0) updateRoute();
   if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
@@ -1162,6 +1165,8 @@ function teardownWorld() {
   for (let i = labels.length - 1; i >= 0; i--) if (!isAttached(labels[i].obj)) { labels[i].el.remove(); labels.splice(i, 1); }
   for (const k of Object.keys(badges)) delete badges[k];
   for (const k of Object.keys(adviceBadges)) delete adviceBadges[k];
+  for (const k of Object.keys(downBadges)) delete downBadges[k];
+  for (const d of dust) d.sp.visible = false;
   lastAdviceRaw = null;
   followId = null; tween = null;
 }
@@ -1179,6 +1184,68 @@ async function switchMode(next) {
     renderPanel();
     updateFollowButton();
   } finally { switching = false; }
+}
+// В схеме вся техника ближе 2,5 км «по метрам» слоёв — дальнюю (дальше 260 единиц от камеры) переводим
+// в упрощённую детализацию после update слоёв: силуэт тот же, кадров больше
+function schemaDetail() {
+  if (mode !== 'schema') return;
+  camera.getWorldPosition(_c);
+  for (const o of clickable) {
+    if (typeof o.setDetail !== 'function' || !/:(truck|excavator|drill)-/.test(o.userData.thingId || '')) continue;
+    o.getWorldPosition(_v);
+    o.setDetail(camera === orthoCam || _v.distanceTo(_c) > 260 ? 'far' : 'full');
+  }
+}
+// Авария (state = down) у самосвала или экскаватора — значок над техникой (маячок модели — красный, корпус — красный)
+const downBadges = {};
+function updateDownBadges() {
+  for (const o of clickable) {
+    const id = o.userData.thingId || '';
+    if (!/:(truck|excavator)-/.test(id) || !o.isObject3D || o.isMesh) continue;
+    const down = val(id, 'state', '') === 'down';
+    let b = downBadges[id];
+    if (b && b.obj !== o) { b.el.remove(); const i = labels.indexOf(b); if (i >= 0) labels.splice(i, 1); b = downBadges[id] = null; }
+    if (down && !b) b = downBadges[id] = addLabel(o, '⛔ авария', { importance: 3.5, cls: 'warn', dy: 9 });
+    if (b) b.enabled = down;
+  }
+}
+// Пыль за едущими самосвалами (только «Высокое»): пул мягких спрайтов, гаснут за ~1,5 с
+const dust = [];
+let dustMat = null, dustT = 0;
+const dustPrev = new WeakMap();
+function updateDust(dt) {
+  const on = quality === 'high';
+  for (const d of dust) {
+    if (!d.sp.visible) continue;
+    d.age += dt;
+    const k = d.age / 1.6;
+    if (k >= 1 || !on) { d.sp.visible = false; continue; }
+    d.sp.material.opacity = 0.32 * (1 - k);
+    d.sp.scale.setScalar(d.size * (1 + 1.8 * k));
+    d.sp.position.y += dt * 1.2 * mp().unit * 10;
+  }
+  if (!on) return;
+  dustT += dt;
+  if (dustT < 0.2) return;
+  dustT = 0;
+  for (const o of clickable) {
+    if ((o.userData.thingId || '').indexOf(':truck-') < 0 || !o.parent || o.isMesh) continue;
+    const prev = dustPrev.get(o), p = o.position;
+    dustPrev.set(o, p.clone());
+    if (!prev || prev.distanceTo(p) < 0.6 * mp().unit * 10) continue;   // стоит или ползёт — пыли нет
+    let d = dust.find((x) => !x.sp.visible);
+    if (!d) {
+      if (dust.length >= 140) continue;
+      dustMat = dustMat || new THREE.SpriteMaterial({ map: glowTexture(THREE), color: 0xd8c9a4, transparent: true, depthWrite: false });
+      d = { sp: new THREE.Sprite(dustMat.clone()), age: 0, size: 1 };
+      d.sp.raycast = () => {};
+      dust.push(d);
+    }
+    if (d.sp.parent !== scene) scene.add(d.sp);
+    const back = new THREE.Vector3(-Math.sin(o.rotation.y), 0, -Math.cos(o.rotation.y)).multiplyScalar(7 * o.scale.x);
+    d.sp.position.copy(p).add(back); d.sp.position.y += 1.5 * o.scale.x;
+    d.size = 6 * o.scale.x; d.age = 0; d.sp.visible = true;
+  }
 }
 // Зоны забоев слоя геологии нарисованы плоскостями в метрах (120 × 60 м), слой каждый кадр ставит им
 // масштаб ctx.markerScale — в схеме после обновления слоя уменьшаем их до ≈ 24 × 12 единиц
