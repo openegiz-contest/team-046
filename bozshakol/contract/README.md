@@ -319,6 +319,14 @@ export function update(ctx, twins) {
 | `top_advice` | текст главного совета; «Отклонений нет», если советов нет |
 | `level` | уровень главного совета: 2 — критично, 1 — важно, 0 — к сведению или нет советов |
 | `advice_ids` | идентификаторы советов через запятую (для журнала событий в сцене) |
+| `reality` | сверка с реальностью (JSON строкой, `core/reality.py`): `rows` — строки `id`, `name`, `unit`, `model` (среднее по двойникам за последний модельный час или `null` — нет данных), `real` или `real_range`, `dev_pct`, `status` (ok — в пределах ±10 % / off — вне / warmup — первый модельный час / no_data), `source`, `model_from`; `window_min`, `warmup` |
+| `reality_warmup` | `true` в первый модельный час после старта советника — сравнение предварительное |
+| `real_feed_sulphide`, `real_feed_clay`, `real_cu_grade`, `real_recovery`, `real_cu_kt_year`, `real_wait_excavator`, `real_energy_kwh_t` | средние модели за последний модельный час (для Grafana); величина, которую модули не публикуют, не появляется (нет данных) |
+
+Сверка с реальностью: подача на обе фабрики (`plant-*.feed_rate`), содержание меди в питании (`feed_cu`, взвешено по подаче),
+извлечение (медь в концентрат / медь в питании по обеим фабрикам), темп меди в концентрате (`cu_year_pace` обеих фабрик),
+ожидание у экскаватора в режиме «авто» (`dispatch.avg_wait_excavator`), удельная электроэнергия (`plant-sulphide.specific_energy`,
+если модуль переработки её публикует). Реальные значения и источники — `data/SOURCES.md`.
 
 Поля одного совета в `advice`: `id` (crusher / clay / plan / inflow / fleet / blizzard / warmup), `priority` (critical / important / info),
 `level` (2 / 1 / 0), `title`, `text` (что сделать, с числами), `reason` (почему: какие двойники и значения),

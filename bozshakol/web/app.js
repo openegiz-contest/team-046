@@ -609,8 +609,50 @@ function diffEvents() {
   prevWatch = cur;
 }
 
+// ---------------------------------------------------------------- сверка с реальностью (advisor.reality, core/reality.py)
+const REALITY_STATUS = { ok: 'в пределах ±10 %', off: 'вне ±10 %', warmup: 'модель разгоняется', no_data: 'нет данных' };
+let lastRealityRaw = null;
+function fmtNum(v, unit) {
+  const d = unit === '% Cu' ? 3 : (unit === 'мин' || unit === 'кВт·ч/т' || unit === '%') ? 1 : 0;
+  return fmt(v, d);
+}
+function renderReality() {
+  const box = document.getElementById('reality');
+  if (!box || box.hidden) return;
+  const raw = val(NS + ':advisor', 'reality', null);
+  if (raw === lastRealityRaw) return;
+  lastRealityRaw = raw;
+  const tbody = document.querySelector('#reality-table tbody');
+  let data = null;
+  try { data = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { data = null; }
+  if (!data || !Array.isArray(data.rows)) { tbody.innerHTML = '<tr><td colspan="4" class="muted">нет данных — советник ещё не опубликовал сверку</td></tr>'; return; }
+  const note = document.getElementById('reality-note');
+  note.textContent = (data.warmup ? 'Модель разгоняется: данных ' + fmt(data.window_min, 0) + ' модельных минут из 60 — сравнение предварительное. ' : '') +
+    'Модель — среднее по двойникам за последний модельный час; реальность — факты Бозшаколя (data/SOURCES.md). ' +
+    'Зелёный — отклонение в пределах ±10 %, жёлтый — больше.';
+  tbody.innerHTML = data.rows.map((r) => {
+    const real = r.real_range ? fmtNum(r.real_range[0], r.unit) + '–' + fmtNum(r.real_range[1], r.unit) : fmtNum(r.real, r.unit);
+    const model = r.model === null || r.model === undefined ? '—' : fmtNum(r.model, r.unit);
+    const dev = r.dev_pct === null || r.dev_pct === undefined ? REALITY_STATUS[r.status] || '—'
+      : (r.dev_pct > 0 ? '+' : '') + fmt(r.dev_pct, 1) + ' %' + (r.status === 'warmup' ? ' · разгон' : '');
+    return '<tr title="' + esc('Реальность: ' + r.source + '\nМодель: ' + r.model_from) + '">' +
+      '<td>' + esc(r.name) + '<div class="src">' + esc(r.source.split(' — ')[0]) + '</div></td>' +
+      '<td class="num">' + esc(model) + ' ' + esc(r.unit) + '</td>' +
+      '<td class="num">' + esc(real) + ' ' + esc(r.unit) + '</td>' +
+      '<td class="num"><span class="dev ' + esc(r.status) + '">' + esc(dev) + '</span></td></tr>';
+  }).join('');
+}
+function initReality() {
+  const box = document.getElementById('reality'), btn = document.getElementById('btn-reality');
+  if (!box || !btn) return;
+  const show = (on) => { box.hidden = !on; btn.classList.toggle('active', on); lastRealityRaw = null; renderReality(); };
+  btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
+  document.getElementById('reality-close').addEventListener('click', () => show(false));
+}
+
 function renderPanel() {
   renderDispatcher();
+  renderReality();
   renderScenarios();
   renderAdvice();
   diffEvents();
@@ -1526,6 +1568,7 @@ function initGuide() {
     initKeys();
     initQuality();
     initLighting();
+    initReality();
   } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {

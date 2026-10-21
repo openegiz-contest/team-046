@@ -52,6 +52,7 @@
     <button type="button" data-view="top" title="Карта сверху (ортографическая камера)">Сверху (карта)</button>
     <button id="btn-map" type="button" title="Реальный рельеф со спутниковым снимком Sentinel-2 поверх макета">Карта местности</button>
     <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним">Следовать за самосвалом</button>
+    <button id="btn-reality" type="button" title="Насколько модель совпадает с реальным Бозшаколем: средние за последний модельный час против фактов 2025 года">Сверка с реальностью</button>
     <button id="btn-help" type="button" title="Клавиши управления (? или H)">?</button>
     <span id="load-status">загрузка…</span>
   </div>
@@ -123,6 +124,22 @@
   </aside>
 
   <!-- Путеводитель: открывается при первом посещении, потом — кнопкой «Как посмотреть» -->
+  <div id="reality" hidden>
+    <div class="reality-card">
+      <div class="card-head">
+        <b>Сверка с реальностью</b>
+        <button id="reality-close" type="button" title="Закрыть">×</button>
+      </div>
+      <p class="muted" id="reality-note">Модель — среднее по двойникам за последний модельный час; реальность — факты
+        Бозшаколя (data/SOURCES.md). Зелёный — отклонение в пределах ±10 %, жёлтый — больше.</p>
+      <table id="reality-table">
+        <thead><tr><th>величина</th><th>модель</th><th>реальность</th><th>отклонение</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted reality-src">Источник каждой реальной цифры — в подсказке строки и в
+        <code>bozshakol/data/SOURCES.md</code>; история — дашборд Grafana «Бозшаколь — сверка с реальностью».</p>
+    </div>
+  </div>
   <div id="guide" hidden>
     <div class="guide-card">
       <div class="card-head">
