@@ -40,6 +40,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   group.add(shadow);
   const grid = new THREE.GridHelper(4000, 100, 0xc3ccd4, 0xd9dfe4);
   grid.position.y = BASE_Z - 3.4;
+  grid.name = 'diorama-grid';
   grid.material.depthWrite = false;   // непрозрачные светлые линии: без смешивания — дешевле без видеокарты
   group.add(grid);
 

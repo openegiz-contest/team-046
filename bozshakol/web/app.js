@@ -77,7 +77,8 @@ const MODE_PARAMS = {
     sun: { pos: [-4200, 3600, 2600], tgt: [-1100, 0, 200], box: [4600, 3600], near: 100, far: 14000 },
   },
   schema: {
-    unit: 0.1, labelDist: { 2: 560, 1: 200 }, hit: 0.4, follow: [-32, 24, 34], fly: [70, 2.5],
+    // схема: постоянно — только подписи крупных объектов (3); техника и забои — при наведении или выборе
+    unit: 0.1, labelDist: { 2: 0, 1: 0 }, hit: 0.4, follow: [-32, 24, 34], fly: [70, 2.5],
     road: { w: 12, ramp: 13, lift: 0.3, h: 0.5 }, route: { r: 0.45, lift: 1.0 },
     cam: { near: 0.5, far: 6000, min: 10, max: 1700 }, orthoHalf: 230, orthoAt: [0, 400, 0],
     sun: { pos: [-420, 430, 300], tgt: [0, 0, 0], box: [380, 300], near: 10, far: 2000 },
@@ -216,7 +217,7 @@ function updateLabels() {
     const focused = id && (id === openedThing || id === hoverThing);
     let imp = L.importance;
     if (focused) imp = 4;
-    if (imp < 3 && dist > (LABEL_DIST[Math.max(1, Math.min(2, Math.round(imp)))] || 2600)) continue;
+    if (imp < 3 && dist > (LABEL_DIST[Math.max(1, Math.min(2, Math.round(imp)))] ?? 2600)) continue;
     _v.project(camera);
     if (_v.z > 1 || _v.x < -1.05 || _v.x > 1.05 || _v.y < -1.05 || _v.y > 1.05) continue;
     L.sx = (_v.x + 1) / 2 * w; L.sy = (1 - _v.y) / 2 * h; L.imp = imp; L.dist = dist;
@@ -485,6 +486,7 @@ function renderScenarioBanner(t) {
   const blizzard = !!val(NS + ':scenarios', 'blizzard', false);
   const visibility = val(NS + ':mine', 'visibility', blizzard ? 300 : 5000);
   if (environment) environment.setWeather({ blizzard, visibility });   // туман по дальности видимости
+  if (lighting === 'night') nightSky();                                  // ночью небо остаётся тёмным
   const wb = document.getElementById('weather-banner');
   if (wb) {
     wb.hidden = !blizzard;
@@ -928,11 +930,85 @@ function applyQuality(q) {
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
-  if (environment && environment.setQuality) environment.setQuality(high);
+  if (environment && environment.setQuality) environment.setQuality(high || lighting === 'night');   // ночью огни горят всегда
   for (const s of glowSprites) s.visible = high;
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   const sel = document.getElementById('quality');
   if (sel) sel.value = quality;
+}
+// ---------------------------------------------------------------- освещение: «День» / «Ночная смена»
+// Ночью: тёмное небо, приглушённые небо и луна, ореолы прожекторов мачт (при любом качестве), фары самосвалов
+// с ореолами, подсвеченные окна корпусов (models.setNight). Без постобработки — только спрайты и материалы.
+let lighting = 'day';
+const NIGHT_BG = 0x0f1a2c;
+function nightSky() {
+  if (!scene.background || !scene.background.isColor) scene.background = new THREE.Color(NIGHT_BG);
+  else scene.background.setHex(NIGHT_BG);
+  if (scene.fog) scene.fog.color.setHex(NIGHT_BG);
+}
+function applyLighting(l) {
+  lighting = l === 'night' ? 'night' : 'day';
+  const night = lighting === 'night';
+  hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
+  hemi.intensity = night ? 0.8 : 1.35;
+  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
+  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (схема и «Карта местности») ночью — тёмно-синяя
+    const grid = scene.getObjectByName(name);
+    if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
+  }
+  scene.traverse((o) => {   // ореолы прожекторов ночью крупнее
+    if (!o.isSprite || !o.userData.glow) return;
+    if (!o.userData.baseScale) o.userData.baseScale = o.scale.x;
+    o.scale.setScalar(o.userData.baseScale * (night ? 1.7 : 1));
+  });
+  renderer.toneMappingExposure = night ? 1.15 : 1.05;
+  if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
+  if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
+  if (night) nightSky();
+  else renderScenarioBannerSafe();   // днём фон и туман — по погоде (метель)
+  updateHeadlights();
+  const sel = document.getElementById('lighting');
+  if (sel) sel.value = lighting;
+  window.__lighting = lighting;
+}
+function renderScenarioBannerSafe() {
+  const t = twins[NS + ':scenarios'];
+  if (t) renderScenarioBanner(t);
+  else if (environment && environment.setWeather) environment.setWeather({ blizzard: false, visibility: 5000 });
+}
+// фары: ореол спереди каждого самосвала (дочерний спрайт — масштабируется вместе с моделью), видны ночью
+let headTex = null;
+function updateHeadlights() {
+  const night = lighting === 'night';
+  for (const o of clickable) {
+    if ((o.userData.thingId || '').indexOf(':truck-') < 0 || o.isMesh) continue;
+    let hl = o.userData.headlight;
+    if (!hl && night) {
+      headTex = headTex || glowTexture(THREE);
+      hl = new THREE.Group();
+      const L = ((o.userData.size && o.userData.size.length) || 13) / 2 + 0.6;
+      for (const x of [-2.4, 2.4]) {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: headTex, color: 0xfff1c8, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+        sp.position.set(x, 2.6, L); sp.scale.set(5, 5, 1); sp.raycast = () => {};
+        hl.add(sp);
+      }
+      const beam = new THREE.Sprite(new THREE.SpriteMaterial({ map: headTex, color: 0xffe2a0, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.55 }));
+      beam.position.set(0, 0.6, L + 7); beam.scale.set(14, 8, 1); beam.raycast = () => {};   // пятно света на дороге
+      hl.add(beam);
+      o.add(hl); o.userData.headlight = hl;
+    }
+    if (hl) hl.visible = night;
+  }
+}
+function initLighting() {
+  const sel = document.getElementById('lighting');
+  let saved = null;
+  try { saved = localStorage.getItem('bz-lighting'); } catch (e) { /* хранилище недоступно */ }
+  applyLighting(saved === 'night' ? 'night' : 'day');
+  if (sel) sel.addEventListener('change', () => {
+    applyLighting(sel.value);
+    try { localStorage.setItem('bz-lighting', sel.value); } catch (e) { /* хранилище недоступно */ }
+  });
 }
 function initQuality() {
   const sel = document.getElementById('quality');
@@ -1065,7 +1141,7 @@ function frame(now) {
   lineUpQueues();
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
-  if (frameNo % 30 === 1) decorateModels();   // контактные тени новым моделям, тени от солнца
+  if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
   if (frameNo % 15 === 0) updateRoute();
   if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
   renderer.render(scene, camera);
@@ -1210,6 +1286,7 @@ async function switchMode(next) {
     await loadLayers('?w=' + (++worldGen));   // свежие копии модулей слоёв: их состояние — заново, в новом режиме
     applySchemaScales();
     applyQuality(quality);
+    applyLighting(lighting);
     renderPanel();
     updateFollowButton();
   } finally { switching = false; }
@@ -1333,7 +1410,7 @@ function lineUpQueues() {
   }
 }
 // Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
-// после update слоёв отводим буровые не ближе 16 единиц от экскаваторов (только в схеме, только картинка)
+// после update слоёв отводим буровые не ближе 24 единиц от экскаваторов (только в схеме, только картинка)
 function separateDrills() {
   if (mode !== 'schema') return;
   const ex = clickable.filter((o) => /:excavator-/.test(o.userData.thingId || '') && !o.isMesh);
@@ -1341,21 +1418,34 @@ function separateDrills() {
     if (!/:drill-/.test(o.userData.thingId || '') || o.isMesh) continue;
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      const R = 16 * markerScale / 1.12;
+      const R = 24 * markerScale / 1.12;   // экскаватор ×1,4 (EX3600) — отводим дальше
       if (d >= R) continue;
       const k = d > 0.01 ? R / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
       if (dio) o.position.y = dio.surfaceAt(o.position.x, -o.position.z);   // на поверхность схемы в новом месте
     }
   }
+  // самосвал под погрузкой у увеличенного экскаватора (×1,4) — не ближе 15 единиц от его центра (без наложения на гусеницы)
+  for (const o of clickable) {
+    if (!/:truck-/.test(o.userData.thingId || '') || o.isMesh) continue;
+    for (const e of ex) {
+      const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
+      const R = 15 * markerScale / 1.12;
+      if (d >= R || d < 0.01) continue;
+      o.position.x = e.position.x + dx * R / d; o.position.z = e.position.z + dz * R / d;
+      if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
+    }
+  }
 }
-// Зоны забоев слоя геологии нарисованы плоскостями в метрах (120 × 60 м), слой каждый кадр ставит им
+// Зоны забоев слоя геологии нарисованы в метрах (плоскость или группа плиток ≈ 120 × 60 м), слой каждый кадр ставит им
 // масштаб ctx.markerScale — в схеме после обновления слоя уменьшаем их до ≈ 24 × 12 единиц
 function shrinkFaceZones() {
   if (mode !== 'schema') return;
   for (const o of clickable) {
-    if (!o.isMesh || !/:face-/.test(o.userData.thingId || '')) continue;
-    o.scale.set(markerScale * 0.2, markerScale * 0.2, markerScale);
+    if (!/:face-/.test(o.userData.thingId || '')) continue;
+    // плоскость (повёрнута в горизонталь: локальные x, y) или группа плиток (x, z сцены)
+    if (o.isMesh) o.scale.set(markerScale * 0.2, markerScale * 0.2, markerScale);
+    else o.scale.set(markerScale * 0.2, markerScale, markerScale * 0.2);
   }
 }
 // В схеме дороги повёрнуты не так, как в жизни: самосвал разворачивается носом по направлению своего движения в сцене
@@ -1435,6 +1525,7 @@ function initGuide() {
     initModeButton();
     initKeys();
     initQuality();
+    initLighting();
   } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {
