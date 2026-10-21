@@ -1148,6 +1148,12 @@ function applySchemaScales() {
     const s = dio.D.objects[id] && dio.D.objects[id].scale;
     if (s && s !== 1 && !o.userData.schemaScaled) { o.scale.set(s, Math.max(s, 0.35), s); o.userData.schemaScaled = true; }
   }
+  // маячки состояния слоя переработки (шар радиусом 3 м) — в схеме рядом с уменьшенными зданиями слишком крупные
+  const proc = scene.getObjectByName('layer-processing');
+  if (proc) proc.traverse((m) => {
+    const g = m.isMesh && m.geometry;
+    if (g && g.type === 'SphereGeometry' && g.parameters.radius === 3 && !g.userData.schemaScaled) { g.scale(0.4, 0.4, 0.4); g.userData.schemaScaled = true; }
+  });
   // плитки блоков («Содержание меди») — общая геометрия плитки в метрах: уменьшаем один раз
   const tiles = scene.getObjectByName('geology-cu-tiles');
   if (tiles) tiles.traverse((m) => {
