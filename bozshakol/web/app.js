@@ -949,8 +949,15 @@ function applyLighting(l) {
   lighting = l === 'night' ? 'night' : 'day';
   const night = lighting === 'night';
   hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
-  hemi.intensity = night ? 0.55 : 1.35;
-  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.45 : 3.1;   // ночью — луна
+  hemi.intensity = night ? 0.8 : 1.35;
+  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
+  const grid = scene.getObjectByName('diorama-grid');
+  if (grid) grid.material.color.setHex(night ? 0x34476b : 0xffffff);   // сетка фона ночью — тёмно-синяя
+  scene.traverse((o) => {   // ореолы прожекторов ночью крупнее
+    if (!o.isSprite || !o.userData.glow) return;
+    if (!o.userData.baseScale) o.userData.baseScale = o.scale.x;
+    o.scale.setScalar(o.userData.baseScale * (night ? 1.7 : 1));
+  });
   renderer.toneMappingExposure = night ? 1.15 : 1.05;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
   if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
