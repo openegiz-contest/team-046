@@ -32,19 +32,58 @@ RATE_MAX_TPH = 3000.0     # верхняя граница оценки скор�
 BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
 
 
+def read_prev_state(twins):
+    """Прежние значения своих двойников из Ditto (HTTP GET; адрес и пароль — из переменных окружения).
+
+    Возвращает {thingId: {признак: значение}}. Если Ditto недоступен, двойников или значений нет — пустой словарь:
+    сервис начинает с начальных значений и пишет об этом в журнал; ни при каких ответах не падает."""
+    try:
+        snapshot = DittoClient().search()
+    except Exception as exc:          # недоступен, нет пароля, неверный ответ — всё равно стартуем
+        log.warning("прежнее состояние из Ditto не прочитано (%s) — начинаем с начальных значений", exc)
+        return {}
+    prev = {}
+    try:
+        for thing_id in twins:
+            item = snapshot.get(thing_id) if isinstance(snapshot, dict) else None
+            feats = item.get("features") if isinstance(item, dict) else None
+            if not isinstance(feats, dict):
+                continue
+            vals = {}
+            for name, feat in feats.items():
+                props = feat.get("properties") if isinstance(feat, dict) else None
+                if isinstance(props, dict) and props.get("value") is not None:
+                    vals[name] = props["value"]
+            if vals:
+                prev[thing_id] = vals
+    except Exception as exc:
+        log.warning("ответ Ditto не разобран (%s) — начинаем с начальных значений", exc)
+        return {}
+    if not prev:
+        log.info("в Ditto нет прежних значений своих двойников — начинаем с начальных значений")
+    return prev
+
+
+def num(v, default=None):
+    """Число из значения признака; всё остальное (None, строка, пусто) — default."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else default
+
+
 def same_face(param, face_id):
     return str(param or "").split(":")[-1] == face_id
 
 
 class Face:
-    def __init__(self, thing_id, body, geometry, model, claimed, rng):
+    def __init__(self, thing_id, body, geometry, model, claimed, rng, prev=None):
         self.id = thing_id.split(":")[1]
         f = body["features"]
         self.base = {k: value(f, k) for k in ("remaining",)}
         obj = next(o for o in geometry["objects"] if o["id"] == self.id)
-        self.x, self.y, z = obj["position"]
+        self.x, self.y, self.z0 = obj["position"]
         self.model, self.claimed, self.rng = model, claimed, rng
-        self.level = model.level_of(z)
+        self.role = obj.get("ore_type", "waste")        # роль забоя: sulphide / clay / waste (из core/geometry.json)
+        self.role_mismatch = False
+        self.level = model.level_of(self.z0)
         self.target_t = float(self.base["remaining"])      # тоннаж одной панели — как в twins.json
         self.excavator = f"excavator-{self.id[-2:]}"
         self.last_loaded = None
@@ -54,19 +93,38 @@ class Face:
         self.win_x = self.win_t = 0.0
         self.rate_tph = 700.0          # скорость отгрузки экскаватора, т/ч (скользящая оценка по loaded_total)
         self._new_panel()
+        self._restore(prev or {})
         self.preview = json.dumps(bm.preview(model, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
         self.cur = {}
         self.update_values(False, {}, False, {})
 
     # -- панель и взрыв ----------------------------------------------------------------
+    def _restore(self, prev):
+        """Продолжение с прежних значений из Ditto: номер панели и остаток (положение в панели)."""
+        no = num(prev.get("panel_no"), 1.0)
+        for _ in range(max(0, min(int(no), 200) - 1)):        # перестраиваем уже отработанные панели
+            self.panel_no += 1
+            self._new_panel()
+        rem = num(prev.get("remaining"))
+        if num(prev.get("panel_progress"), 0.0) > 0.0 and rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
+            self.extracted = max(0.0, self.panel.total - rem)
+            if self.extracted > 0 or self.panel_no > 1:
+                log.info("%s: продолжаем с панели %d, остаток %.0f т (из Ditto)", self.id, self.panel_no, rem)
+
     def _new_panel(self):
         m = self.model
-        self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, self.claimed)
-        if not self.panel.blocks:      # нижний уступ исчерпан другими панелями — берём блоки повторно
-            self.panel = bm.Panel(m, self.level, self.x, self.y, self.target_t, set())
+        # рудоконтроль: панель вдоль уступа, преобладающий тип которой совпадает с ролью забоя; ищем на текущем уступе и ниже
+        levels = [self.level, min(self.level + 1, m.levels - 1)]
+        self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, self.claimed, levels)
+        if self.panel is None:         # свободных блоков рядом нет — берём блоки повторно
+            self.panel = bm.build_panel(m, self.role, self.x, self.y, self.z0, self.target_t, set(), levels)
         p = self.panel
+        self.level = p.level
+        self.role_mismatch = bool(p.mismatch)
+        if p.mismatch:
+            log.warning("%s: роль «%s» не выполнена — подходящих блоков рядом нет (нужного типа %.0f %% тоннажа); берём ближайшую панель",
+                        self.id, self.role, 100.0 * p.match)
         n = len(p.blocks)
-        p.level = self.level
         p.reserved = set()                       # блоки, которые сейчас бурит станок
         p.blasted = bytearray(n)
         p.p80 = [0.0] * n
@@ -159,13 +217,12 @@ class Face:
     def next_panel(self):
         m = self.model
         old = self.level
-        self.level = min(self.level + 1, m.levels - 1)
         self.panel_no += 1
         self._new_panel()
         self.preview = json.dumps(bm.preview(m, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
-        where = "на уступ %d" % (self.level + 1) if self.level != old else "на следующий ряд нижнего уступа %d" % (self.level + 1)
-        log.info("%s: панель отработана, забой переходит %s (панель %d, %.2f млн т, блоков %d)",
-                 self.id, where, self.panel_no, self.panel.total / 1e6, len(self.panel.blocks))
+        where = "на уступ %d" % (self.level + 1) if self.level != old else "на соседнюю панель уступа %d" % (self.level + 1)
+        log.info("%s: панель отработана, забой переходит %s (панель %d, %.2f млн т, блоков %d, нужного типа %.0f %%)",
+                 self.id, where, self.panel_no, self.panel.total / 1e6, len(self.panel.blocks), 100.0 * self.panel.match)
 
     def update_values(self, clay_on, clay_p, blast_on, blast_p):
         p = self.panel
@@ -224,6 +281,9 @@ class Face:
             "reserve_blocks": feature(self.reserve(), "шт"),
             "blasted_ahead_h": feature(round(self.blasted_ahead_h(), 1), "ч"),
             "drilling_ahead_status": feature(self.ahead_status()),
+            "panel_no": feature(self.panel_no, "№"),
+            "face_role": feature(self.role),
+            "role_mismatch": feature(self.role_mismatch),
         }
 
 
@@ -244,9 +304,21 @@ def main():
         log.info("взрыв (%s): скважина %.0f мм, сетка %.1f×%.1f м, заряд %.0f кг, удельный расход %.2f кг/м³, n=%.2f",
                  kind, d["d_mm"], d["burden"], d["spacing"], ch["mass"], ch["powder_factor"], bl.uniformity_n(kind))
     log.info("P80 опорное (руда, f=11): %.0f мм", bl.P80_REF)
+    prev = read_prev_state(twins)
     claimed = set()
-    faces = [Face(t, b, geometry, model, claimed, rng) for t, b in twins.items() if ":face-" in t]
-    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(sorted(t for t in twins if t.split(":")[1].startswith("drill-") and t.split(":")[1][6:].isdigit()))]
+    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t)) for t, b in twins.items() if ":face-" in t]
+    drills = []
+    geo_ids = {o["id"] for o in geometry["objects"]}
+    drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
+    for i, thing in enumerate(drill_ids):
+        if thing.split(":")[1] not in geo_ids:      # места для станка в core/geometry.json нет — пропускаем, не падаем
+            log.warning("буровой %s: нет места в core/geometry.json — станок пропущен", thing)
+            continue
+        drill = Drill(thing, geometry, model, rng, i)
+        old = prev.get(thing, {})
+        drill.meters = max(0.0, num(old.get("meters_total"), 0.0))      # накопительные метры и скважины продолжаются
+        drill.holes = max(0, int(num(old.get("holes_total"), 0.0)))
+        drills.append(drill)
     for drill in drills:    # общий пул: любой станок может бурить любой забой, выбирая самый нуждающийся
         drill.faces = list(faces)
     ditto = DittoClient()

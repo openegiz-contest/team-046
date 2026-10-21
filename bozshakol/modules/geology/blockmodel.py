@@ -26,7 +26,7 @@ HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (9.0, 13.0)}
 
 # Тренды в «сигмах» логарифма содержания: центр залежи богаче края, с глубиной богаче;
 # у забоев из geometry.json — локальные аномалии (руда у рудных забоев, вскрыша у вскрышных).
-BUMP_AMP = {"sulphide": 1.0, "clay": -0.3, "waste": -2.4}
+BUMP_AMP = {"sulphide": 0.0, "clay": -0.3, "waste": -2.4}
 BUMP_SIGMA_H = 450.0     # м
 BUMP_SIGMA_Z = 45.0      # м
 CLAY_ZONE_SIGMA_H = 250.0
@@ -48,7 +48,7 @@ AU_NOISE = 0.03
 
 # Калибровка (tools/calibrate.py). Среднее по рудным блокам Cu 0,39 %, Au 0,19 г/т,
 # глинистая руда 17,5 % рудного тоннажа, вскрыша/руда 0,67 т/т.
-CAL = {"mu": -1.07678, "sigma": 0.44229, "clay_surf": 55.73845, "c_au": 0.07309}
+CAL = {"mu": -0.99487, "sigma": 0.52098, "clay_surf": 51.51512, "c_au": 0.07304}
 
 
 class _Noise:
@@ -277,44 +277,104 @@ class BlockModel:
         }
 
 
-class Panel:
-    """Цепочка соседних блоков одного уступа: полосами по оси X, змейкой, начиная у забоя."""
+ROLE_TYPES = {"sulphide": SULPHIDE, "clay": CLAY, "waste": WASTE}
+MATCH_OK = 0.8           # доля тоннажа нужного типа в панели, при которой панель считается подходящей роли забоя
+MATCH_MIN = 0.5          # ниже — роль не выполнена (role_mismatch)
+ALONG_W = 4.0            # вдоль уступа блоки «дешевле» поперёк в 4 раза: панель вытянута по простиранию
+POOL_ALONG_M = 3000.0    # как далеко вдоль уступа ищем блоки панели, м
+POOL_ACROSS_M = 250.0    # как далеко поперёк (вглубь и наружу) ищем блоки панели, м
 
-    def __init__(self, model, level, x, y, target_t, claimed):
+
+class Panel:
+    """Панель забоя: упорядоченная цепочка блоков одного уступа вдоль фронта (простирания) уступа."""
+
+    def __init__(self, model, level, blocks, share=1.0):
         self.model, self.level = model, level
-        self.blocks = array("i")
+        self.blocks = array("i", blocks)
         self.cum = array("d")      # тоннаж до блока i (накопительно, без него)
-        rows, r0 = model.rows[level], model.row_index[level]
-        start = model.locate(level, x, y)
-        sx, sy, _ = model.center(level, start)
-        iy_start = math.floor(sy / BLOCK_XY)
-        direction = 1 if sx <= 0 else -1          # сначала к центру карьера
-        order = list(range(iy_start, rows[-1][0] + 1)) + list(range(iy_start - 1, r0 - 1, -1))
-        total, first = 0.0, True
-        for iy in order:
-            _, ix0, ix1, off = rows[iy - r0]
-            if ix1 < ix0:
+        total = 0.0
+        for idx in self.blocks:
+            self.cum.append(total)
+            total += model.tonnes(idx)
+        self.total = total
+        self.match = share         # доля тоннажа панели, тип которого совпадает с ролью забоя
+        self.mismatch = share < MATCH_MIN
+
+
+def _select(model, level, want, x, y, target_t, claimed):
+    """Подбирает блоки панели на уступе level вокруг якоря (x, y): вытянуто вдоль контура уступа.
+
+    Предпочтение — блокам нужного типа (want), ближайшим к якорю; расстояние вдоль контура в ALONG_W раз «дешевле»,
+    чем поперёк, поэтому панель идёт по простиранию. Если блоков нужного типа не хватает, добираются ближайшие любые."""
+    a, b = model.level_axes(level)
+    u0, v0 = x / a, y / b
+    r0 = max(0.05, math.hypot(u0, v0))
+    th0 = math.atan2(v0, u0)
+    grad = math.sqrt((math.cos(th0) / a) ** 2 + (math.sin(th0) / b) ** 2)      # |∇r|: изменение r на метр поперёк контура
+    arc = r0 * math.sqrt((a * math.sin(th0)) ** 2 + (b * math.cos(th0)) ** 2)  # метров вдоль контура на радиан
+    pool = []
+    for iy, ix0, ix1, off in model.rows[level]:
+        cy = (iy + 0.5) * BLOCK_XY
+        for ix in range(ix0, ix1 + 1):
+            idx = off + ix - ix0
+            if (level, idx) in claimed:
                 continue
-            if first:
-                s = max(ix0, min(ix1, math.floor(sx / BLOCK_XY)))
-                ixs = range(s, ix1 + 1) if direction > 0 else range(s, ix0 - 1, -1)
-            else:
-                ixs = range(ix0, ix1 + 1) if direction > 0 else range(ix1, ix0 - 1, -1)
-            for ix in ixs:
-                idx = off + ix - ix0
-                if (level, idx) in claimed:
-                    continue
-                claimed.add((level, idx))
-                self.cum.append(total)
-                self.blocks.append(idx)
-                total += model.tonnes(idx)
-                if total >= target_t:
-                    break
-            direction, first = -direction, False
+            u, v = ((ix + 0.5) * BLOCK_XY) / a, cy / b
+            dth = (math.atan2(v, u) - th0 + math.pi) % (2.0 * math.pi) - math.pi
+            ds = dth * arc
+            dn = (math.hypot(u, v) - r0) / grad
+            if abs(ds) > POOL_ALONG_M or abs(dn) > POOL_ACROSS_M:
+                continue
+            pool.append((math.hypot(ds / ALONG_W, dn), idx, ds, dn))
+    pool.sort()
+    chosen, total, good = [], 0.0, 0.0
+    for take_match in (True, False):          # сначала блоки нужного типа, потом — ближайшие любые
+        for _, idx, ds, dn in pool:
             if total >= target_t:
                 break
-        self.total = total
-        self.start = (sx, sy)
+            is_match = want is None or model.typ[idx] == want
+            if is_match != take_match:
+                continue
+            chosen.append((idx, ds, dn))
+            total += model.tonnes(idx)
+            good += model.tonnes(idx) if is_match else 0.0
+        if total >= target_t:
+            break
+    if not chosen:
+        return [], 0.0
+    # порядок отработки: дорожки (ряды вдоль уступа) по возрастанию |смещения|, змейкой вдоль контура
+    tracks = {}
+    for idx, ds, dn in chosen:
+        tracks.setdefault(round(dn / BLOCK_XY), []).append((ds, idx))
+    ordered = []
+    for i, key in enumerate(sorted(tracks, key=lambda k: (abs(k), -k))):
+        ordered.extend(idx for _, idx in sorted(tracks[key], reverse=(i % 2 == 1)))
+    return ordered, (good / total if total else 0.0)
+
+
+def build_panel(model, role, x, y, z, target_t, claimed, levels=None):
+    """Рудоконтроль: панель для забоя с ролью role (sulphide / clay / waste) на уступе точки (x, y, z) или на уступе ниже.
+
+    Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе лучшая из найденных
+    (role_mismatch, если нужного типа меньше MATCH_MIN)."""
+    want = ROLE_TYPES.get(role)
+    k0 = model.level_of(z)
+    cand = levels or [k0, min(k0 + 1, model.levels - 1)]
+    best = None
+    for lv in dict.fromkeys(cand):
+        blocks, share = _select(model, lv, want, x, y, target_t, claimed)
+        if not blocks:
+            continue
+        if best is None or share > best[2] + 0.02:
+            best = (lv, blocks, share)
+        if share >= MATCH_OK:
+            break
+    if best is None:
+        return None
+    lv, blocks, share = best
+    for idx in blocks:
+        claimed.add((lv, idx))
+    return Panel(model, lv, blocks, share)
 
 
 def mixed(model, panel, extracted):

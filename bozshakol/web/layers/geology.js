@@ -5,6 +5,9 @@
 const NS = 'kz.bozshakol';
 const MAX_TILES = 200;          // всего плиток на всю сцену
 const TILE_M = 25;              // сторона блока, м
+// Постоянный множитель размера бурового станка поверх ctx.markerScale: на общем виде «Весь рудник» станок иначе слишком мелкий
+// (координатор). Подобран по виду сцены рядом с экскаваторами и самосвалами модуля №2 (у них множитель только markerScale).
+const DRILL_SCALE = 2.5;
 const CU_LOW = 0.1, CU_HIGH = 0.7;   // шкала плиток: серый → медный, % Cu
 const faces = {};    // thingId -> {mesh, x, y, gz, tg, inst, perFace, previewRaw}
 const drills = {};   // thingId -> {g, start, cur}
@@ -155,7 +158,7 @@ export function update(ctx, twins) {
     const k = 1 - Math.exp(-3 * (ctx.dt || 0.033));            // плавный переезд между обновлениями
     d.cur[0] += (x - d.cur[0]) * k; d.cur[1] += (y - d.cur[1]) * k;
     g.position.copy(ctx.toScene(d.cur[0], d.cur[1], ctx.groundAt(d.cur[0], d.cur[1])));
-    g.scale.setScalar(S);
+    g.scale.setScalar(S * DRILL_SCALE);
     const state = fv(twin, 'state', '');
     g.setMast(state === 'drilling');
     g.setState(state);
