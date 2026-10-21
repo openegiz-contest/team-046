@@ -65,11 +65,17 @@ FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (пло
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
 REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке, по договору (fuel-station)
 
-# -- резерв самосвалов (текущая задача «Резерв самосвалов») --
+# -- резерв самосвалов (задача «Резерв самосвалов», затем «Долгое восстановление» часть 2 —
+# резерв на уровне ВСЕГО ПАРКА, не по экскаваторам) --
 RESERVE_REFUEL_FUEL_PCT = 50.0        # порог из текста задачи: топливо < 50% перед резервом — сначала заправка
-RESERVE_MIN_MODEL_S = 10.0 * 60.0     # допущение (защита от «дрызганья»): минимум 10 модельных минут
-                                       # в резерве, прежде чем самосвал можно вернуть в работу — числа
-                                       # 10 мин в договоре нет, это допущение МОДУЛЯ, см. README
+RESERVE_MARGIN = 0.10                 # запас сверх Σ trucks_needed по доступным экскаваторам — допущение
+                                       # МОДУЛЯ из текста задачи («часть 2»), см. README
+WARMUP_MODEL_S = 30.0 * 60.0          # первые 30 модельных минут после старта — резерв = 0 (разгон),
+                                       # число из текста задачи («часть 2»)
+RESERVE_SURPLUS_TRUCKS = 2            # порог «лишних» для гистерезиса входа в резерв — число из текста задачи
+RESERVE_SURPLUS_HOLD_S = 10.0 * 60.0  # излишек >= RESERVE_SURPLUS_TRUCKS должен держаться непрерывно столько
+                                       # модельных минут, прежде чем начинать отправлять в резерв — текст задачи
+RESERVE_ENTRY_INTERVAL_S = 5.0 * 60.0 # не чаще одного самосвала в резерв за это модельное время — текст задачи
 # «не работает» = не считается в fleet_utilization/trucks_needed как занятый планом; резерв сюда же —
 # по условию задачи: резервный самосвал не работающий, даже если формально не в очереди
 NOT_WORKING_STATES = ("queued_load", "queued_dump", "refueling", "reserve")
@@ -276,7 +282,7 @@ class Truck:
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
         self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
         self.entering_reserve = False   # едет на fuel-station, чтобы встать в резерв (не на дозаправку)
-        self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — для RESERVE_MIN_MODEL_S
+        self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — диагностика
         # -- разброс (водитель) --
         self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
         self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
@@ -398,6 +404,10 @@ class Haulage:
         # trucks_needed/fuel_saved_l_shift за последний модельный час (окно — как у _wait_exc и т.п.)
         self._fleet_state_log = deque()
         self._shift_reserve_s = 0.0  # накоплено секунд в резерве за ТЕКУЩУЮ смену (сброс — см. read_scenarios)
+        # -- резерв на уровне парка (часть 2 «долгого восстановления») --
+        self._reserve_surplus_since_t = None  # момент, с которого излишек >= RESERVE_SURPLUS_TRUCKS держится
+        self._last_reserve_entry_t = -math.inf  # момент последнего входа в резерв (плавность)
+        self._target_working_val = 0.0  # кэш _target_working() на текущий шаг — см. _reserve_surplus
         self._sim_t = 0.0
         # начальное положение: часть самосвалов уже в пути, чтобы сцена была живой
         for t in self.trucks[::3]:
@@ -565,20 +575,6 @@ class Haulage:
                 total += t.capacity
         return total
 
-    def _assigned_trucks(self, ex):
-        """Сколько самосвалов сейчас закреплено за этим экскаватором — по `truck.excavator`,
-        который выставляется ОДИН раз за цикл (в `_return`/`choose_excavator`, когда самосвал
-        выезжает порожняком) и держится весь цикл: едет порожним → очередь → погрузка →
-        гружёный рейс → разгрузка → снова решение, куда. Считаем ВЕСЬ цикл, не только часть —
-        настоящий баг, найденный прогоном: первая версия считала только грузящихся/в очереди/
-        едущих порожним (как `_committed_tons`, но в штуках) — выходило МЕНЬШЕ, чем самосвалов
-        физически в работе (бóльшая часть цикла — гружёный рейс и разгрузка — не попадала в
-        счёт), резерв из-за этого никогда не наполнялся (0 самосвалов в резерве при любой
-        нагрузке, `_plan_needs_truck` был истинным всегда — яблоки с апельсинами: `needed`
-        считает ПОЛНЫЙ цикл по формуле Литтла, старый `assigned` — только часть)."""
-        return sum(1 for t in self.trucks
-                   if t.excavator == ex.id and t.state != "reserve" and t.destination != "fuel-station")
-
     def _cycle_time_estimate_s(self, ex):
         """Честная оценка полного цикла самосвала к этому экскаватору (погрузка + путь туда +
         разгрузка + путь обратно), усреднённая по составу парка (22×135 т + 6×180 т) — та же
@@ -612,6 +608,64 @@ class Haulage:
             return 0.0
         cycle_s = self._cycle_time_estimate_s(ex)
         return ex.plan_tph * (cycle_s / 3600.0) / AVG_PAYLOAD_T
+
+    def _target_working(self):
+        """Сколько самосвалов должно быть В РАБОТЕ (не в резерве) прямо сейчас — резерв решается
+        для ВСЕГО ПАРКА разом, не по экскаваторам (часть 2 задачи «долгое восстановление», после
+        часть 3 того же модуля — старое правило `_plan_needs_truck`/`_assigned_trucks` по
+        экскаватору убрано как конфликтующее, см. `_check_reserve_exits`/`_return`). Σ
+        `_trucks_needed(ex)` по ДОСТУПНЫМ экскаваторам (`_excavator_cut_off` — так же, как в
+        `_update_plan`) плюс запас RESERVE_MARGIN (10%, допущение из текста задачи), но не
+        меньше Σ + 1 — чтобы при малом Σ (мало доступных экскаваторов/план маленький) запас не
+        обращался в 0 из-за округления 10% вниз до целого."""
+        total_needed = sum(self._trucks_needed(ex) for ex in self.excavators.values()
+                            if not self._excavator_cut_off(ex))
+        return math.ceil(max(total_needed * (1.0 + RESERVE_MARGIN), total_needed + 1.0))
+
+    def _working_count(self):
+        """Самосвалов «в работе» прямо сейчас — не в резерве и не сломан (`down`); состояние
+        `reserve`/`down` не считаются работой, остальные (очередь, погрузка, гружёный рейс,
+        разгрузка, обратный путь, заправка) — считаются, как и в `_target_working`/`_trucks_needed`
+        (формула Литтла — пайплайн самосвалов в полном цикле, не мгновенный «едет/стоит»)."""
+        return sum(1 for t in self.trucks if t.state not in ("reserve", "down"))
+
+    def _reserve_surplus(self):
+        """Сколько самосвалов сейчас сверх `_target_working` (0, если недостача — проверка
+        входа в резерв смотрит именно на это, выхода — на сам недобор, см. `_return`/
+        `_check_reserve_exits`). Берёт `_target_working_val` — посчитанный раз за шаг в `step()`,
+        а не свежий вызов `_target_working()`: тот обходит все 6 экскаваторов с поиском пути
+        (`_cycle_time_estimate_s`), и внутри одного шага он не меняется (план-долг/доступность
+        считаются раньше в `_maybe_update_plan`) — считать его на каждого самосвала в
+        `_check_reserve_exits` было настоящей проблемой производительности, найденной при
+        проверке (sim_check.py на 12ч стал заметно медленнее после части 2)."""
+        return self._working_count() - self._target_working_val
+
+    def _update_reserve_hysteresis(self):
+        """Вызывается каждый шаг (`step`): следит, держится ли излишек >= RESERVE_SURPLUS_TRUCKS
+        НЕПРЕРЫВНО RESERVE_SURPLUS_HOLD_S модельных секунд подряд — гистерезис входа в резерв
+        (часть 2 задачи, «плавность»): если держится дольше, не останавливается в середине из-за
+        случайного колебания на одну секунду, а просто обновляет момент начала при разрыве."""
+        if self._reserve_surplus() >= RESERVE_SURPLUS_TRUCKS:
+            if self._reserve_surplus_since_t is None:
+                self._reserve_surplus_since_t = self._sim_t
+        else:
+            self._reserve_surplus_since_t = None
+
+    def _reserve_entry_allowed(self):
+        """Можно ли отправить СЛЕДУЮЩЕГО освободившегося самосвала в резерв прямо сейчас — часть 2:
+        разгон (`WARMUP_MODEL_S`) — резерва вообще нет; иначе — гистерезис (излишек держится
+        `RESERVE_SURPLUS_HOLD_S` подряд, см. `_update_reserve_hysteresis`) и плавность (не чаще
+        одного самосвала за `RESERVE_ENTRY_INTERVAL_S`). Проверка излишка — ещё раз, на текущий
+        момент (не только по факту, что гистерезис «накопился»): если он уже погашен другим
+        самосвалом, вошедшим в резерв секундами раньше в тот же тик, не отправляем лишнего."""
+        if self._sim_t < WARMUP_MODEL_S:
+            return False
+        if (self._reserve_surplus_since_t is None
+                or self._sim_t - self._reserve_surplus_since_t < RESERVE_SURPLUS_HOLD_S):
+            return False
+        if self._sim_t - self._last_reserve_entry_t < RESERVE_ENTRY_INTERVAL_S:
+            return False
+        return self._reserve_surplus() >= RESERVE_SURPLUS_TRUCKS
 
     def _plan_deficit_time_s(self, ex):
         """На сколько секунд экскаватор отстаёт от своего план-графика («у кого
@@ -778,40 +832,14 @@ class Haulage:
     def _eligible_ores(self):
         """Рудные пункты участвуют в сравнении только если физически принимают сейчас
         (crusher_stop/sag_maintenance) — это обязательное правило, не смягчается; вскрыша
-        участвует всегда. Вынесено из choose_excavator —
-        тот же набор нужен и в _plan_needs_truck, план-логика при этом не меняется."""
+        участвует всегда. Вынесено из choose_excavator — тот же набор нужен для сравнения
+        экскаваторов, план-логика при этом не меняется."""
         eligible = {"waste"}
         if self.dumps["crusher-01"].accepting:
             eligible.add("sulphide")
         if self.dumps["stockpile-clay"].accepting:
             eligible.add("clay")
         return eligible
-
-    def _plan_needs_truck(self, truck):
-        """Нужен ли этот самосвал хоть одному экскаватору прямо сейчас — правило для резерва
-        (часть задачи «долгое восстановление», п.3): есть ли среди допустимых по тем же
-        правилам, что в `choose_excavator`, достижимый экскаватор, которому назначено
-        (`_assigned_trucks`) МЕНЬШЕ самосвалов, чем нужно (`_trucks_needed` — целевой т/ч ×
-        честный цикл / средний груз). Нет такого — самосвал сейчас никому не нужен
-        (`_enter_reserve`/`_check_reserve_exits`). НЕ использует `_plan_deficit_time_s`/
-        `plan_target_cum_t` (та накопленная история нужна только для ВЫБОРА экскаватора
-        работающему самосвалу, см. `_best_candidate`) — это правило мгновенное, работает с
-        первой секунды, без всплеска резерва на старте стенда."""
-        near_clay_limit = self._near_clay_limit()
-        eligible = self._eligible_ores()
-        for ex in self.excavators.values():
-            if ex.down:
-                continue
-            info = self.face_info(ex.id)
-            if info["ore"] not in eligible:
-                continue
-            if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
-                continue
-            if self._eta_s(truck, ex.node) is None:
-                continue
-            if self._assigned_trucks(ex) < self._trucks_needed(ex):
-                return True
-        return False
 
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
@@ -863,12 +891,14 @@ class Haulage:
 
     def _return(self, truck):
         """Самосвал освободился (после разгрузки, заправки или выхода из резерва). «Авто»:
-        сначала спрашиваем план-диспетчер, нужен ли этот самосвал хоть кому-то прямо сейчас
-        (`_plan_needs_truck`) — если никому, едет в резерв
-        (`_enter_reserve`), а не к экскаватору. «Ручной» — без изменений, как раньше (резерва
-        не существует, самосвал всегда едет к своему домашнему экскаватору через choose_excavator)."""
-        if self.mode == "auto" and not self._plan_needs_truck(truck):
+        резерв решается для ВСЕГО ПАРКА разом (часть 2 задачи «долгое восстановление»,
+        `_reserve_entry_allowed` — разгон/гистерезис/плавность) — если можно отправить
+        следующего освободившегося в резерв, едет туда (`_enter_reserve`), а не к экскаватору.
+        «Ручной» — без изменений, как раньше (резерва не существует, самосвал всегда едет к
+        своему домашнему экскаватору через choose_excavator)."""
+        if self.mode == "auto" and self._reserve_entry_allowed():
             self._enter_reserve(truck)
+            self._last_reserve_entry_t = self._sim_t
             return
         truck.entering_reserve = False
         truck.excavator = self.choose_excavator(truck)
@@ -916,22 +946,27 @@ class Haulage:
         truck.seg_pos = 0.0
 
     def _check_reserve_exits(self):
-        """Выход из резерва: проверяем каждый резервный
-        самосвал, который простоял не меньше RESERVE_MIN_MODEL_S (защита от «дрызганья» —
-        допущение, см. README); если план-диспетчер считает, что он сейчас нужен хоть одному
-        экскаватору (`_plan_needs_truck` — та же проверка, что и при входе в резерв), отправляем
-        его в работу обычным путём (`_return`). Вызывается каждый шаг — пересчёт плана (не реже
-        раза в 10 мин) и события (сценарии, поломки, приём дробилки/склада) читаются в
-        read_scenarios()/_maybe_update_plan() тем же шагом, так что ничего не пропускаем."""
+        """Выход из резерва — часть 2 задачи «долгое восстановление»: нехватка важнее экономии
+        топлива (по тексту задачи) — если работающих самосвалов (`_working_count`) меньше
+        `_target_working`, тут же возвращаем резервные самосвалы в работу обычным путём
+        (`_return` — экскаватор для него выберет нынешняя маршрутизация), БЕЗ ограничения на
+        скорость и без минимального времени в резерве (в отличие от входа — там своя плавность
+        и гистерезис, см. `_reserve_entry_allowed`). Ровно по одному — после каждого возврата
+        `_working_count` пересчитывается заново, так что возвращаем не больше, чем нужно. То же
+        правило само срабатывает при возврате экскаватора после поломки или открытия дороги —
+        `_target_working` в этот момент сразу вырастает (`_excavator_cut_off` внутри него уже
+        честно проверяет путь), никакого отдельного кода для этого случая не нужно. Вызывается
+        каждый шаг — пересчёт плана (не реже раза в 10 мин) и события (сценарии, поломки, приём
+        дробилки/склада) читаются в read_scenarios()/_maybe_update_plan() тем же шагом, так что
+        ничего не пропускаем."""
         if self.mode != "auto":
             return
         for truck in self.trucks:
             if truck.state != "reserve":
                 continue
-            if self._sim_t - truck.reserve_since_s < RESERVE_MIN_MODEL_S:
-                continue
-            if self._plan_needs_truck(truck):
-                self._return(truck)
+            if self._working_count() >= self._target_working_val:
+                break
+            self._return(truck)
 
     def _release_all_reserve(self):
         """Переключение «авто» → «ручной»: резерва не существует — все
@@ -1168,6 +1203,8 @@ class Haulage:
         self._sim_t += dt
         self._trim_windows()
         self._maybe_update_plan()
+        self._target_working_val = self._target_working()  # раз за шаг — см. _reserve_surplus
+        self._update_reserve_hysteresis()
         self._check_reserve_exits()
         for ex in self.excavators.values():
             if not self._excavator_cut_off(ex):  # план-долг не копится, пока не обслуживается

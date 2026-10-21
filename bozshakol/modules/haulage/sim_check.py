@@ -41,6 +41,7 @@ def _stub_bzlib():
 
     stub.feature = feature
     stub.setup_logging = lambda name: logging.getLogger(name)
+    stub.NAMESPACE = "kz.bozshakol"  # main.py читает только имя при импорте (restore_counters), не значение
     stub.DittoClient = object
     stub.SimClock = object
     stub.Telemetry = object
@@ -365,8 +366,10 @@ def report_mode(label, runs):
 def run_cold_start(hm, seed, dispatch_off=False, hours=2, bucket_min=10):
     """Первые несколько модельных часов после старта («холодный старт» — проверка, что
     резерв не раздувается на старте, пока план ещё не накопил цель): каждые `bucket_min`
-    модельных минут — число самосвалов в резерве, среднее ожидание у экскаватора, суммарная
-    очередь по всем экскаваторам."""
+    модельных минут — число самосвалов в резерве, в работе (`_working_count`, часть 2 задачи
+    «долгое восстановление»), среднее ожидание у экскаватора, суммарная очередь по всем
+    экскаваторам, руда на дробилку (т/ч и % от плана, тот же rolling-hour признак
+    `tph_crusher`/`plan_crusher_tph`, что видит советник координатора)."""
     random.seed(seed)
     with open(GEOMETRY_PATH, encoding="utf-8") as f:
         geometry = json.load(f)
@@ -376,39 +379,68 @@ def run_cold_start(hm, seed, dispatch_off=False, hours=2, bucket_min=10):
     steps_per_bucket = int(bucket_min * 60 / STEP_S)
     bunker_state = {"stock": 0.0, "last_delivered": 0.0}
     buckets = []
+    plan_cum_t = 0.0  # интеграл plan_crusher_tph по времени — для честного НАКОПЛЕННОГО % плана
     for i in range(int(hours * 3600 / STEP_S)):
         model.step(STEP_S)
         _step_bunker(watcher, model, bunker_state)
+        plan_cum_t += model.plan_crusher_tph * STEP_S / 3600.0
         if (i + 1) % steps_per_bucket == 0:
+            disp = model.dispatch_features()
             reserve_n = sum(1 for t in model.trucks if t.state == "reserve")
+            working_n = model._working_count()
             queue_sum = sum(len(ex.queue) for ex in model.excavators.values())
-            wait = fv(model.dispatch_features(), "avg_wait_excavator")
-            buckets.append((model._sim_t / 60.0, reserve_n, wait, queue_sum))
-    return buckets
+            wait = fv(disp, "avg_wait_excavator")
+            crusher_tph = fv(disp, "tph_crusher")
+            plan_crusher = fv(disp, "plan_crusher_tph")
+            buckets.append((model._sim_t / 60.0, reserve_n, working_n, wait, queue_sum,
+                             crusher_tph, plan_crusher))
+    delivered_t = model.delivered["crusher-01"][0]
+    return {"buckets": buckets, "delivered_t": delivered_t, "plan_cum_t": plan_cum_t}
 
 
 def report_cold_start(all_runs):
     """Отчёт по `run_cold_start` для нескольких seed — среднее и максимум резерва по бакетам
     (часть задачи «долгое восстановление», п.2: на старте резерв не должен раздувать до
-    половины парка — было 17 из 28)."""
+    половины парка — было 17 из 28), в работе, руда на дробилку (т/ч и % от плана — цель 2
+    задачи «часть 2»: ≥ 90% плана в первые 2 модельных часа, было ≈68%)."""
     print(f"\n{'=' * 60}\nХОЛОДНЫЙ СТАРТ (первые 2 модельных часа, по 10 модельных минут, "
-          f"{len(all_runs)} seed) — резерв/ожидание/очередь\n{'=' * 60}")
-    n_buckets = len(all_runs[0])
-    print(f"  {'t, мин':>7s} {'в резерве (сред±разброс, макс)':>32s} {'ожидание, мин':>16s} {'очередь (сумма)':>18s}")
+          f"{len(all_runs)} seed) — резерв/в работе/ожидание/очередь/руда\n{'=' * 60}")
+    bucket_runs = [r["buckets"] for r in all_runs]
+    n_buckets = len(bucket_runs[0])
+    print(f"  {'t, мин':>7s} {'резерв':>7s} {'в работе':>9s} {'ожидание, мин':>14s} "
+          f"{'очередь':>8s} {'руда т/ч':>9s} {'% плана':>8s}")
     max_reserve_ever = 0
     for b in range(n_buckets):
-        t = all_runs[0][b][0]
-        reserves = [run[b][1] for run in all_runs]
-        waits = [run[b][2] for run in all_runs]
-        queues = [run[b][3] for run in all_runs]
-        m_r, s_r = avg_spread(reserves)
+        t = bucket_runs[0][b][0]
+        reserves = [run[b][1] for run in bucket_runs]
+        working = [run[b][2] for run in bucket_runs]
+        waits = [run[b][3] for run in bucket_runs]
+        queues = [run[b][4] for run in bucket_runs]
+        ore_tph = [run[b][5] for run in bucket_runs]
+        ore_plan = [run[b][6] for run in bucket_runs]
+        m_r = avg_spread(reserves)[0]
+        m_wk = avg_spread(working)[0]
         m_w, s_w = avg_spread(waits)
-        m_q, s_q = avg_spread(queues)
+        m_q = avg_spread(queues)[0]
+        m_ore = avg_spread(ore_tph)[0]
+        m_plan = avg_spread(ore_plan)[0]
+        pct = 100.0 * m_ore / m_plan if m_plan > 0 else None
         max_reserve_ever = max(max_reserve_ever, max(reserves))
-        print(f"  {t:>7.0f} {m_r:>6.1f}±{s_r:<4.1f} (макс {max(reserves):>2d})      "
-              f"{m_w:>6.2f}±{s_w:<4.2f}   {m_q:>6.1f}±{s_q:<4.1f}")
+        pct_s = f"{pct:>7.0f}%" if pct is not None else "    н/д"
+        print(f"  {t:>7.0f} {m_r:>7.1f} {m_wk:>9.1f} {m_w:>6.2f}±{s_w:<5.2f} "
+              f"{m_q:>8.1f} {m_ore:>9.0f} {pct_s}")
     print(f"\n  Максимум резерва за всё окно (по всем seed): {max_reserve_ever} из 28 "
           f"({'OK, не больше половины парка' if max_reserve_ever < 14 else 'ПЛОХО: половина парка или больше'}).")
+    # по бакетам % от плана — rolling-hour признак, в первые 10-20 мин физически не может быть
+    # ненулевым (первый самосвал ещё не доехал и не разгрузился) — отдельно печатаем честный
+    # НАКОПЛЕННЫЙ итог за все 2 часа (тонны факт / тонны план, интеграл plan_crusher_tph по
+    # времени), который не страдает от этого эффекта первых минут.
+    delivered = avg_spread([r["delivered_t"] for r in all_runs])[0]
+    plan_cum = avg_spread([r["plan_cum_t"] for r in all_runs])[0]
+    cum_pct = 100.0 * delivered / plan_cum if plan_cum > 0 else None
+    if cum_pct is not None:
+        print(f"  Накоплено за 2 ч: факт {delivered:.0f} т / план {plan_cum:.0f} т = {cum_pct:.0f}% "
+              f"({'OK, >= 90%' if cum_pct >= 90.0 else 'ПЛОХО: < 90%'}).")
 
 
 def report_scenarios(hm, auto, manual):
