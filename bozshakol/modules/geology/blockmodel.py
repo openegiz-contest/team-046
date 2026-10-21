@@ -352,6 +352,8 @@ def _select(model, level, want, x, y, target_t, claimed):
     return ordered, (good / total if total else 0.0)
 
 
+EARLY_BLOCKS = 12         # сколько первых блоков панели (около 600 кт) учитываем отдельно при выборе панели для усреднения
+EARLY_W = 0.6            # вес среднего Cu первых блоков в оценке панели (остальное — вся панель)
 SHIFTS_M = (0.0, 400.0, -400.0, 800.0, -800.0, 1200.0, -1200.0)   # сдвиги якоря вдоль уступа при поиске панелей для усреднения
 
 
@@ -394,7 +396,8 @@ def build_panel(model, role, x, y, z, target_t, claimed, levels=None, desired_cu
                 blocks, share = _select(model, lv, want, ax, ay, target_t, claimed)
                 if not blocks or share < MATCH_OK:
                     continue
-                err = abs(mean_cu(model, blocks) - desired_cu)
+                # первые блоки панели отрабатываются первыми, поэтому в оценке они весят больше, чем вся панель
+                err = abs(EARLY_W * mean_cu(model, blocks[:EARLY_BLOCKS]) + (1.0 - EARLY_W) * mean_cu(model, blocks) - desired_cu)
                 if pick is None or err < pick[0]:
                     pick = (err, lv, blocks, share)
         if pick is not None:

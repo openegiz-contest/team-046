@@ -181,6 +181,8 @@ class Face:
         p.blasted = bytearray(n)
         p.p80 = [0.0] * n
         p.hard_b = [0.0] * n
+        if n:
+            self._blend_frontier(0)                  # усреднение: первый блок панели — из ближайших по содержанию Cu к нужному
         for j in range(min(INITIAL_BLASTED, n)):   # взорванный запас на старте: крепость с небольшим разбросом
             self.blast(p, j, m.hard[p.blocks[j]] * (1.0 + self.rng.gauss(0.0, 0.03)))
 
