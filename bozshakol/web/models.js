@@ -61,6 +61,7 @@ export const MODEL_SIZES = {
 };
 
 const DEG = Math.PI / 180;
+const EXC_K = 1.4;                    // экскаватор относительно базовых размеров MODEL_SIZES.excavator
 const REPOSE = 37 * DEG;              // угол естественного откоса штабеля
 
 export function createModels(THREE, colors) {
@@ -86,11 +87,26 @@ export function createModels(THREE, colors) {
     drill: colors.drill ?? 0x4f6d8f, mast: 0xc4ccd5, mastDark: 0x56606b,
     concrete: 0xc6c1b5, concreteDark: 0x9a958b, crusher: 0x7d8692, hopper: 0x737a83, gravel: 0xaea795,
     wall: colors.building ?? 0xd8d8d8, roof: colors.roof ?? 0xa9b8cc, conveyor: colors.conveyor ?? 0x6f7f95,
+    wallLow: 0x8fa3b6,                                                // нижний пояс панелей корпусов (второй тон)
     belt: 0x2c2f33, ore: 0x6b7a5a, water: 0x6f97b3, waterLight: 0x8fb2c8, trafo: 0x7d8a97, porcelain: 0x8e5b3a,
     accent: 0x2f7fc1, safety: 0xf2c230, grating: 0x8a9097,
     dump: colors.dump ?? 0x9a9a9a, dumpDark: 0x868686, pile: 0x7d6f5c, pole: 0x8d949b, wire: 0x3a3a3a,
     green: 0x36d06e, amber: 0xffb526, red: 0xff3b30, beaconOff: 0x9aa0a6,
   };
+
+  // ---------------------------------------------------------------- ночная смена: подсвеченные окна корпусов
+  // models.setNight(true|false) показывает/прячет светящиеся окна всех построенных корпусов (и новых тоже)
+  let night = false, _nightWin = null;
+  const nightMeshes = new Set();
+  const nightWinMat = () => _nightWin || (_nightWin = new THREE.MeshBasicMaterial({ color: 0xffcf7a, toneMapped: false }));
+  function setNight(on) {
+    night = !!on;
+    for (const m of nightMeshes) {
+      let o = m; while (o.parent) o = o.parent;
+      if (!o.isScene) { nightMeshes.delete(m); continue; }   // корпус убран со сцены (новые получают night при создании)
+      m.visible = night;
+    }
+  }
 
   // ---------------------------------------------------------------- материалы (общие на все экземпляры)
   // Все меши — Lambert с плоской заливкой и цветом в вершинах; цвет материала умножается на цвет вершин,
@@ -710,7 +726,15 @@ export function createModels(THREE, colors) {
       get boomT() { return boomT; },
     };
     g.userData.parts = { swing, boomPivot, stickPivot, bucketPivot, house, cab, cylinders: cyls };
-    return finish(g, api, S);
+    // пропорции как в жизни: экскаватор класса EX3600 крупнее самосвала 135 т (≈ 20 м с ковшом и 8–10 м высотой
+    // против ≈ 13 × 6,5 м) — вся модель ×EXC_K, методы и узлы те же
+    const holder = new THREE.Group();
+    holder.name = 'excavator-scale';
+    for (const ch of [...g.children]) holder.add(ch);
+    holder.scale.setScalar(EXC_K);
+    g.add(holder);
+    const SK = Object.fromEntries(Object.entries(S).map(([k, v]) => [k, k === 'bucket_m3' ? v : v * EXC_K]));
+    return finish(g, api, SK);
   }
 
   // ================================================================ БУРОВОЙ СТАНОК
@@ -1006,7 +1030,8 @@ export function createModels(THREE, colors) {
   // ================================================================ ЗДАНИЯ
   function buildingGeos(type, l, w, h) {
     return cached(`bld|${type}|${l}|${w}|${h}`, () => {
-      const P = new Parts(), D = new Parts();
+      const P = new Parts(), D = new Parts(), W = new Parts();   // W — окна, светящиеся ночью (отдельный меш)
+      const win = (geo, m) => { P.add(geo, C.glass, m); W.add(geo, 0xffffff, m); };
       const wallD = mix(C.wall, 0.86), roofD = mix(C.roof, 0.8);
       if (type === 'main') {
         // главный корпус: зал с пилястрами, ленточные окна, фирменный пояс, двускатная кровля с фонарями,
@@ -1016,10 +1041,13 @@ export function createModels(THREE, colors) {
         const n = Math.max(2, Math.round(l / 7)), m = Math.max(2, Math.round(w / 7));
         for (let i = 0; i <= n; i++) for (const s of [-1, 1]) P.add(box(0.6, h - 1.2, 0.35), wallD, T(-l / 2 + i * l / n, 0.6 + h / 2, s * (w / 2 + 0.12)));
         for (let j = 0; j <= m; j++) for (const s of [-1, 1]) P.add(box(0.35, h - 1.2, 0.6), wallD, T(s * (l / 2 + 0.12), 0.6 + h / 2, -w / 2 + j * w / m));
-        const rows = h > 14 ? [0.36, 0.66] : [0.5];
+        // стены двух тонов: нижний пояс панелей темнее и синее, верх — светлый
+        P.add(box(l + 0.08, h * 0.3, w + 0.08), C.wallLow, T(0, 0.6 + h * 0.15, 0));
+        for (let i = 0; i < n; i++) for (const s of [-1, 1]) P.add(box(0.12, h * 0.3, 0.1), wallD, T(-l / 2 + (i + 0.5) * l / n, 0.6 + h * 0.15, s * (w / 2 + 0.09)));
+        const rows = h > 14 ? [0.42, 0.68] : [0.55];
         for (const f of rows) for (const s of [-1, 1]) {
-          P.add(box(l - 3, 1.5, 0.12), C.glass, T(0, h * f, s * (w / 2 + 0.04)));
-          P.add(box(0.12, 1.5, w - 3), C.glass, T(s * (l / 2 + 0.04), h * f, 0));
+          win(box(l - 3, 1.5, 0.12), T(0, h * f, s * (w / 2 + 0.04)));
+          win(box(0.12, 1.5, w - 3), T(s * (l / 2 + 0.04), h * f, 0));
         }
         for (const s of [-1, 1]) {
           P.add(box(l + 0.4, 1.0, 0.2), C.accent, T(0, h - 1.3, s * (w / 2 + 0.2)));
@@ -1029,19 +1057,19 @@ export function createModels(THREE, colors) {
         P.add(taper(l + 1.2, w + 1.2, l + 1.2, 1.0, 2.2), C.roof, T(0, h + 1.1, 0));
         for (let i = -1; i <= 1; i++) {
           P.add(box(l * 0.24, 2.0, w * 0.2), C.wall, T(i * l * 0.3, h + 2.6, 0));
-          for (const s of [-1, 1]) P.add(box(l * 0.22, 0.8, 0.1), C.glass, T(i * l * 0.3, h + 2.7, s * (w * 0.1 + 0.03)));
+          for (const s of [-1, 1]) win(box(l * 0.22, 0.8, 0.1), T(i * l * 0.3, h + 2.7, s * (w * 0.1 + 0.03)));
           P.add(taper(l * 0.24 + 0.8, w * 0.2 + 0.8, l * 0.24 + 0.8, 0.6, 0.9), C.roof, T(i * l * 0.3, h + 4.05, 0));
         }
         const aw = l * 0.45, ah = h * 0.55, ad = w * 0.4, ax = -l * 0.2, az = w / 2 + ad / 2;
         P.add(rbox(aw, ah, ad, 0.2), C.wall, T(ax, ah / 2, az));
-        P.add(box(aw - 2, 1.4, 0.1), C.glass, T(ax, ah * 0.55, az + ad / 2 + 0.03));
-        P.add(box(0.1, 1.4, ad - 2), C.glass, T(ax - aw / 2 - 0.03, ah * 0.55, az));
+        win(box(aw - 2, 1.4, 0.1), T(ax, ah * 0.55, az + ad / 2 + 0.03));
+        win(box(0.1, 1.4, ad - 2), T(ax - aw / 2 - 0.03, ah * 0.55, az));
         P.add(box(aw + 0.2, 0.7, 0.15), C.accent, T(ax, ah - 0.6, az + ad / 2 + 0.08));
         P.add(rbox(aw + 0.8, 0.5, ad + 0.8, 0.1), C.roof, T(ax, ah + 0.25, az));
         const bw = l * 0.25, bh = h * 1.3, bd = w * 0.3, bx = l * 0.3, bz = -w / 2 - bd / 2;
         P.add(rbox(bw, bh, bd, 0.2), C.wall, T(bx, bh / 2, bz));
         for (let i = 0; i <= 4; i++) P.add(box(0.5, bh - 1.0, 0.3), wallD, T(bx - bw / 2 + i * bw / 4, bh / 2, bz - bd / 2 - 0.1));
-        P.add(box(bw - 2, 1.5, 0.1), C.glass, T(bx, bh * 0.7, bz - bd / 2 - 0.04));
+        win(box(bw - 2, 1.5, 0.1), T(bx, bh * 0.7, bz - bd / 2 - 0.04));
         P.add(box(bw + 0.3, 1.0, 0.2), C.accent, T(bx, bh - 1.3, bz - bd / 2 - 0.15));
         P.add(taper(bw + 1, bd + 1, bw + 1, 0.8, 1.6), C.roof, T(bx, bh + 0.8, bz));
         for (const gx of [l * 0.12, l * 0.27, l * 0.42]) {
@@ -1060,7 +1088,20 @@ export function createModels(THREE, colors) {
         const cxh = -l / 2 + 4, czh = -w / 2 + 4;
         P.add(cyl(1.2, 1.8, h * 1.9, 10), C.concrete, T(cxh, h * 0.95, czh));
         for (const dy of [1.2, 4.6]) P.add(cyl(1.22, 1.26, 1.4, 10), C.paintDown, T(cxh, h * 1.9 - dy, czh));
-        for (let i = 0; i < 4; i++) D.add(rbox(3, 1.4, 2.2, 0.1), C.steel, T(-l * 0.4 + i * 6, h + 1.6, w * 0.3));   // вентиляция на кровле
+        // кровля: цветной парапет по краю, вентиляционные надстройки рядами, вытяжные трубы
+        for (const s of [-1, 1]) {
+          P.add(box(l + 1.6, 0.7, 0.5), C.accent, T(0, h + 0.55, s * (w / 2 + 0.75)));
+          P.add(box(0.5, 0.7, w + 1.6), C.accent, T(s * (l / 2 + 0.75), h + 0.55, 0));
+        }
+        for (let i = 0; i < 6; i++) for (const s of [-1, 1]) {
+          const vx = -l * 0.42 + i * l * 0.17, vz = s * w * 0.32;
+          P.add(rbox(3.2, 1.6, 2.4, 0.15), C.steel, T(vx, h + 1.7, vz));
+          P.add(box(2.4, 0.25, 1.6), C.dark, T(vx, h + 2.6, vz));
+        }
+        for (const [sx, sz] of [[0.42, -0.36], [0.3, -0.36], [-0.12, 0.36]]) {
+          P.add(cyl(0.55, 0.55, 5.5, 10), C.steel, T(sx * l, h + 3.4, sz * w));
+          P.add(cyl(0.6, 0.6, 0.6, 10), C.safety, T(sx * l, h + 5.9, sz * w));
+        }
         for (let i = 0; i < 4; i++) D.add(box(1.2, 0.12, 3.2), C.steel, BM(V(l / 2 + 1.0, i * h / 4, -w * 0.2), V(l / 2 + 1.0, (i + 1) * h / 4, w * 0.2)));
       } else if (type === 'thickener') {
         // сгуститель: кольцевая стенка, зеркало пульпы, центральная колонна, мост-ферма с приводом
@@ -1150,7 +1191,7 @@ export function createModels(THREE, colors) {
         for (const s of [-1, 1]) D.add(box(0.2, 3.0, 0.2), C.steel, T(s * 2.2, 1.5, w / 2 + 2.8));
         D.add(rbox(2.4, 1.2, 1.6, 0.1), C.steel, T(-l * 0.25, h + 1.1, 0));
       }
-      return { main: P.build(), detail: D.p.length ? D.build() : null };
+      return { main: P.build(), detail: D.p.length ? D.build() : null, win: W.p.length ? W.build() : null };
     });
   }
   function building(type, opts) {
@@ -1161,6 +1202,11 @@ export function createModels(THREE, colors) {
     const G = buildingGeos(['main', 'thickener', 'warehouse', 'substation'].includes(type) ? type : 'office', l, w, h);
     mk(g, G.main, VC());
     if (G.detail) mk(g, G.detail, VC(), { detail: true });
+    if (G.win) {   // окна, подсвеченные в ночную смену (models.setNight)
+      const wm = new THREE.Mesh(G.win, nightWinMat());
+      wm.visible = night; wm.raycast = () => {}; wm.userData.nightWin = true;
+      g.add(wm); nightMeshes.add(wm);
+    }
     return finish(g, {}, { length: l, width: w, height: h });
   }
 
@@ -1438,6 +1484,6 @@ export function createModels(THREE, colors) {
 
   return {
     truck, excavator, drill, crusher, conveyor, building, stockpile, dump, lightMast, powerLine, fence, fuelStation,
-    colors: C, sizes: MODEL_SIZES, materials: matCache,
+    setNight, colors: C, sizes: MODEL_SIZES, materials: matCache,
   };
 }
