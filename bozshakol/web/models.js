@@ -88,6 +88,8 @@ export function createModels(THREE, colors) {
     concrete: 0xc6c1b5, concreteDark: 0x9a958b, crusher: 0x7d8692, hopper: 0x737a83, gravel: 0xaea795,
     wall: colors.building ?? 0xd8d8d8, roof: colors.roof ?? 0xa9b8cc, conveyor: colors.conveyor ?? 0x6f7f95,
     wallLow: 0x8fa3b6,                                                // нижний пояс панелей корпусов (второй тон)
+    vent: 0x7c8794,                                                   // вентиляционные надстройки на кровле
+    roofMain: 0x8e9bab, roofSeam: 0xc3ccd6,                           // кровля главного корпуса и светлые швы гофры
     belt: 0x2c2f33, ore: 0x6b7a5a, water: 0x6f97b3, waterLight: 0x8fb2c8, trafo: 0x7d8a97, porcelain: 0x8e5b3a,
     accent: 0x2f7fc1, safety: 0xf2c230, grating: 0x8a9097,
     dump: colors.dump ?? 0x9a9a9a, dumpDark: 0x868686, pile: 0x7d6f5c, pole: 0x8d949b, wire: 0x3a3a3a,
@@ -1054,7 +1056,9 @@ export function createModels(THREE, colors) {
           P.add(box(0.2, 1.0, w + 0.4), C.accent, T(s * (l / 2 + 0.2), h - 1.3, 0));
           P.add(box(l + 1.4, 0.4, 0.3), roofD, T(0, h + 0.1, s * (w / 2 + 0.6)));
         }
-        P.add(taper(l + 1.2, w + 1.2, l + 1.2, 1.0, 2.2), C.roof, T(0, h + 1.1, 0));
+        P.add(taper(l + 1.2, w + 1.2, l + 1.2, 1.0, 2.2), C.roofMain, T(0, h + 1.1, 0));
+        // гофра кровли: светлые швы поперёк каждые ≈ 8 м
+        for (let x = -l / 2 + 4; x < l / 2 - 2; x += 8) P.add(box(0.8, 0.25, w * 0.9), C.roofSeam, T(x, h + 2.25, 0));
         for (let i = -1; i <= 1; i++) {
           P.add(box(l * 0.24, 2.0, w * 0.2), C.wall, T(i * l * 0.3, h + 2.6, 0));
           for (const s of [-1, 1]) win(box(l * 0.22, 0.8, 0.1), T(i * l * 0.3, h + 2.7, s * (w * 0.1 + 0.03)));
@@ -1095,12 +1099,13 @@ export function createModels(THREE, colors) {
         }
         for (let i = 0; i < 6; i++) for (const s of [-1, 1]) {
           const vx = -l * 0.42 + i * l * 0.17, vz = s * w * 0.32;
-          P.add(rbox(3.2, 1.6, 2.4, 0.15), C.steel, T(vx, h + 1.7, vz));
-          P.add(box(2.4, 0.25, 1.6), C.dark, T(vx, h + 2.6, vz));
+          P.add(rbox(12, 4, 8, 0.3), C.vent, T(vx, h + 3.2, vz));            // крупно: корпус в схеме уменьшен
+          P.add(box(10, 0.5, 6), C.dark, T(vx, h + 5.4, vz));
+          P.add(box(12.4, 0.6, 0.4), C.accent, T(vx, h + 4.6, vz + s * 4.1));
         }
         for (const [sx, sz] of [[0.42, -0.36], [0.3, -0.36], [-0.12, 0.36]]) {
-          P.add(cyl(0.55, 0.55, 5.5, 10), C.steel, T(sx * l, h + 3.4, sz * w));
-          P.add(cyl(0.6, 0.6, 0.6, 10), C.safety, T(sx * l, h + 5.9, sz * w));
+          P.add(cyl(1.3, 1.3, 11, 10), C.steel, T(sx * l, h + 6.4, sz * w));
+          P.add(cyl(1.4, 1.4, 1.4, 10), C.safety, T(sx * l, h + 11.6, sz * w));
         }
         for (let i = 0; i < 4; i++) D.add(box(1.2, 0.12, 3.2), C.steel, BM(V(l / 2 + 1.0, i * h / 4, -w * 0.2), V(l / 2 + 1.0, (i + 1) * h / 4, w * 0.2)));
       } else if (type === 'thickener') {
