@@ -863,6 +863,7 @@ const VIEWS_SCHEMA = {
 };
 // Переход к виду по имени (кнопки сверху и клавиши 1–5)
 function setView(name) {
+  if (mode === 'schema' && !dio) return;   // схема ещё загружается
   const views = mode === 'schema' ? VIEWS_SCHEMA : VIEWS;
   const conv = (p) => (mode === 'schema' ? dio.s(...p) : realToScene(...p));
   if (name !== 'top' && !views[name]) return;
