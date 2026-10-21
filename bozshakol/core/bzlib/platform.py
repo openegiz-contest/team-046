@@ -58,6 +58,19 @@ class SimClock:
         self.start_epoch = time.mktime(time.strptime(self.START, "%Y-%m-%dT%H:%M:%S"))
         self._real_start = time.monotonic()
         self._last = self._real_start
+        self._base = 0.0   # модельных секунд от START до запуска сервиса (resume)
+
+    def resume(self, iso):
+        """Продолжить модельное время с момента iso (ГГГГ-ММ-ДДTЧЧ:ММ:СС), например с mine.sim_time из Ditto:
+        стенд перезапущен, а накопители смены у модулей восстановлены — часы и номер смены идут дальше."""
+        start0 = time.mktime(time.strptime(self.START, "%Y-%m-%dT%H:%M:%S"))
+        t = time.mktime(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S"))
+        if t > start0:
+            self._base = t - start0
+            self.start_epoch = t
+            self._real_start = time.monotonic()
+            self._last = self._real_start
+        return self
 
     def now(self):
         """Модельное время, секунды с эпохи."""
@@ -68,7 +81,7 @@ class SimClock:
 
     def elapsed(self):
         """Модельных секунд с начала работы сервиса."""
-        return (time.monotonic() - self._real_start) * self.speedup
+        return self._base + (time.monotonic() - self._real_start) * self.speedup
 
     def shift(self):
         """Номер смены (с 1) и час внутри смены."""
