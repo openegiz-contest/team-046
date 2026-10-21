@@ -183,6 +183,17 @@ def _busiest_excavator(snap):
     return best[0] if best else "excavator-01"
 
 
+def _slow_faces(snap):
+    """Забои, где погрузка медленнее нормы (loading_factor < 0,95 — например, крупность после неудачного взрыва)."""
+    out = []
+    for name, f in sorted(snap.items()):
+        if name.startswith("face-") and isinstance(f, dict):
+            lf = _f(f, "loading_factor", 1.0)
+            if lf < 0.95:
+                out.append((name, lf))
+    return out
+
+
 def _bottlenecks(snap):
     """Узкие места по состояниям двойников: список причин с действием и объект первого из них."""
     mine = snap.get("mine") or {}
@@ -193,8 +204,14 @@ def _bottlenecks(snap):
     reserve = int(_f(d, "trucks_reserve"))
     wait = _f(d, "avg_wait_excavator")
     if wait > WAIT_LIMIT_MIN and str(d.get("mode", "auto")) == "auto":
-        # самосвалы долго ждут у экскаваторов: не хватает погрузки, а не самосвалов — резерв не трогать
-        causes.append(f"самосвалы ждут у экскаваторов {wait:.1f} мин — узкое место погрузка, а не число самосвалов")
+        # самосвалы долго ждут у экскаваторов: узкое место — цикл экскаватора, а не число самосвалов (резерв не трогать);
+        # на геологию (крупность, скорость погрузки забоя) ссылаемся, только если она действительно замедлила погрузку
+        text = (f"самосвалы ждут у экскаваторов {wait:.1f} мин — узкое место — цикл экскаватора "
+                f"(ожидание/погрузка у экскаватора), а не число самосвалов")
+        slow = _slow_faces(snap)
+        if slow:
+            text += "; погрузка медленнее в " + ", ".join(f"{n} (loading_factor {lf:.2f})" for n, lf in slow)
+        causes.append(text)
         target = _busiest_excavator(snap)
     elif reserve > 0:
         # недовоз руды при самосвалах в резерве: вернуть в работу K (по trucks_needed модуля транспорта)
@@ -231,8 +248,15 @@ def _bottlenecks(snap):
         causes.append(f"метель, ограничение {_f(mine, 'speed_limit', BASE_SPEED_KMH):.0f} км/ч — см. совет по метели")
         target = target or "stockpile-coarse"
     if not causes:
-        causes.append("причина по двойникам не определена: привоз руды на дробилку ниже плана — проверить забои и очереди")
-        target = "plant-sulphide"
+        slow = _slow_faces(snap)
+        if slow:
+            causes.append("погрузка медленнее в " + ", ".join(f"{n} (loading_factor {lf:.2f})" for n, lf in slow)
+                          + " — привоз руды на дробилку ниже плана")
+            target = slow[0][0]
+        else:
+            causes.append("причина по двойникам не определена: привоз руды на дробилку ниже плана — "
+                          "проверить очереди и работу экскаваторов")
+            target = "plant-sulphide"
     return causes, target
 
 

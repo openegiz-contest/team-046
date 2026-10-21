@@ -158,7 +158,7 @@ code_gf="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "http://$H:${GRA
 if [ "$code_gf" = 200 ]; then ok "Grafana отвечает на http://$H:${GRAFANA_PORT:-3000}"; else bad "Grafana: HTTP $code_gf"; fi
 
 # 6. Перезапуск сервисов переработки и транспорта: счётчики и запасы восстанавливаются ------
-echo "6. Перезапуск сервисов (bz-processing, bz-haulage)"
+echo "6. Перезапуск сервисов (bz-processing, bz-haulage) и повторный make bozshakol"
 read_state() {
   python3 - "$DITTO" "$AUTH" <<'PY'
 import base64, json, sys, urllib.request
@@ -177,15 +177,9 @@ for k in ("delivered_crusher_t", "delivered_clay_t", "delivered_dump_t", "trips_
 print(json.dumps(out))
 PY
 }
-before="$(read_state 2>/dev/null)"
-if [ -z "$before" ]; then
-  bad "перезапуск: не удалось прочитать двойники до перезапуска"
-else
-  compose=(docker compose -f "$ROOT/deploy/compose/docker-compose.yml" -f "$ROOT/bozshakol/compose.yml")
-  if "${compose[@]}" restart bz-processing bz-haulage >/dev/null 2>&1; then
-    sleep 30
-    after="$(read_state 2>/dev/null)"
-    verdict="$(python3 - "$before" "$after" <<'PY'
+# сравнение состояния до и после: бункер и склады в пределах ёмкости и без скачка, счётчики dispatch не уменьшились
+compare_state() {
+  python3 - "$1" "$2" <<'PY2'
 import json, sys
 b, a = json.loads(sys.argv[1]), json.loads(sys.argv[2] or "{}")
 problems = []
@@ -204,8 +198,16 @@ for k in ("delivered_crusher_t", "delivered_clay_t", "delivered_dump_t", "trips_
     if num(b.get(k)) is not None and (num(a.get(k)) is None or a[k] < b[k]):
         problems.append(f"dispatch.{k} уменьшился: {b.get(k)} → {a.get(k)}")
 print("OK" if not problems else "; ".join(problems))
-PY
-)"
+PY2
+}
+before="$(read_state 2>/dev/null)"
+if [ -z "$before" ]; then
+  bad "перезапуск: не удалось прочитать двойники до перезапуска"
+else
+  compose=(docker compose -f "$ROOT/deploy/compose/docker-compose.yml" -f "$ROOT/bozshakol/compose.yml")
+  if "${compose[@]}" restart bz-processing bz-haulage >/dev/null 2>&1; then
+    sleep 30
+    verdict="$(compare_state "$before" "$(read_state 2>/dev/null)")"
     if [ "$verdict" = "OK" ]; then
       ok "после перезапуска бункер, склады и счётчики dispatch в порядке"
     else
@@ -214,6 +216,21 @@ PY
   else
     bad "перезапуск: docker compose restart не выполнился"
   fi
+fi
+# 6б. Повторный make bozshakol на работающем стенде: bz-setup не сбрасывает признаки существующих двойников
+before="$(read_state 2>/dev/null)"
+if [ -z "$before" ]; then
+  bad "повторный make bozshakol: не удалось прочитать двойники"
+elif timeout 600 make -C "$ROOT" bozshakol >/dev/null 2>&1; then
+  sleep 30
+  verdict="$(compare_state "$before" "$(read_state 2>/dev/null)")"
+  if [ "$verdict" = "OK" ]; then
+    ok "повторный make bozshakol: счётчики dispatch, бункер и склады не сброшены"
+  else
+    bad "повторный make bozshakol: $verdict"
+  fi
+else
+  bad "повторный make bozshakol не выполнился"
 fi
 
 echo
