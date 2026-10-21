@@ -217,21 +217,32 @@ else
     bad "перезапуск: docker compose restart не выполнился"
   fi
 fi
-# 6б. Повторный make bozshakol на работающем стенде: bz-setup не сбрасывает признаки существующих двойников
+# 6б. Повторный make bozshakol на работающем стенде: bz-setup не сбрасывает признаки существующих двойников.
+# Модули за секунды заново публикуют свои счётчики, поэтому кроме сравнения до/после ставим временную метку —
+# признак check_probe у двойника координатора pit-central (его никто не публикует заново): bz-setup, переписавший
+# двойник целиком, стёр бы её. После проверки метка удаляется.
+PROBE="$DITTO/api/2/things/$NS:pit-central/features/check_probe"
 before="$(read_state 2>/dev/null)"
-if [ -z "$before" ]; then
-  bad "повторный make bozshakol: не удалось прочитать двойники"
+probe_put="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" -X PUT -H 'Content-Type: application/json'   -d '{"properties":{"value":"повторный make bozshakol"}}' "$PROBE")"
+if [ -z "$before" ] || { [ "$probe_put" != 201 ] && [ "$probe_put" != 204 ]; }; then
+  bad "повторный make bozshakol: не удалось прочитать двойники или поставить метку (HTTP $probe_put)"
 elif timeout 600 make -C "$ROOT" bozshakol >/dev/null 2>&1; then
+  probe_get="$(curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$PROBE")"
   sleep 30
   verdict="$(compare_state "$before" "$(read_state 2>/dev/null)")"
+  if [ "$probe_get" != 200 ]; then
+    lost="bz-setup переписал признаки существующего двойника (метка pit-central.check_probe пропала)"
+    if [ "$verdict" = "OK" ]; then verdict="$lost"; else verdict="$lost; $verdict"; fi
+  fi
   if [ "$verdict" = "OK" ]; then
-    ok "повторный make bozshakol: счётчики dispatch, бункер и склады не сброшены"
+    ok "повторный make bozshakol: признаки существующих двойников сохранены, счётчики dispatch, бункер и склады не сброшены"
   else
     bad "повторный make bozshakol: $verdict"
   fi
 else
   bad "повторный make bozshakol не выполнился"
 fi
+curl -s -o /dev/null -u "$AUTH" -X DELETE "$PROBE" || true
 
 echo
 if [ "$fail" = 0 ]; then
