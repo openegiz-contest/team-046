@@ -1703,7 +1703,7 @@ function updateModeUi() {
   }
   const note = document.getElementById('scale-note');
   if (note) note.textContent = mode === 'schema'
-    ? 'Схема рудника (не в масштабе). Реальное расположение — кнопка «Карта местности»'
+    ? 'Схема рудника 1 : 3 (техника крупнее в 2,5 раза). Реальное расположение — кнопка «Карта местности»'
     : 'вертикальный масштаб ×1,5';
   updateAttribution();
 }
