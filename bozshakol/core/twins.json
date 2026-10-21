@@ -186,7 +186,7 @@
     "properties": {
      "value": false,
      "face": "face-01",
-     "p80_mm": 450,
+     "p80_mm": 900,
      "owner": "geology"
     }
    },
@@ -212,7 +212,8 @@
    "_isType": false,
    "_parents": "kz.bozshakol:mine",
    "rules": "crusher, clay, plan, inflow, fleet, blizzard",
-   "service": "bz-advisor"
+   "service": "bz-advisor",
+   "reality": "сверка с реальностью: core/reality.py, источники — data/SOURCES.md"
   },
   "features": {
    "advice": {
@@ -240,6 +241,17 @@
    "advice_ids": {
     "properties": {
      "value": ""
+    }
+   },
+   "reality": {
+    "properties": {
+     "value": "{}",
+     "unit": "json"
+    }
+   },
+   "reality_warmup": {
+    "properties": {
+     "value": true
     }
    }
   }

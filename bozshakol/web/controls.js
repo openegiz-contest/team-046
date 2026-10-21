@@ -36,6 +36,11 @@ export function initKeyboard(opts) {
     bounds: { minX: -3000, maxX: 3000, minY: -3000, maxY: 3000 },
   }, opts);
   const VZ = o.toScene ? o.toScene(0, 0, 1).y : 1;   // вертикальное преувеличение сцены
+  // масштаб и земля могут зависеть от режима сцены: unit() — единиц сцены на метр (скорости, отступы),
+  // groundY(sx, sz) — высота земли в единицах сцены, bounds — объект или функция
+  const unit = () => (o.unit ? o.unit() : 1);
+  const groundY = (sx, sz) => (o.groundY ? o.groundY(sx, sz) : o.groundAt(sx, -sz) * VZ);
+  const bnd = () => (typeof o.bounds === 'function' ? o.bounds() : o.bounds);
   const pressed = new Set();                          // зажатые клавиши (e.code)
   // сглаженные скорости: vx, vz — в сцене, м/с; rot — рад/с; dolly — 1/с
   const vel = { x: 0, z: 0, rot: 0, dolly: 0 };
@@ -97,10 +102,11 @@ export function initKeyboard(opts) {
 
     // --- скорость: от высоты камеры над землёй (сверху — от масштаба)
     let speed;
-    if (top) speed = Math.max(MIN_SPEED, SPEED_PER_M * 3000 / (cam.zoom || 1));
+    const u = unit();
+    if (top) speed = Math.max(MIN_SPEED * u, SPEED_PER_M * 3000 * u / (cam.zoom || 1));
     else {
-      const h = pos.y - o.groundAt(pos.x, -pos.z) * VZ;
-      speed = Math.max(MIN_SPEED, SPEED_PER_M * Math.max(0, h) / VZ);
+      const h = pos.y - groundY(pos.x, pos.z);
+      speed = Math.max(MIN_SPEED * u, SPEED_PER_M * Math.max(0, h) / (u === 1 ? VZ : 1));
     }
     speed *= boost;
     let gx = fx * fwd + rx * side, gz = fz * fwd + rz * side;
@@ -145,16 +151,16 @@ export function initKeyboard(opts) {
 
   // Границы: цель — в пределах bounds с запасом, камера — не дальше 2 км за bounds, не ниже земли + 15 м
   function clamp(cam, ctl, top) {
-    const b = o.bounds, pos = cam.position, tgt = ctl.target;
+    const b = bnd(), pos = cam.position, tgt = ctl.target, u = unit();
     // в сцене: x = x рудника, z = −y рудника
-    let sx = clampDelta(tgt.x, b.minX - TARGET_MARGIN, b.maxX + TARGET_MARGIN);
-    let sz = clampDelta(tgt.z, -b.maxY - TARGET_MARGIN, -b.minY + TARGET_MARGIN);
+    let sx = clampDelta(tgt.x, b.minX - TARGET_MARGIN * u, b.maxX + TARGET_MARGIN * u);
+    let sz = clampDelta(tgt.z, -b.maxY - TARGET_MARGIN * u, -b.minY + TARGET_MARGIN * u);
     tgt.x += sx; tgt.z += sz; pos.x += sx; pos.z += sz;
-    sx = clampDelta(pos.x, b.minX - CAMERA_MARGIN, b.maxX + CAMERA_MARGIN);
-    sz = clampDelta(pos.z, -b.maxY - CAMERA_MARGIN, -b.minY + CAMERA_MARGIN);
+    sx = clampDelta(pos.x, b.minX - CAMERA_MARGIN * u, b.maxX + CAMERA_MARGIN * u);
+    sz = clampDelta(pos.z, -b.maxY - CAMERA_MARGIN * u, -b.minY + CAMERA_MARGIN * u);
     tgt.x += sx; tgt.z += sz; pos.x += sx; pos.z += sz;
     if (!top) {
-      const minY = o.groundAt(pos.x, -pos.z) * VZ + MIN_ABOVE;
+      const minY = groundY(pos.x, pos.z) + MIN_ABOVE * u;
       if (pos.y < minY) pos.y = minY;
     }
   }

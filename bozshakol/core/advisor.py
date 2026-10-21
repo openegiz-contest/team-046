@@ -3,7 +3,8 @@
 
 Читает чужие двойники только через платформу (снимок по HTTP Ditto, дальше события MQTT),
 применяет правила из advisor_rules.py и публикует двойник kz.bozshakol:advisor:
-advice (JSON-список советов строкой), advice_count, top_advice, level (0–2), advice_ids.
+advice (JSON-список советов строкой), advice_count, top_advice, level (0–2), advice_ids;
+сверка с реальностью (core/reality.py): reality (JSON-таблица) и real_* — средние модели за последний модельный час.
 Договор: contract/README.md, раздел «Советник диспетчера».
 """
 import json
@@ -11,6 +12,7 @@ import time
 
 from advisor_rules import PRIORITY_RU, PLAN_WINDOW_S, advise, fleet_sample
 from bzlib import DittoClient, Telemetry, TwinWatcher, feature, setup_logging
+from reality import ROWS as REALITY_ROWS, WINDOW_S as REALITY_WINDOW_S, reality_rows, sample_values
 
 log = setup_logging("bz-advisor")
 PERIOD_S = 5.0
@@ -47,7 +49,7 @@ def main():
     telemetry = Telemetry(client_id="bz-advisor").connect()
     history = []          # (модельное время, с; plant-sulphide.feed_rate; plan_rate; stockpile-coarse.inflow) за последний час
     last_ids = None
-    ctx = {"fleet": [], "deliveries": [], "blizzard_since": None}   # данные для правила «метель»
+    ctx = {"fleet": [], "deliveries": [], "blizzard_since": None, "reality": []}   # «метель»; срезы для сверки
     while True:
         try:
             history, last_ids = step(watcher, telemetry, history, last_ids, ctx)
@@ -78,6 +80,28 @@ def update_fleet_ctx(ctx, snap, t):
             "deliveries": ctx["deliveries"], "blizzard_since": ctx["blizzard_since"]}
 
 
+def reality_features(ctx, snap, t):
+    """Сверка с реальностью: срезы величин модели за последний модельный час -> признаки advisor."""
+    if ctx is None or t is None:
+        return {}
+    samples = ctx.setdefault("reality", [])
+    if samples and t < samples[-1][0]:
+        samples.clear()                                  # модельное время пошло заново
+        ctx.pop("reality_t0", None)
+    ctx.setdefault("reality_t0", t)                      # первый срез после старта — отсчёт «разгона»
+    samples.append((t, sample_values(snap)))
+    while samples and t - samples[0][0] > REALITY_WINDOW_S + 600:
+        samples.pop(0)
+    rows, meta = reality_rows(samples, ctx["reality_t0"])
+    out = {"reality": feature(json.dumps({"rows": rows, **meta}, ensure_ascii=False), "json"),
+           "reality_warmup": feature(meta["warmup"]),
+           "real_window_min": feature(meta["window_min"], "мин")}   # число — для Grafana (логические Telegraf не хранит)
+    for r in rows:   # числа для Grafana: среднее модели за час (нет данных — признак не публикуется)
+        if r["model"] is not None:
+            out["real_" + r["id"]] = feature(r["model"], r["unit"])
+    return out
+
+
 def step(watcher, telemetry, history, last_ids, ctx=None):
     """Один цикл: снимок двойников -> история -> советы -> публикация. Возвращает (history, last_ids)."""
     if True:
@@ -94,8 +118,9 @@ def step(watcher, telemetry, history, last_ids, ctx=None):
                                 float(sp.get("inflow") or 0.0)))
             except (TypeError, ValueError):
                 pass
-            history = [h for h in history if t - h[0] <= PLAN_WINDOW_S]
+            history = [h for h in history if t - h[0] <= 2 * PLAN_WINDOW_S]   # 2 ч: окно «последний час» + признак разгона
         advice = advise(snap, history, rule_ctx)
+        reality = reality_features(ctx, snap, t)
         top = advice[0] if advice else None
         ids = ",".join(a["id"] for a in advice)
         telemetry.publish("advisor", {
@@ -104,6 +129,7 @@ def step(watcher, telemetry, history, last_ids, ctx=None):
             "top_advice": feature(top["text"] if top else "Отклонений нет"),
             "level": feature(top["level"] if top else 0),
             "advice_ids": feature(ids),
+            **reality,
         })
         if ids != last_ids:
             for a in advice:

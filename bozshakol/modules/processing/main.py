@@ -28,11 +28,14 @@ PLAN_SULPH_TPH = 29.44e6 / HOURS_YEAR   # ≈ 3 360 т/ч
 PLAN_CLAY_TPH = 6.26e6 / HOURS_YEAR     # ≈ 715 т/ч
 
 # -- дробилка и бункер (допущения, обоснование в README) ----------------------------------
-CRUSHER_TPH = 4500.0    # номинал при p80 = 250 мм и крепости 12: план 3 360 т/ч ÷ 0,75 (работает ~75 % времени)
-P80_REF, HARD_REF = 250.0, 12.0
-CRUSHER_K_MIN, CRUSHER_K_MAX = 0.5, 1.15
+CRUSHER_TPH = 4500.0    # номинал при p80 = P80_REF и крепости HARD_REF: план 3 360 т/ч ÷ 0,75 (работает ~75 % времени)
+P80_REF = 450.0         # мм — крупность при нормальном взрыве по модулю №3 (450–500 мм; неудачный — 800–900 мм)
+HARD_REF = 11.0         # ед. Протодьяконова — средняя крепость сульфидной руды по модулю №3 (F_REF в geology/blasting.py)
+CRUSHER_AVAIL = 0.75    # доля времени, когда дробилка дробит (ждёт самосвалы, ТО, простои) — для расчёта % плана в README
+CRUSHER_K_MIN, CRUSHER_K_MAX = 0.5, 1.15   # мелкая руда ускоряет не больше чем на 15 %, крупная замедляет не больше чем вдвое
 BUNKER_T = 900.0        # приёмный бункер: 5 кузовов по 180 т (≈ 6–7 по 135 т)
 TRUCK_MAX_T = 180.0     # бункер «принимает», пока в нём есть место для полного кузова
+FLEET_T = 22 * 135.0 + 6 * 180.0   # 4 050 т — весь парк самосвалов (dispatch.fleet): больше за один шаг не привезти
 
 # -- конвейер -------------------------------------------------------------------------------
 BELT_SPEED = 2.5        # м/с — как в библиотеке моделей web/models.js (допущение)
@@ -42,6 +45,7 @@ COARSE_CAP = 40000.0    # ≈ 12 ч питания сульфидной фабр
 CLAY_CAP = 120000.0     # склад глинистой руды — долговременный (допущение)
 BULK_DENSITY = 1.6      # т/м³ насыпная плотность дроблёной руды (допущение) — для объёма штабеля
 STOP_WARN_H = 24.0      # stop_expected = true, если фабрика встанет раньше чем через сутки
+ALARM_DECLINE_S = 15 * 60.0  # тревога по складу: убывает дольше 15 модельных минут подряд (или дробилка не принимает)
 
 # -- извлечение меди (простые формулы, калибровка — в README) --------------------------------
 # сульфидная: 75,5 % при 0,41 % Cu и 5 % глины; +2 п.п. на каждые 0,1 % Cu; −0,4 п.п. на 1 % глины сверх 5 %
@@ -53,7 +57,8 @@ REC_C_PER_CU, REC_C_PER_CLAY = 20.0, 0.2
 CONC_CU = 24.0          # % Cu в концентрате (допущение заглушки)
 
 # -- энергия (как в заглушке; подробная энергетика — следующее задание) ------------------------
-P_SAG, P_BALL, P_CRUSHER, P_OTHER = 28.0, 16.0, 1.0, 6.0  # МВт
+P_SAG, P_CRUSHER, P_OTHER = 28.0, 1.0, 6.0  # МВт: мельница ПСИ 12,2 м — 28 МВт (ABB)
+P_BALL = 2 * 22.0       # МВт: две шаровые мельницы 8,5 м по 22 МВт (ABB)
 
 FACES = [f"face-0{i}" for i in range(1, 7)]
 EXCAVATORS = [f"excavator-0{i}" for i in range(1, 7)]
@@ -120,7 +125,7 @@ def face_quality(watcher, destination, defaults):
 
 
 def crusher_capacity(p80, hardness):
-    """Производительность дробилки, т/ч: номинал × √(250/p80) × √(12/крепость), в пределах 0,5–1,15."""
+    """Производительность дробилки, т/ч: номинал × √(P80_REF/p80) × √(HARD_REF/крепость), коэффициент в пределах 0,5–1,15."""
     k = math.sqrt(P80_REF / max(p80, 1.0)) * math.sqrt(HARD_REF / max(hardness, 1.0))
     return CRUSHER_TPH * clamp(k, CRUSHER_K_MIN, CRUSHER_K_MAX)
 
@@ -142,46 +147,151 @@ def sim_hhmm(epoch, now_epoch):
 
 
 class Counter:
-    """Разница накопительного счётчика чужого двойника (пропуск сообщения ничего не теряет)."""
+    """Приращение накопительного счётчика чужого двойника (договор, раздел 4).
 
-    def __init__(self):
+    - пока значения нет (Ditto ещё не ответил) — приращение 0;
+    - первое прочитанное после старта значение — опорная точка, приращение 0;
+    - дальше приращение = текущее − предыдущее;
+    - счётчик уменьшился — сброс у владельца: новое значение — новая опорная точка, приращение 0.
+      Если затем счётчик вернулся к прежнему уровню (владелец на миг опубликовал 0 и восстановил свой итог),
+      старые тонны второй раз не засчитываются: считается только рост выше прежнего уровня."""
+
+    RESTORE_WINDOW = 24        # шагов (≈ 2 мин реального времени): столько ждём «восстановления» итога владельцем
+
+    def __init__(self, name, max_step):
+        self.name = name
+        self.max_step = max_step   # больше за один шаг прийти не может — значит, это не руда, а смена опорной точки
         self.last = None
+        self.before_reset = None   # уровень счётчика до сброса
+        self.since_reset = 0
 
     def delta(self, v):
-        if v is None:
+        if not isinstance(v, (int, float)):
             return 0.0
-        d = 0.0 if self.last is None or v < self.last else v - self.last  # сброс счётчика — начинаем заново
+        if self.last is None:
+            log.info("счётчик %s: опорная точка %.1f (приращение 0)", self.name, v)
+            self.last = v
+            return 0.0
+        if v < self.last:
+            log.warning("счётчик %s уменьшился %.1f → %.1f: сброс у владельца, новая опорная точка", self.name, self.last, v)
+            self.before_reset = max(self.last, self.before_reset or 0.0)
+            self.since_reset = 0
+            self.last = v
+            return 0.0
+        d = v - self.last
+        if self.before_reset is not None:
+            self.since_reset += 1
+            if v >= self.before_reset:   # итог восстановлен владельцем — засчитываем только рост сверх старого уровня
+                d = v - self.before_reset
+                log.warning("счётчик %s вернулся к уровню до сброса (%.1f → %.1f): засчитано %.1f, а не %.1f",
+                            self.name, self.before_reset, v, d, v - self.last)
+                self.before_reset = None
+            elif self.since_reset > self.RESTORE_WINDOW:
+                self.before_reset = None   # настоящий сброс: счётчик растёт с нуля как обычно
+        if d > self.max_step:
+            # например, bz-setup обнулил двойник в Ditto, а владелец продолжает со своим итогом
+            log.warning("счётчик %s прыгнул %.1f → %.1f (+%.1f, больше %.0f за шаг): новая опорная точка, приращение 0",
+                        self.name, self.last, v, d, self.max_step)
+            d = 0.0
         self.last = v
         return d
+
+
+OWN = ("crusher-01", "conveyor-01", "stockpile-coarse", "stockpile-clay", "flotation-01",
+       "plant-sulphide", "plant-clay", "power-grid")
+
+
+def load_own_state(ditto, twins):
+    """Своё состояние при старте: из Ditto (двойники уже живут — перезапуск сервиса); если Ditto не ответил
+    или признака нет — начальное значение из twins.json (новый стенд). Возвращает функцию get(двойник, признак, по умолчанию)."""
+    live = {}
+    for name in OWN:
+        try:
+            live[name] = (ditto.retry(lambda n=name: ditto.get_thing(n, "features"), attempts=5) or {}).get("features") or {}
+        except Exception as exc:  # noqa: BLE001 — любая ошибка Ditto: берём twins.json
+            log.warning("состояние %s: Ditto не ответил (%s), беру twins.json", name, exc)
+    sources = {"Ditto": 0, "twins.json": 0}
+
+    def get(name, feat, default=None):
+        v = value(live.get(name, {}), feat)
+        if isinstance(v, (int, float, str)) and not isinstance(v, bool):
+            sources["Ditto"] += 1
+            return v
+        sources["twins.json"] += 1
+        return value(twins.get(f"kz.bozshakol:{name}", {}).get("features", {}), feat, default)
+
+    return get, sources
+
+
+def sim_epoch(iso):
+    """Модельное время двойника mine (ISO) → секунды, как SimClock.now()."""
+    try:
+        return time.mktime(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError):
+        return None
+
+
+def clamp_pile(pile, cap, name):
+    """Страховка: запас не меньше 0 и не больше ёмкости; превышение — признак ошибки, пишем в лог."""
+    if pile.stock > cap:
+        log.warning("%s: %.0f т больше ёмкости %.0f т — лишние %.0f т не приняты", name, pile.stock, cap, pile.stock - cap)
+        pile.stock = cap
+    pile.stock = max(0.0, pile.stock)
 
 
 def main():
     with open("twins.json", encoding="utf-8") as f:
         twins = json.load(f)
-    sc = twins["kz.bozshakol:stockpile-coarse"]["features"]
-    coarse = Pile(value(sc, "stock", 15000.0), value(sc, "cu_grade", 0.41), value(sc, "clay_pct", 5.0))
-    scl = twins["kz.bozshakol:stockpile-clay"]["features"]
-    clay = Pile(value(scl, "stock", 30000.0), value(scl, "cu_grade", 0.31), value(scl, "clay_pct", 55.0))
-    bunker = Pile(0.0, coarse.q["cu"], coarse.q["clay"])
 
     belt_len = conveyor_length(twins)
     transit_s = belt_len / BELT_SPEED
     log.info("конвейер: %.0f м по geometry.json, руда едет %.1f мин", belt_len, transit_s / 60)
 
     ditto = DittoClient()
+    # -- своё состояние: восстановить из Ditto (договор, раздел 4), иначе — twins.json --------------
+    st, sources = load_own_state(ditto, twins)
+    coarse = Pile(float(st("stockpile-coarse", "stock", 15000.0)), float(st("stockpile-coarse", "cu_grade", 0.41)),
+                  float(st("stockpile-coarse", "clay_pct", 5.0)))
+    coarse.received = float(st("stockpile-coarse", "received_total", 0.0))
+    coarse.reclaimed = float(st("stockpile-coarse", "reclaimed_total", 0.0))
+    clay = Pile(float(st("stockpile-clay", "stock", 30000.0)), float(st("stockpile-clay", "cu_grade", 0.31)),
+                float(st("stockpile-clay", "clay_pct", 55.0)))
+    clay.received = float(st("stockpile-clay", "received_total", 0.0))
+    clay.reclaimed = float(st("stockpile-clay", "reclaimed_total", 0.0))
+    bunker = Pile(float(st("crusher-01", "bunker", 0.0)), float(st("crusher-01", "feed_cu", coarse.q["cu"])),
+                  coarse.q["clay"], float(st("crusher-01", "feed_p80", P80_REF)), float(st("crusher-01", "feed_hardness", HARD_REF)))
+    clamp_pile(bunker, BUNKER_T, "бункер дробилки при старте")
+    clamp_pile(coarse, COARSE_CAP, "склад крупнодроблёной руды при старте")
+    clamp_pile(clay, CLAY_CAP, "склад глинистой руды при старте")
+    received_crusher = float(st("crusher-01", "received_total", 0.0))
+    # руда на ленте хранится только тоннами: раскладываем её по ленте равномерно
+    belt_load = max(0.0, float(st("conveyor-01", "load", 0.0)))
+    belt = [[transit_s * (i + 0.5) / 10, belt_load / 10, {"cu": bunker.q["cu"], "clay": bunker.q["clay"]}]
+            for i in range(10)] if belt_load > 0 else []   # [осталось ехать, с; тонны; показатели]
+    cu_total = {"s": float(st("flotation-01", "cu_in_concentrate_total", 0.0)),
+                "c": float(st("plant-clay", "cu_in_concentrate_total", 0.0))}
+    saved_shift = {"shift": st("plant-sulphide", "shift", None),
+                   "s_ore": float(st("plant-sulphide", "ore_shift_t", 0.0)), "s_cu": float(st("plant-sulphide", "cu_concentrate_shift", 0.0)),
+                   "c_ore": float(st("plant-clay", "ore_shift_t", 0.0)), "c_cu": float(st("plant-clay", "cu_concentrate_shift", 0.0)),
+                   "energy": float(st("power-grid", "energy_shift", 0.0))}
+    log.info("состояние при старте: %d признаков из Ditto, %d из twins.json; бункер %.0f т, склад %.0f т, "
+             "склад глины %.0f т, на ленте %.0f т, принято дробилкой %.0f т, медь в концентрате %.1f т",
+             sources["Ditto"], sources["twins.json"], bunker.stock, coarse.stock, clay.stock, belt_load,
+             received_crusher, cu_total["s"])
+
     names = {"scenarios", "dispatch", "mine", *FACES, *EXCAVATORS}
     watcher = TwinWatcher(ditto, names=names, client_id="bz-processing-watch").start()
     telemetry = Telemetry(client_id="bz-processing").connect()
     clock = SimClock()
 
-    c_crusher, c_crusher_cu, c_clay, c_clay_cu = Counter(), Counter(), Counter(), Counter()
+    step_t = FLEET_T * max(1.0, PUBLISH_S * clock.speedup / 50.0)   # за шаг ≈ 50 модельных с больше парка не привезти
+    c_crusher, c_crusher_cu = Counter("dispatch.delivered_crusher_t", step_t), Counter("dispatch.delivered_crusher_cu_t", step_t / 100.0)
+    c_clay, c_clay_cu = Counter("dispatch.delivered_clay_t", step_t), Counter("dispatch.delivered_clay_cu_t", step_t / 100.0)
     cu_pending = {"crusher": 0.0, "clay": 0.0}
-    belt = []                 # руда на ленте: [осталось ехать, с; тонны; показатели]
-    blocked = False           # склад полон — конвейер и дробилка стоят
+    blocked = coarse.stock >= COARSE_CAP   # склад полон — конвейер и дробилка стоят
     inflow_ema = PLAN_SULPH_TPH  # сглаженный приход на склад, т/ч (старт = план, без ложного прогноза остановки)
-    received_crusher = 0.0
+    declining_s = 0.0            # сколько модельных секунд подряд склад убывает
     energy_shift = 0.0
-    cu_total = {"s": 0.0, "c": 0.0}
     shift_acc = None
     shift_prev = None
 
@@ -190,13 +300,25 @@ def main():
         if dt <= 0:
             time.sleep(PUBLISH_S)
             continue
-        shift, shift_hour = clock.shift()
-        if shift != shift_prev:   # новая смена — счётчики смены с нуля
-            shift_acc = {"s_ore": 0.0, "s_cu": 0.0, "c_ore": 0.0, "c_cu": 0.0}
-            energy_shift = 0.0
+        # смена и модельное время — из двойника mine (общие для всех); пока его нет — своим SimClock
+        m_shift, m_hour = watcher.get("mine", "shift"), watcher.get("mine", "shift_hour")
+        if isinstance(m_shift, (int, float)) and isinstance(m_hour, (int, float)):
+            shift, shift_hour = int(m_shift), float(m_hour)
+        else:
+            shift, shift_hour = clock.shift()
+        if shift != shift_prev:
+            if shift_prev is None and saved_shift["shift"] is not None and int(saved_shift["shift"]) == shift:
+                # перезапуск внутри той же смены — продолжаем её счётчики
+                shift_acc = {k: saved_shift[k] for k in ("s_ore", "s_cu", "c_ore", "c_cu")}
+                energy_shift = saved_shift["energy"]
+                log.info("смена %d продолжается: руда за смену %.0f т, медь %.1f т", shift, shift_acc["s_ore"], shift_acc["s_cu"])
+            else:   # новая смена (или смена прошла, пока сервис стоял) — счётчики смены с нуля
+                shift_acc = {"s_ore": 0.0, "s_cu": 0.0, "c_ore": 0.0, "c_cu": 0.0}
+                energy_shift = 0.0
+                log.info("смена %d: счётчики смены с нуля", shift)
             shift_prev = shift
         hours = max(shift_hour, 0.05)
-        now = clock.now()
+        now = sim_epoch(watcher.get("mine", "sim_time")) or clock.now()
 
         crusher_stop, _ = watcher.scenario("crusher_stop")
         sag_maint, _ = watcher.scenario("sag_maintenance")
@@ -207,18 +329,30 @@ def main():
 
         # -- приём с самосвалов по накопительным счётчикам dispatch -----------------------------
         # тонны и медь приходят разными признаками: медь копится, пока не придут её тонны
+        overflow = False   # пришло больше, чем помещается: признак ошибки, руду не принимаем
         t_in = c_crusher.delta(watcher.get("dispatch", "delivered_crusher_t"))
         cu_pending["crusher"] += c_crusher_cu.delta(watcher.get("dispatch", "delivered_crusher_cu_t"))
         if t_in > 0:
             cu_in, cu_pending["crusher"] = cu_pending["crusher"], 0.0
-            bunker.add(t_in, {"cu": 100.0 * cu_in / t_in, "clay": q_s["clay_pct"],
-                              "p80": q_s["p80"], "hardness": q_s["hardness"]})
-            received_crusher += t_in
+            room = max(0.0, BUNKER_T - bunker.stock)
+            if t_in > room:
+                log.warning("бункер дробилки: пришло %.0f т, места %.0f т (в бункере %.0f из %.0f т) — лишние %.0f т не приняты",
+                            t_in, room, bunker.stock, BUNKER_T, t_in - room)
+                overflow = True
+            taken = min(t_in, room)
+            bunker.add(taken, {"cu": 100.0 * cu_in / t_in, "clay": q_s["clay_pct"],
+                               "p80": q_s["p80"], "hardness": q_s["hardness"]})
+            received_crusher += taken
+        clay_overflow = False
         t_cl = c_clay.delta(watcher.get("dispatch", "delivered_clay_t"))
         cu_pending["clay"] += c_clay_cu.delta(watcher.get("dispatch", "delivered_clay_cu_t"))
         if t_cl > 0:
             cu_cl, cu_pending["clay"] = cu_pending["clay"], 0.0
-            clay.add(t_cl, {"cu": 100.0 * cu_cl / t_cl, "clay": q_c["clay_pct"]})
+            room = max(0.0, CLAY_CAP - clay.stock)
+            if t_cl > room:
+                log.warning("склад глинистой руды: пришло %.0f т, места %.0f т — лишние %.0f т не приняты", t_cl, room, t_cl - room)
+                clay_overflow = True
+            clay.add(min(t_cl, room), {"cu": 100.0 * cu_cl / t_cl, "clay": q_c["clay_pct"]})
 
         # -- склад полон? (гистерезис 3 %) ------------------------------------------------------
         if coarse.stock >= COARSE_CAP:
@@ -233,9 +367,12 @@ def main():
                 item[0] -= dt
             arrived = [i for i in belt if i[0] <= 0]
             belt = [i for i in belt if i[0] > 0]
-            for _, tonnes, q in arrived:
-                coarse.add(tonnes, q)
-                discharged += tonnes
+            for item in arrived:
+                put = min(item[1], max(0.0, COARSE_CAP - coarse.stock))
+                coarse.add(put, item[2])
+                discharged += put
+                if item[1] > put:      # склад полон: остаток ждёт на конце ленты, руда не теряется
+                    belt.insert(0, [0.0, item[1] - put, item[2]])
 
         # -- дробилка ----------------------------------------------------------------------------
         cap_tph = crusher_capacity(bunker.q["p80"], bunker.q["hardness"])
@@ -249,7 +386,7 @@ def main():
         if crushed > 0:
             belt.append([transit_s, crushed, {k: bunker.q[k] for k in ("cu", "clay")}])
         crusher_tph = crushed / dt * 3600.0
-        accepting = crusher_state != "stopped" and bunker.stock <= BUNKER_T - TRUCK_MAX_T
+        accepting = crusher_state != "stopped" and not overflow and bunker.stock <= BUNKER_T - TRUCK_MAX_T
         belt_t = sum(i[1] for i in belt)
         if blocked:
             conveyor_state = "stopped"
@@ -280,6 +417,10 @@ def main():
         inflow_ema += a * (inflow_tph - inflow_ema)
         use_tph = feed_tph if feed_tph > 0 else PLAN_SULPH_TPH
         hours_left = coarse.stock / use_tph
+        # склад «реально убывает»: сглаженный приход меньше расхода; считаем, сколько это длится подряд
+        declining_s = declining_s + dt if feed_tph - inflow_ema > 50.0 else 0.0
+        # режим тревоги — только если дробилка не принимает руду или склад убывает дольше 15 модельных минут
+        alarm = (not accepting) or declining_s >= ALARM_DECLINE_S
         supply_stopped = crusher_state == "stopped" or (belt_t <= 0 and crusher_tph <= 0)
         if sag_maint:
             forecast, h_stop = "мельница на ремонте", None
@@ -291,6 +432,8 @@ def main():
             forecast = sim_hhmm(now + h_stop * 3600.0, now)
         else:
             forecast, h_stop = "не ожидается", None
+        if not alarm and not sag_maint:
+            forecast, h_stop = "запас в норме", None
 
         # -- фабрика глинистой руды: своя линия от склада глинистой руды ------------------------
         clay_fed = clay.take(PLAN_CLAY_TPH * dt / 3600.0)
@@ -301,7 +444,7 @@ def main():
         shift_acc["c_ore"] += clay_fed
         shift_acc["c_cu"] += cu_c
         plan_c = 100.0 * shift_acc["c_ore"] / (PLAN_CLAY_TPH * hours)
-        clay_accepting = clay.stock <= CLAY_CAP - TRUCK_MAX_T
+        clay_accepting = not clay_overflow and clay.stock <= CLAY_CAP - TRUCK_MAX_T
 
         # -- энергия (упрощённо) -----------------------------------------------------------------
         p_sag = P_SAG * feed_tph / PLAN_SULPH_TPH if sag_state == "running" else 0.0
@@ -338,7 +481,8 @@ def main():
             "volume": feature(r(coarse.stock / BULK_DENSITY, 0), "м³"),
             "hours_left": feature(r(hours_left, 2), "ч"),
             "stop_forecast": feature(forecast),
-            "stop_expected": feature(h_stop is not None and h_stop < STOP_WARN_H),
+            "stop_expected": feature(alarm and h_stop is not None and h_stop < STOP_WARN_H),
+            "alarm": feature(alarm), "declining_min": feature(r(declining_s / 60.0, 0), "мин"),
             "inflow": feature(r(inflow_ema, 1), "т/ч"), "outflow": feature(r(feed_tph, 1), "т/ч"),
             "full": feature(blocked),
             "received_total": feature(r(coarse.received, 1), "т"),
@@ -358,7 +502,7 @@ def main():
         telemetry.publish("plant-sulphide", {
             "feed_rate": feature(r(feed_tph, 1), "т/ч"), "plan_rate": feature(r(PLAN_SULPH_TPH, 0), "т/ч"),
             "feed_cu": feature(r(feed_cu, 3), "% Cu"), "feed_clay": feature(r(feed_clay, 1), "%"),
-            "plan_fulfilment": feature(r(plan_s, 1), "%"),
+            "plan_fulfilment": feature(r(plan_s, 1), "%"), "shift": feature(shift),
             "ore_shift_t": feature(r(shift_acc["s_ore"], 1), "т"),
             "cu_concentrate_shift": feature(r(shift_acc["s_cu"], 2), "т"),
             "cu_year_pace": feature(r(cu_s / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
@@ -380,6 +524,7 @@ def main():
             "feed_cu": feature(r(clay.q["cu"], 3), "% Cu"), "feed_clay": feature(r(clay.q["clay"], 1), "%"),
             "plan_fulfilment": feature(r(plan_c, 1), "%"), "ore_shift_t": feature(r(shift_acc["c_ore"], 1), "т"),
             "cu_concentrate_shift": feature(r(shift_acc["c_cu"], 2), "т"),
+            "cu_in_concentrate_total": feature(r(cu_total["c"], 2), "т Cu"),
             "cu_year_pace": feature(r(cu_c / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
             "recovery": feature(r(rec_c, 2), "%"),
             "state": feature("running" if clay_tph > 0 else "idle"),

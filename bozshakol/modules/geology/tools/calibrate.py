@@ -31,7 +31,7 @@ def main():
     model = bm.BlockModel(geometry)
     print("построение этапа 1: %.1f с, блоков %d" % (time.time() - t0, model.count))
     cal = dict(bm.CAL)
-    for it in range(6):
+    for it in range(10):
         # 1) mu, sigma: Ньютон по (cu, strip) с численным якобианом
         for _ in range(4):
             s0 = run(model, cal)
@@ -66,6 +66,8 @@ def main():
             break
     print("CAL =", {k: round(v, 5) for k, v in cal.items()})
     print("итог:", {k: round(v, 4) for k, v in s.items()})
+    print("перцентили Cu по рудным блокам: p50 %.3f p90 %.3f p99 %.3f max %.3f; максимум по модели %.3f" % (
+        s["cu_p50"], s["cu_p90"], s["cu_p99"], s["cu_max_ore"], s["cu_max_all"]))
 
 
 if __name__ == "__main__":

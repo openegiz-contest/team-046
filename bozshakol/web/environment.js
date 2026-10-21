@@ -1,56 +1,48 @@
-// Окружение общей сцены (не слои модулей): небо с градиентом и дымкой у горизонта, туман (метель),
+// Окружение общей сцены (не слои модулей): светлый фон, туман только в метель, ореолы огней,
 // хвостохранилище у фабрики, ЛЭП к подстанции, ограждение промплощадки, мачты освещения карьера.
 // Положение хвостохранилища и ЛЭП — допущение (см. data/SOURCES.md).
 //
-//   buildEnvironment(THREE, geometry, terrain, toScene, scene, models) -> { group, setBlizzard(on), update(dt) }
+//   buildEnvironment(THREE, geometry, terrain, toScene, scene, models) -> { group, setBlizzard(on), setWeather, setQuality(high), glowAt, update(dt) }
 //   models — библиотека web/models.js (ЛЭП, ограждение, мачты); без неё — простые фигуры
 
 export function buildEnvironment(THREE, geometry, terrain, toScene, scene, models) {
   const group = new THREE.Group();
   group.name = 'environment';
   const g = (x, y) => terrain.groundAt(x, y);
+  const glows = [];
   const objects = Object.fromEntries((geometry.objects || []).map((o) => [o.id, o]));
 
-  // --- небо: купол с градиентом (зенит → дымка у горизонта), туман ---------------------------
-  const skyGeo = new THREE.SphereGeometry(40000, 24, 12);
-  const skyColors = [];
-  const zenith = new THREE.Color(0xb7d4ee), horizon = new THREE.Color(0xf3f0e9);
-  const pos = skyGeo.attributes.position;
-  const tmp = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const t = Math.max(0, Math.min(1, pos.getY(i) / 40000));          // 0 у горизонта, 1 в зените
-    tmp.copy(horizon).lerp(zenith, Math.pow(t, 0.55));
-    skyColors.push(tmp.r, tmp.g, tmp.b);
-  }
-  skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
-  const sky = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
-  sky.name = 'sky';
-  group.add(sky);
-  // Туман — по дальности видимости mine.visibility: в ясную погоду (≈ 5 км) дымка только у горизонта
-  // (туман начинается за 1,4 видимости и полный на 5), в метель (300 м) — плотный туман по той же величине.
-  const FOG_CLEAR_COLOR = 0xeae6dc, FOG_BLIZZARD_COLOR = 0xdfe2e5;   // метель: светлая снежная дымка
-  scene.fog = new THREE.Fog(FOG_CLEAR_COLOR, 7000, 25000);
-  scene.background = null;
+  // --- фон и погода: макет на нейтральном светлом фоне; дымка — только в метель ----------------
+  const BG_CLEAR = new THREE.Color(0xe9edf0), BG_BLIZZARD = new THREE.Color(0xdfe3e7);
+  scene.background = BG_CLEAR.clone();
+  const FOG_CLEAR_COLOR = 0xe9edf0, FOG_BLIZZARD_COLOR = 0xdfe2e5;   // метель: светлая снежная дымка
+  scene.fog = new THREE.Fog(FOG_CLEAR_COLOR, 30000, 90000);          // в ясную погоду дымки нет
 
   // --- хвостохранилище к западу от фабрики (допущение по снимку: озеро западнее квадрата данных)
-  const tailX = -4300, tailY = 150;
+  // гладкая вода с бликом солнца, светлый пляж и насыпная дамба по контуру
+  const tailX = -4050, tailY = 250;   // внутри макета (край −5200)
   const tailLevel = g(tailX, tailY);
-  // пляж (светлый песок и ил) вокруг серо-голубой воды, снаружи — дамба
-  const beach = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0xd8cfb0 }));
-  beach.scale.set(1180, 820, 1);
+  const beach = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshLambertMaterial({ color: 0xdcd2b2 }));
+  beach.scale.set(1000, 700, 1);
   beach.rotation.x = -Math.PI / 2;
-  beach.position.copy(toScene(tailX, tailY, tailLevel + 0.6));
+  beach.position.copy(toScene(tailX, tailY, tailLevel + 3.5));
   group.add(beach);
-  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshLambertMaterial({ color: 0x8aa0aa }));   // серо-голубая вода
-  pond.scale.set(1050, 700, 1);
+  const water = new THREE.MeshStandardMaterial({ color: 0x7fa3b4, roughness: 0.12, metalness: 0.0, flatShading: false });
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(1, 64), water);
+  pond.scale.set(880, 600, 1);
   pond.rotation.x = -Math.PI / 2;
-  pond.position.copy(toScene(tailX, tailY, tailLevel + 0.9));
+  pond.position.copy(toScene(tailX, tailY, tailLevel + 5));
   pond.name = 'tailings-pond';
   group.add(pond);
-  const dam = new THREE.Mesh(new THREE.RingGeometry(1, 1.06, 48), new THREE.MeshLambertMaterial({ color: 0x8f8068, side: THREE.DoubleSide }));
-  dam.scale.set(1180, 820, 1);
-  dam.rotation.x = -Math.PI / 2;
-  dam.position.copy(toScene(tailX, tailY, tailLevel + 1.2));
+  // дамба — насыпь-кольцо трапециевидного сечения
+  const damShape = new THREE.Shape();
+  damShape.moveTo(0, 0); damShape.lineTo(28, 0); damShape.lineTo(20, 7); damShape.lineTo(8, 7); damShape.closePath();
+  const damPts = [];
+  for (let i = 0; i <= 72; i++) { const t = i / 72 * Math.PI * 2; damPts.push(new THREE.Vector3(1000 * Math.cos(t), 0, 700 * Math.sin(t))); }
+  const damGeo = new THREE.ExtrudeGeometry(damShape, { steps: 72, bevelEnabled: false, extrudePath: new THREE.CatmullRomCurve3(damPts, true) });
+  const dam = new THREE.Mesh(damGeo, new THREE.MeshLambertMaterial({ color: 0x9c8a6c, flatShading: true }));
+  dam.position.copy(toScene(tailX, tailY, tailLevel));
+  dam.name = 'tailings-dam';
   group.add(dam);
 
   // --- ЛЭП: от края карты к подстанции и от подстанции к фабрике ----------------------------
@@ -87,7 +79,7 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
       group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), wireMat));
     }
   }
-  powerLine([-4950, -3200], [sub[0], sub[1]], 220);
+  powerLine([-5150, -2950], [sub[0], sub[1]], 220);   // от края макета
   powerLine([sub[0], sub[1]], [plant[0] + 160, plant[1] - 60], 100);
 
   // --- ограждение промплощадки фабрики ----------------------------------------------------------
@@ -136,9 +128,20 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
     }
     mast.position.copy(toScene(x, y, base));
     group.add(mast);
+    glowAt(mast.position.clone().add(new THREE.Vector3(0, 30 + 2, 0)), 0xfff1c4, 70);
   }
 
   scene.add(group);
+
+  // ореол — спрайт с аддитивным смешиванием (огни мачт); видимость управляется качеством
+  function glowAt(position, color, size) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(THREE), color, blending: THREE.AdditiveBlending,
+      transparent: true, depthWrite: false, fog: true }));
+    sp.position.copy(position); sp.scale.set(size, size, 1); sp.userData.glow = true;
+    group.add(sp);
+    glows.push(sp);
+    return sp;
+  }
 
   function setWeather({ blizzard = false, visibility = 5000 } = {}) {
     const vis = Math.max(100, Number(visibility) || 5000);
@@ -149,15 +152,24 @@ export function buildEnvironment(THREE, geometry, terrain, toScene, scene, model
     const fogVis = on ? Math.max(vis, 1000) : vis;
     scene.fog.near = on ? fogVis * 0.4 : fogVis * 1.4;
     scene.fog.far = fogVis * 5;
-    const zen = on ? new THREE.Color(0xc9d0d6) : zenith, hor = on ? new THREE.Color(0xd5d8dc) : horizon;
-    const c = skyGeo.attributes.color;
-    for (let i = 0; i < pos.count; i++) {
-      const t = Math.max(0, Math.min(1, pos.getY(i) / 40000));
-      tmp.copy(hor).lerp(zen, Math.pow(t, 0.55));
-      c.setXYZ(i, tmp.r, tmp.g, tmp.b);
-    }
-    c.needsUpdate = true;
+    scene.background.copy(on ? BG_BLIZZARD : BG_CLEAR);
+    if (!on) { scene.fog.near = 30000; scene.fog.far = 90000; }   // ясно — без дымки
   }
   function setBlizzard(on) { setWeather({ blizzard: on, visibility: on ? 300 : 5000 }); }
-  return { group, setBlizzard, setWeather, update() {} };
+  function setQuality(high) { for (const sp of glows) sp.visible = !!high; }
+  return { group, setBlizzard, setWeather, setQuality, glowAt, update() {} };
+}
+
+// Радиальная текстура ореола (рисуется кодом, 64 × 64): общая для всех огней сцены
+let _glowTex = null;
+export function glowTexture(THREE) {
+  if (_glowTex) return _glowTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+  gr.addColorStop(0.6, 'rgba(255,255,255,0.12)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  _glowTex = new THREE.CanvasTexture(c);
+  return _glowTex;
 }

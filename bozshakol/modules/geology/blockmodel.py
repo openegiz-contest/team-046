@@ -21,12 +21,12 @@ WASTE, CLAY, SULPHIDE = 0, 1, 2
 ORE_NAME = {WASTE: "waste", CLAY: "clay", SULPHIDE: "sulphide"}
 DENSITY = {WASTE: 2.65, CLAY: 2.2, SULPHIDE: 2.7}            # т/м³
 DESTINATION = {WASTE: "dump-waste-1", CLAY: "stockpile-clay", SULPHIDE: "crusher-01"}
-HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 12.0}       # ед. Протодьяконова f
-HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (10.0, 14.0)}
+HARD_CENTER = {WASTE: 14.0, CLAY: 4.5, SULPHIDE: 11.0}       # ед. Протодьяконова f
+HARD_RANGE = {WASTE: (12.0, 16.0), CLAY: (3.0, 6.0), SULPHIDE: (9.0, 13.0)}
 
 # Тренды в «сигмах» логарифма содержания: центр залежи богаче края, с глубиной богаче;
 # у забоев из geometry.json — локальные аномалии (руда у рудных забоев, вскрыша у вскрышных).
-BUMP_AMP = {"sulphide": 1.4, "clay": 0.2, "waste": -2.4}
+BUMP_AMP = {"sulphide": 0.0, "clay": -0.3, "waste": -2.4}
 BUMP_SIGMA_H = 450.0     # м
 BUMP_SIGMA_Z = 45.0      # м
 CLAY_ZONE_SIGMA_H = 250.0
@@ -35,12 +35,20 @@ CLAY_ZONE_AMP = 50.0     # % глины в центре зоны глиниза�
 CLAY_BASE = 5.0          # % глины в глубине залежи
 CLAY_NOISE = 2.5
 CLAY_WEATHER_DEPTH = 60.0  # м, на какой глубине выветривание затухает в e раз
+# Сжатие верхнего хвоста распределения меди: выше CU_SOFT содержание плавно прижимается к CU_MAX
+# (богатые «гнёзда» в порфировых рудах редки и ограничены), максимум по модели < CU_MAX.
+CU_SOFT = 0.45           # % Cu, с этого значения начинается сжатие
+CU_MAX = 1.0             # % Cu, предел
+# Выветрелая глинистая часть залежи обеднена: медь частично вынесена. Множитель на содержание Cu
+# падает линейно от 1,0 при нулевой глине до 1 − CLAY_CU_LOSS при глине CLAY_CU_FULL % и выше.
+CLAY_CU_LOSS = 0.4
+CLAY_CU_FULL = 60.0
 AU_PER_CU = 0.30         # г/т на 1 % Cu (порфировое Cu-Au: золото следует за медью)
 AU_NOISE = 0.03
 
 # Калибровка (tools/calibrate.py). Среднее по рудным блокам Cu 0,39 %, Au 0,19 г/т,
 # глинистая руда 17,5 % рудного тоннажа, вскрыша/руда 0,67 т/т.
-CAL = {"mu": -1.32964, "sigma": 0.4334, "clay_surf": 47.79396, "c_au": 0.07291}
+CAL = {"mu": -0.99487, "sigma": 0.52098, "clay_surf": 51.51512, "c_au": 0.07304}
 
 
 class _Noise:
@@ -220,11 +228,15 @@ class BlockModel:
         mu, sigma, surf, c_au = (self.cal[k] for k in ("mu", "sigma", "clay_surf", "c_au"))
         cu, au, clay, hard, dens, typ = self.cu, self.au, self.clay, self.hard, self.dens, self.typ
         for i in range(self.count):
-            c = min(3.0, max(0.005, math.exp(mu + sigma * self.zc[i])))
-            g = max(0.01, AU_PER_CU * c + c_au + AU_NOISE * self.z_au[i])
+            c = math.exp(mu + sigma * self.zc[i])
+            if c > CU_SOFT:
+                span = CU_MAX - CU_SOFT
+                c = CU_SOFT + span * (1.0 - math.exp(-(c - CU_SOFT) / span))
             cl = CLAY_BASE + CLAY_NOISE * self.zcl[i] + surf * math.exp(-self.depth[i] / CLAY_WEATHER_DEPTH) \
                 + CLAY_ZONE_AMP * self.zone[i]
             cl = min(90.0, max(0.5, cl))
+            c = max(0.005, c * (1.0 - CLAY_CU_LOSS * min(1.0, cl / CLAY_CU_FULL)))   # глина → беднее
+            g = max(0.01, AU_PER_CU * c + c_au + AU_NOISE * self.z_au[i])
             t = WASTE if c < CUTOFF_CU else (CLAY if cl >= CLAY_LIMIT else SULPHIDE)
             lo, hi = HARD_RANGE[t]
             cu[i], au[i], clay[i], typ[i] = c, g, cl, t
@@ -235,6 +247,10 @@ class BlockModel:
         """Освободить поля этапа 1: сервису после калибровки они не нужны (экономия памяти)."""
         for name in ("zc", "zcl", "z_au", "z_h", "zone", "depth"):
             setattr(self, name, None)
+
+    def kind_of(self, i):
+        """Тип блока строкой: waste / clay / sulphide."""
+        return ORE_NAME[self.typ[i]]
 
     def tonnes(self, i):
         return self.block_vol * self.dens[i]
@@ -252,50 +268,155 @@ class BlockModel:
             au_t += self.au[i] * t
             if self.typ[i] == CLAY:
                 t_clay += t
+        ore_cu = sorted(self.cu[i] for i in range(self.count) if self.typ[i] != WASTE)
+        pct = lambda q: ore_cu[min(len(ore_cu) - 1, int(q / 100.0 * len(ore_cu)))]
         return {
+            "cu_p50": pct(50), "cu_p90": pct(90), "cu_p99": pct(99), "cu_max_ore": ore_cu[-1], "cu_max_all": max(self.cu),
             "blocks": self.count, "ore_mt": t_ore / 1e6, "waste_mt": t_waste / 1e6,
             "cu": cu_t / t_ore, "au": au_t / t_ore, "clay_share": t_clay / t_ore, "strip": t_waste / t_ore,
         }
 
 
-class Panel:
-    """Цепочка соседних блоков одного уступа: полосами по оси X, змейкой, начиная у забоя."""
+ROLE_TYPES = {"sulphide": SULPHIDE, "clay": CLAY, "waste": WASTE}
+MATCH_OK = 0.8           # доля тоннажа нужного типа в панели, при которой панель считается подходящей роли забоя
+MATCH_MIN = 0.5          # ниже — роль не выполнена (role_mismatch)
+ALONG_W = 4.0            # вдоль уступа блоки «дешевле» поперёк в 4 раза: панель вытянута по простиранию
+POOL_ALONG_M = 3000.0    # как далеко вдоль уступа ищем блоки панели, м
+POOL_ACROSS_M = 250.0    # как далеко поперёк (вглубь и наружу) ищем блоки панели, м
 
-    def __init__(self, model, level, x, y, target_t, claimed):
+
+class Panel:
+    """Панель забоя: упорядоченная цепочка блоков одного уступа вдоль фронта (простирания) уступа."""
+
+    def __init__(self, model, level, blocks, share=1.0):
         self.model, self.level = model, level
-        self.blocks = array("i")
+        self.blocks = array("i", blocks)
         self.cum = array("d")      # тоннаж до блока i (накопительно, без него)
-        rows, r0 = model.rows[level], model.row_index[level]
-        start = model.locate(level, x, y)
-        sx, sy, _ = model.center(level, start)
-        iy_start = math.floor(sy / BLOCK_XY)
-        direction = 1 if sx <= 0 else -1          # сначала к центру карьера
-        order = list(range(iy_start, rows[-1][0] + 1)) + list(range(iy_start - 1, r0 - 1, -1))
-        total, first = 0.0, True
-        for iy in order:
-            _, ix0, ix1, off = rows[iy - r0]
-            if ix1 < ix0:
+        total = 0.0
+        for idx in self.blocks:
+            self.cum.append(total)
+            total += model.tonnes(idx)
+        self.total = total
+        self.match = share         # доля тоннажа панели, тип которого совпадает с ролью забоя
+        self.mismatch = share < MATCH_MIN
+
+
+def _select(model, level, want, x, y, target_t, claimed):
+    """Подбирает блоки панели на уступе level вокруг якоря (x, y): вытянуто вдоль контура уступа.
+
+    Предпочтение — блокам нужного типа (want), ближайшим к якорю; расстояние вдоль контура в ALONG_W раз «дешевле»,
+    чем поперёк, поэтому панель идёт по простиранию. Если блоков нужного типа не хватает, добираются ближайшие любые."""
+    a, b = model.level_axes(level)
+    u0, v0 = x / a, y / b
+    r0 = max(0.05, math.hypot(u0, v0))
+    th0 = math.atan2(v0, u0)
+    grad = math.sqrt((math.cos(th0) / a) ** 2 + (math.sin(th0) / b) ** 2)      # |∇r|: изменение r на метр поперёк контура
+    arc = r0 * math.sqrt((a * math.sin(th0)) ** 2 + (b * math.cos(th0)) ** 2)  # метров вдоль контура на радиан
+    pool = []
+    for iy, ix0, ix1, off in model.rows[level]:
+        cy = (iy + 0.5) * BLOCK_XY
+        for ix in range(ix0, ix1 + 1):
+            idx = off + ix - ix0
+            if (level, idx) in claimed:
                 continue
-            if first:
-                s = max(ix0, min(ix1, math.floor(sx / BLOCK_XY)))
-                ixs = range(s, ix1 + 1) if direction > 0 else range(s, ix0 - 1, -1)
-            else:
-                ixs = range(ix0, ix1 + 1) if direction > 0 else range(ix1, ix0 - 1, -1)
-            for ix in ixs:
-                idx = off + ix - ix0
-                if (level, idx) in claimed:
-                    continue
-                claimed.add((level, idx))
-                self.cum.append(total)
-                self.blocks.append(idx)
-                total += model.tonnes(idx)
-                if total >= target_t:
-                    break
-            direction, first = -direction, False
+            u, v = ((ix + 0.5) * BLOCK_XY) / a, cy / b
+            dth = (math.atan2(v, u) - th0 + math.pi) % (2.0 * math.pi) - math.pi
+            ds = dth * arc
+            dn = (math.hypot(u, v) - r0) / grad
+            if abs(ds) > POOL_ALONG_M or abs(dn) > POOL_ACROSS_M:
+                continue
+            pool.append((math.hypot(ds / ALONG_W, dn), idx, ds, dn))
+    pool.sort()
+    chosen, total, good = [], 0.0, 0.0
+    for take_match in (True, False):          # сначала блоки нужного типа, потом — ближайшие любые
+        for _, idx, ds, dn in pool:
             if total >= target_t:
                 break
-        self.total = total
-        self.start = (sx, sy)
+            is_match = want is None or model.typ[idx] == want
+            if is_match != take_match:
+                continue
+            chosen.append((idx, ds, dn))
+            total += model.tonnes(idx)
+            good += model.tonnes(idx) if is_match else 0.0
+        if total >= target_t:
+            break
+    if not chosen:
+        return [], 0.0
+    # порядок отработки: дорожки (ряды вдоль уступа) по возрастанию |смещения|, змейкой вдоль контура
+    tracks = {}
+    for idx, ds, dn in chosen:
+        tracks.setdefault(round(dn / BLOCK_XY), []).append((ds, idx))
+    ordered = []
+    for i, key in enumerate(sorted(tracks, key=lambda k: (abs(k), -k))):
+        ordered.extend(idx for _, idx in sorted(tracks[key], reverse=(i % 2 == 1)))
+    return ordered, (good / total if total else 0.0)
+
+
+EARLY_BLOCKS = 12         # сколько первых блоков панели (около 600 кт) учитываем отдельно при выборе панели для усреднения
+EARLY_W = 0.6            # вес среднего Cu первых блоков в оценке панели (остальное — вся панель)
+SHIFTS_M = (0.0, 400.0, -400.0, 800.0, -800.0, 1200.0, -1200.0)   # сдвиги якоря вдоль уступа при поиске панелей для усреднения
+
+
+def mean_cu(model, blocks):
+    """Среднее содержание Cu блоков, взвешенное тоннажем."""
+    t = sum(model.tonnes(i) for i in blocks)
+    return sum(model.cu[i] * model.tonnes(i) for i in blocks) / t if t > 0 else 0.0
+
+
+def _shifted(model, level, x, y, shift_m):
+    """Якорь, сдвинутый вдоль контура уступа на shift_m метров (по простиранию)."""
+    if not shift_m:
+        return x, y
+    a, b = model.level_axes(level)
+    u0, v0 = x / a, y / b
+    r0 = max(0.05, math.hypot(u0, v0))
+    th0 = math.atan2(v0, u0)
+    arc = r0 * math.sqrt((a * math.sin(th0)) ** 2 + (b * math.cos(th0)) ** 2)
+    th = th0 + shift_m / arc
+    return r0 * a * math.cos(th), r0 * b * math.sin(th)
+
+
+def build_panel(model, role, x, y, z, target_t, claimed, levels=None, desired_cu=None):
+    """Рудоконтроль: панель для забоя с ролью role (sulphide / clay / waste) на уступе точки (x, y, z) или на уступе ниже.
+
+    Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе лучшая из найденных
+    (role_mismatch, если нужного типа меньше MATCH_MIN)."""
+    want = ROLE_TYPES.get(role)
+    target_t = max(float(target_t), 1.0)
+    k0 = model.level_of(z)
+    cand = levels or [k0, min(k0 + 1, model.levels - 1)]
+    best = None
+    if desired_cu is not None:
+        # усреднение (шихтовка): из подходящих по типу панелей (на том же уступе и ниже, со сдвигами вдоль уступа)
+        # берём ту, средняя Cu которой ближе всего к нужной — победнее, если питание богаче цели, и побогаче, если беднее
+        pick = None
+        for lv in dict.fromkeys(cand):
+            for sh in SHIFTS_M:
+                ax, ay = _shifted(model, lv, x, y, sh)
+                blocks, share = _select(model, lv, want, ax, ay, target_t, claimed)
+                if not blocks or share < MATCH_OK:
+                    continue
+                # первые блоки панели отрабатываются первыми, поэтому в оценке они весят больше, чем вся панель
+                err = abs(EARLY_W * mean_cu(model, blocks[:EARLY_BLOCKS]) + (1.0 - EARLY_W) * mean_cu(model, blocks) - desired_cu)
+                if pick is None or err < pick[0]:
+                    pick = (err, lv, blocks, share)
+        if pick is not None:
+            best = (pick[1], pick[2], pick[3])
+    if best is None:
+      for lv in dict.fromkeys(cand):
+        blocks, share = _select(model, lv, want, x, y, target_t, claimed)
+        if not blocks:
+            continue
+        if best is None or share > best[2] + 0.02:
+            best = (lv, blocks, share)
+        if share >= MATCH_OK:
+            break
+    if best is None:
+        return None
+    lv, blocks, share = best
+    for idx in blocks:
+        claimed.add((lv, idx))
+    return Panel(model, lv, blocks, share)
 
 
 def mixed(model, panel, extracted):

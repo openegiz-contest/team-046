@@ -1,10 +1,10 @@
 // Рельеф и земля вокруг карьера Бозшаколь.
 //
-// Высоты — Copernicus DEM GLO-30 (bozshakol/data/terrain, квадрат 6 × 6 км); дальше, до 10 × 10 км,
-// рельеф плавно переходит в стилизованную степь, за ней — ровная степь до горизонта. Материал свой:
-// цвета вершин (сухая трава по высоте и уклону, грунтовые площадки у объектов, накатанные дороги),
-// затенение — обычный свет сцены. Спутниковый снимок Sentinel-2 — отдельный слой-наложение,
-// включается переключателем «Снимок» (setImagery). Карьер — модель уступов (pit.js), здесь он
+// Высоты — Copernicus DEM GLO-30 (bozshakol/data/terrain, квадрат 6 × 6 км); за его пределами —
+// стилизованная степь. Земля — макет участка ≈ 8 × 5,6 км на подставке: плоские грани с чётким светом,
+// спокойные тона степи с резкими границами пятен, ровные площадки у объектов, по краям срез со слоями
+// грунта, под макетом — подставка и сетка. Спутниковый снимок Sentinel-2 — отдельный слой-наложение,
+// включается кнопкой «Карта местности» (setImagery). Карьер — модель уступов (pit.js), здесь он
 // только вырезан в сетке земли.
 //
 // Интерфейс (см. contract/README.md, раздел 9):
@@ -15,20 +15,21 @@
 //                        внутри карьера — бермы модели уступов,
 //     groundAt(x, y)   — то же, что heightAt (имя для слоёв: «высота земли со всеми правками»),
 //     buildGround(scene, { toScene }) -> group с методом group.setImagery(on),
-//     attribution: { dem, image }
+//     attribution: { dem, image }, bounds: { minX, maxX, minY, maxY } — границы макета
 //   }
 // Все координаты — рудника (м): X — вдоль длинной оси карьера (≈ восток), Y ≈ север, Z — высота
 // относительно борта карьера. В сцену переводит toScene(x, y, z) = (x, z·VZ, −y).
 
 const TERRAIN_URL = './terrain/';
-const AREA_HALF = 5000;                 // земля 10 × 10 км
-const GROUND_SEGMENTS = 112;            // 112² × 2 ≈ 25 тыс. треугольников
+// Макет: прямоугольный участок вокруг рудника (карьер, дробилка, фабрики, хвостохранилище, отвал), м
+const BOUNDS = { minX: -5200, maxX: 3000, minY: -3000, maxY: 2600 };
+const AREA_HALF = 5200;                 // для обратной совместимости (areaHalf): наибольшая полуширина
+const CELL = 60;                        // м: шаг сетки макета (≈ 25 тыс. плоских граней)
 const DEM_FADE = 500;                   // м: ширина полосы, где реальный рельеф переходит в степь
 const ROAD_HALF_WIDTH = 14;             // м: в этой полосе высота = профиль дороги, цвет — накатанный грунт
 const ROAD_SHOULDER = 40;               // м: обочина, плавный переход высоты и цвета
 const ROAD_BLEND = 160;                 // м: дальше рельеф свой
 const PAD_BLEND = 60;                   // м: откос выровненной площадки
-const OUTER_FADE = 900;                 // м: у края земли 10 × 10 км высота сходит к уровню дальней степи
 
 export async function loadTerrain(THREE, geometry) {
   const pit = pitModel(geometry);
@@ -72,10 +73,7 @@ export async function loadTerrain(THREE, geometry) {
     if (!meta || d <= -DEM_FADE) h = steppe(x, y);
     else if (d >= DEM_FADE) h = demRaw(x, y);
     else { const w = (d + DEM_FADE) / (2 * DEM_FADE); h = demRaw(x, y) * w + steppe(x, y) * (1 - w); }
-    // у края земли — плавно к уровню дальней ровной степи (без ступеньки на горизонте)
-    const e = AREA_HALF - Math.max(Math.abs(x), Math.abs(y));
-    if (e < OUTER_FADE) { const w = Math.max(0, e / OUTER_FADE); h = h * w + (farLevel - 2) * (1 - w); }
-    return h;
+    return h;                                              // край макета — срез, рельеф до самого края
   }
   function padAt(x, y) {
     let best = null;
@@ -108,19 +106,12 @@ export async function loadTerrain(THREE, geometry) {
     }
     return h;
   }
+  // ровная чаша хвостохранилища (окружение сцены, environment.js) — тоже выровненная площадка
+  pads.push({ id: 'tailings', cx: -4050, cy: 250, level: 0,
+    distance(px, py) { return (Math.hypot((px + 4050) / 1000, (py - 250) / 700) - 1) * 700; } });
   for (const p of pads) p.level = demAt(p.cx, p.cy);        // уровень площадки — рельеф в её центре
 
-  // --- цвет земли ---------------------------------------------------------------------------
-  // Степь — пятна сухой травы разных оттенков (жёлто-зелёные, соломенные, бурые) двух масштабов;
-  // вокруг объектов — утоптанный тёмный грунт; дороги — светлое полотно с тёмной обочиной; отвалы — серые.
-  const C = {
-    grassLow: new THREE.Color(0x9c9a5a), grassHigh: new THREE.Color(0xd0bf7c),
-    grassGreen: new THREE.Color(0x8a9a52), grassBrown: new THREE.Color(0x9c7d50), grassStraw: new THREE.Color(0xdcc98a),
-    soil: new THREE.Color(0x6e5e44), dumpSoil: new THREE.Color(0x8f8d87),
-    road: new THREE.Color(0xd4c8a8), shoulder: new THREE.Color(0x7e6d52),
-    pitGround: new THREE.Color(0x8d8068), far: new THREE.Color(0xc2b57a),
-  };
-  const tmp = new THREE.Color();
+  // --- шум для пятен степи ----------------------------------------------------------------------
   function hash(x, y) {                                      // детерминированный шум 0..1
     const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
     return s - Math.floor(s);
@@ -132,90 +123,143 @@ export async function loadTerrain(THREE, geometry) {
     const a = hash(x0, y0), b = hash(x0 + 1, y0), c = hash(x0, y0 + 1), d = hash(x0 + 1, y0 + 1);
     return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
   }
-  function colorAt(x, y, h, out) {
-    const t = Math.min(1, Math.max(0, (h - (farLevel - 15)) / 45));          // низины темнее и зеленее
-    out.copy(C.grassLow).lerp(C.grassHigh, t);
-    const n1 = smoothNoise(x, y, 520), n2 = smoothNoise(x + 3000, y - 2000, 170);
-    if (n1 > 0.55) out.lerp(C.grassBrown, (n1 - 0.55) * 1.4);                 // бурые пятна
-    else if (n1 < 0.4) out.lerp(C.grassGreen, (0.4 - n1) * 1.2);               // жёлто-зелёные пятна
-    out.lerp(C.grassStraw, (n2 - 0.5) * 0.5);                                   // мелкие соломенные пятна
-    const slope = Math.hypot(demAt(x + 25, y) - demAt(x - 25, y), demAt(x, y + 25) - demAt(x, y - 25)) / 50;
-    out.multiplyScalar(1 - Math.min(0.22, slope * 1.4));                      // склоны чуть темнее
-    const pad = padAt(x, y);
-    if (pad) out.lerp(pad.dump ? C.dumpSoil : C.soil, pad.d <= 0 ? 0.92 : 0.92 * (1 - pad.d / PAD_BLEND));
-    // у края земли цвет сходит к цвету дальней степи — граница сетки не видна
-    const e = AREA_HALF - Math.max(Math.abs(x), Math.abs(y));
-    if (e < OUTER_FADE) out.lerp(C.far, 1 - Math.max(0, e / OUTER_FADE));
-    const road = roadAt(x, y);
-    if (road && road.d < ROAD_SHOULDER + 24) {
-      if (road.d <= ROAD_HALF_WIDTH) out.lerp(C.road, 0.95);                 // полотно
-      else out.lerp(C.shoulder, 0.75 * Math.max(0, 1 - (road.d - ROAD_HALF_WIDTH) / (ROAD_SHOULDER + 24 - ROAD_HALF_WIDTH)));   // обочина
-    }
-    return out;
-  }
 
-  // --- сетка земли ----------------------------------------------------------------------------
+  // --- макет местности ------------------------------------------------------------------------
+  // Участок вокруг рудника как макет на подставке: поверхность плоскими гранями (каждый треугольник —
+  // свой цвет и своя нормаль, чёткий свет), спокойная палитра степи с резкими границами пятен,
+  // ровные утрамбованные площадки; по краям — срез со слоями грунта, под макетом — подставка.
+  const STEPPE = [new THREE.Color(0xcbbf8a), new THREE.Color(0xd5c895), new THREE.Color(0xdfd3a9), new THREE.Color(0xc9b388)];
+  const PAD_SOIL = new THREE.Color(0xd0bd96), DUMP_SOIL = new THREE.Color(0xb3aea4), PIT_GROUND = new THREE.Color(0x9a8a70);
+  function faceColor(x, y, out) {
+    if (pit.inside(x, y)) return out.copy(PIT_GROUND);
+    const pad = padAt(x, y);
+    if (pad && pad.d <= 6) return out.copy(pad.dump ? DUMP_SOIL : PAD_SOIL);
+    const v = 0.7 * smoothNoise(x, y, 1700) + 0.3 * smoothNoise(x + 3000, y - 2000, 650);
+    const tone = v < 0.36 ? 0 : v < 0.55 ? 1 : v < 0.68 ? 2 : 3;
+    out.copy(STEPPE[tone]);
+    return out.multiplyScalar(0.985 + 0.03 * hash(Math.round(x / 7), Math.round(y / 7)));   // лёгкая игра граней
+  }
+  function surfaceZ(x, y) {
+    return pit.inside(x, y) ? pit.benchHeight(x, y) - 30 : heightAt(x, y);   // под моделью уступов — на 30 м ниже берм
+  }
+  const STRATA = [                          // слои грунта на срезе (сверху вниз): цвет, нижняя граница (м)
+    { color: new THREE.Color(0x6a4f36), bottom: (top) => top - 9 },              // почва
+    { color: new THREE.Color(0xcfa96f), bottom: () => farLevel - 55 },          // лёсс, суглинок
+    { color: new THREE.Color(0xb27a4f), bottom: () => farLevel - 130 },         // глины
+    { color: new THREE.Color(0x9a8a78), bottom: () => baseZ + 40 },             // коренные породы
+    { color: new THREE.Color(0x7d7369), bottom: () => baseZ },                  // плотные коренные породы
+  ];
+  const baseZ = -pit.depth - 60;           // основание макета — ниже дна карьера
+
   function buildGround(scene, opts = {}) {
     const ts = opts.toScene || ((x, y, z) => new THREE.Vector3(x, z, -y));
     const group = new THREE.Group();
     group.name = 'terrain';
-    const seg = GROUND_SEGMENTS, size = 2 * AREA_HALF;
-    const count = (seg + 1) * (seg + 1);
-    const pos = new Float32Array(count * 3), col = new Float32Array(count * 3), uv = new Float32Array(count * 2);
-    const idx = [];
-    let k = 0, c = 0, u = 0;
-    for (let j = 0; j <= seg; j++) {
-      const y = -AREA_HALF + size * j / seg;
-      for (let i = 0; i <= seg; i++) {
-        const x = -AREA_HALF + size * i / seg;
-        let h, color;
-        if (pit.inside(x, y)) {                              // грубый карьер под моделью уступов: на 30 м ниже берм,
-          h = pit.benchHeight(x, y) - 30;                      // чтобы треугольники сетки не прорезали стенки
-          color = tmp.copy(C.pitGround);
-        } else {
-          h = heightAt(x, y);
-          color = colorAt(x, y, h, tmp);
-        }
-        const p = ts(x, y, h);
-        pos[k++] = p.x; pos[k++] = p.y; pos[k++] = p.z;
-        col[c++] = color.r; col[c++] = color.g; col[c++] = color.b;
-        uv[u++] = (x + half) / (2 * half); uv[u++] = (y + half) / (2 * half);
-      }
+    const { minX, maxX, minY, maxY } = BOUNDS;
+    const nx = Math.round((maxX - minX) / CELL), ny = Math.round((maxY - minY) / CELL);
+    // высоты в узлах сетки
+    const H = new Float32Array((nx + 1) * (ny + 1));
+    for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) H[j * (nx + 1) + i] = surfaceZ(minX + i * CELL, minY + j * CELL);
+    const pos = new Float32Array(nx * ny * 6 * 3), col = new Float32Array(nx * ny * 6 * 3);
+    let k = 0;
+    const c = new THREE.Color();
+    function vert(i, j) {
+      const p = ts(minX + i * CELL, minY + j * CELL, H[j * (nx + 1) + i]);
+      pos[k] = p.x; pos[k + 1] = p.y; pos[k + 2] = p.z;
+      col[k] = c.r; col[k + 1] = c.g; col[k + 2] = c.b; k += 3;
     }
-    for (let j = 0; j < seg; j++) {
-      for (let i = 0; i < seg; i++) {
-        const a = j * (seg + 1) + i, b = a + 1, cc = a + seg + 1, d = cc + 1;
-        idx.push(a, b, cc, b, d, cc);
+    // треугольники, задевающие карьер, не рисуем: его закрывают модель уступов и пояс бровки (без «зубьев» по кромке)
+    const nearPit = new Uint8Array((nx + 1) * (ny + 1));
+    for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) nearPit[j * (nx + 1) + i] = pit.inside(minX + i * CELL, minY + j * CELL, 1.0) ? 1 : 0;
+    const np = (i, j) => nearPit[j * (nx + 1) + i];
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      // два треугольника, у каждого свой цвет по центру (резкие границы пятен)
+      if (!(np(i, j) || np(i + 1, j) || np(i, j + 1))) {
+        faceColor(minX + (i + 0.33) * CELL, minY + (j + 0.33) * CELL, c); vert(i, j); vert(i + 1, j); vert(i, j + 1);
+      }
+      if (!(np(i + 1, j) || np(i + 1, j + 1) || np(i, j + 1))) {
+        faceColor(minX + (i + 0.67) * CELL, minY + (j + 0.67) * CELL, c); vert(i + 1, j); vert(i + 1, j + 1); vert(i, j + 1);
       }
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos.subarray(0, k), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col.subarray(0, k), 3));
+    geo.computeVertexNormals();                           // вершины не общие — нормали граней (плоские)
     const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
     ground.name = 'ground';
+    ground.receiveShadow = true;
     group.add(ground);
 
-    // степь до горизонта: ровная плоскость с квадратным отверстием под сетку земли
-    const farShape = new THREE.Shape();
-    farShape.moveTo(-30000, -30000); farShape.lineTo(30000, -30000); farShape.lineTo(30000, 30000); farShape.lineTo(-30000, 30000); farShape.closePath();
-    const hole = new THREE.Path();
-    hole.moveTo(-AREA_HALF, -AREA_HALF); hole.lineTo(AREA_HALF, -AREA_HALF); hole.lineTo(AREA_HALF, AREA_HALF); hole.lineTo(-AREA_HALF, AREA_HALF); hole.closePath();
-    farShape.holes.push(hole);
-    const farMesh = new THREE.Mesh(new THREE.ShapeGeometry(farShape, 1), new THREE.MeshLambertMaterial({ color: C.far, side: THREE.DoubleSide }));
-    farMesh.rotation.x = -Math.PI / 2;   // Y фигуры (север) → −Z сцены
-    farMesh.position.y = ts(0, 0, farLevel - 2).y;
-    farMesh.name = 'steppe-far';
-    group.add(farMesh);
+    // пояс бровки вокруг карьера: ровная утрамбованная полоса от кромки уступов до степи
+    {
+      const SEG = 160, out = CELL * 1.7, cp = [], cc = [], rimCol = new THREE.Color(0xcbb68e);
+      const ring = (t, extra) => [(pit.a + extra) * Math.cos(t), (pit.b + extra) * Math.sin(t)];
+      for (let n = 0; n < SEG; n++) {
+        const t0 = n / SEG * Math.PI * 2, t1 = (n + 1) / SEG * Math.PI * 2;
+        const [ax, ay] = ring(t0, 0), [bx, by] = ring(t1, 0), [cx2, cy2] = ring(t0, out), [dx, dy] = ring(t1, out);
+        const P = (x, y, z) => ts(x, y, z);
+        const a1 = P(ax, ay, demAt(ax, ay)), b1 = P(bx, by, demAt(bx, by));
+        const c1 = P(cx2, cy2, heightAt(cx2, cy2)), d1 = P(dx, dy, heightAt(dx, dy));
+        for (const p of [a1, c1, b1, b1, c1, d1]) { cp.push(p.x, p.y + 0.4, p.z); cc.push(rimCol.r, rimCol.g, rimCol.b); }
+      }
+      const cg = new THREE.BufferGeometry();
+      cg.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+      cg.setAttribute('color', new THREE.Float32BufferAttribute(cc, 3));
+      cg.computeVertexNormals();
+      const collar = new THREE.Mesh(cg, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+      collar.name = 'pit-collar'; collar.receiveShadow = true;
+      group.add(collar);
+    }
 
-    // слой «Снимок»: та же земля внутри квадрата данных с текстурой Sentinel-2, чуть выше, по умолчанию скрыт
-    const overlay = buildImagery(THREE, ts, meta, half, pit, heightAt);
+    // срез по краям: слои грунта
+    const sp = [], sc = [];
+    function quad(a, b, ztopA, ztopB, zbotA, zbotB, color) {
+      const p1 = ts(a[0], a[1], ztopA), p2 = ts(b[0], b[1], ztopB), p3 = ts(a[0], a[1], zbotA), p4 = ts(b[0], b[1], zbotB);
+      for (const p of [p1, p3, p2, p2, p3, p4]) { sp.push(p.x, p.y, p.z); sc.push(color.r, color.g, color.b); }
+    }
+    function side(points) {                                  // points: [[x, y, zTop], …] вдоль края
+      for (let s = 0; s + 1 < points.length; s++) {
+        const A = points[s], B = points[s + 1];
+        let topA = A[2], topB = B[2];
+        for (const layer of STRATA) {
+          const botA = Math.min(topA, layer.bottom(A[2])), botB = Math.min(topB, layer.bottom(B[2]));
+          if (topA > botA + 0.01 || topB > botB + 0.01) quad(A, B, topA, topB, botA, botB, layer.color);
+          topA = botA; topB = botB;
+        }
+      }
+    }
+    const edgeS = [], edgeN = [], edgeW = [], edgeE = [];
+    for (let i = 0; i <= nx; i++) { edgeS.push([minX + i * CELL, minY, H[i]]); edgeN.push([maxX - i * CELL, maxY, H[ny * (nx + 1) + nx - i]]); }
+    for (let j = 0; j <= ny; j++) { edgeE.push([maxX, minY + j * CELL, H[j * (nx + 1) + nx]]); edgeW.push([minX, maxY - j * CELL, H[(ny - j) * (nx + 1)]]); }
+    side(edgeS); side(edgeE); side(edgeN); side(edgeW);
+    const sgeo = new THREE.BufferGeometry();
+    sgeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+    sgeo.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3));
+    sgeo.computeVertexNormals();
+    const skirt = new THREE.Mesh(sgeo, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    skirt.name = 'strata';
+    group.add(skirt);
+
+    // подставка и сетка на нейтральном фоне
+    const w = maxX - minX, d = maxY - minY, cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const plinthTop = ts(0, 0, baseZ).y, plinthH = 40;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(w + 160, plinthH, d + 160), new THREE.MeshLambertMaterial({ color: 0x3e4650 }));
+    plinth.position.set(cx, plinthTop - plinthH / 2, -cy);
+    plinth.name = 'plinth';
+    group.add(plinth);
+    const grid = new THREE.GridHelper(80000, 80, 0xb9c3cc, 0xd3dae0);
+    grid.position.set(cx, plinthTop - plinthH - 2, -cy);
+    grid.material.transparent = true; grid.material.opacity = 0.7; grid.material.depthWrite = false;
+    grid.name = 'grid';
+    group.add(grid);
+
+    // слой «Карта местности»: та же земля внутри квадрата данных со снимком Sentinel-2, по умолчанию скрыт
+    const overlay = buildImagery(THREE, ts, meta, half, pit, heightAt, BOUNDS);
     overlay.visible = false;
     group.add(overlay);
     group.setImagery = (on) => { overlay.visible = !!on; };
     group.imageryEnabled = () => overlay.visible;
+    group.baseY = plinthTop - plinthH;
     scene.add(group);
     return group;
   }
@@ -224,22 +268,24 @@ export async function loadTerrain(THREE, geometry) {
     dem: meta ? 'Рельеф — Copernicus DEM, карьер — модель по открытым данным. ' + meta.sources.dem.attribution + '.' : '',
     image: meta ? meta.sources.image.attribution + '.' : '',
   };
-  return { ok: !!meta, meta, pit, pads, demAt, heightAt, groundAt: heightAt, buildGround, attribution, farLevel, areaHalf: AREA_HALF };
+  return { ok: !!meta, meta, pit, pads, demAt, heightAt, groundAt: heightAt, buildGround, attribution, farLevel, areaHalf: AREA_HALF, bounds: BOUNDS };
 }
 
 // ------------------------------------------------------------------ наложение снимка (6 × 6 км)
-function buildImagery(THREE, ts, meta, half, pit, heightAt) {
+function buildImagery(THREE, ts, meta, half, pit, heightAt, bounds) {
   const group = new THREE.Group();
   group.name = 'imagery';
   if (!meta) return group;
+  // пересечение квадрата снимка с макетом
+  const x0 = Math.max(-half, bounds.minX), x1 = Math.min(half, bounds.maxX), y0 = Math.max(-half, bounds.minY), y1 = Math.min(half, bounds.maxY);
   const seg = 96, size = 2 * half;
   const pos = new Float32Array((seg + 1) * (seg + 1) * 3), uv = new Float32Array((seg + 1) * (seg + 1) * 2);
   const idx = [];
   let k = 0, u = 0;
   for (let j = 0; j <= seg; j++) {
-    const y = -half + size * j / seg;
+    const y = y0 + (y1 - y0) * j / seg;
     for (let i = 0; i <= seg; i++) {
-      const x = -half + size * i / seg;
+      const x = x0 + (x1 - x0) * i / seg;
       const z = pit.inside(x, y, 0.985) ? -(pit.depth + 40) : heightAt(x, y) + 0.6;
       const p = ts(x, y, z);
       pos[k++] = p.x; pos[k++] = p.y; pos[k++] = p.z;

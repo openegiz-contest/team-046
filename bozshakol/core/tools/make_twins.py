@@ -64,7 +64,7 @@ core[tid("scenarios")] = twin("Сценарии «что если»", "scenarios
     "road_closed": feat(False, road="road-ramp-2", owner="haulage"),
     "excavator_down": feat(False, excavator="excavator-02", owner="haulage"),
     "clay_face": feat(False, face="face-03", clay_pct=45, owner="geology"),
-    "bad_blast": feat(False, face="face-01", p80_mm=450, owner="geology"),
+    "bad_blast": feat(False, face="face-01", p80_mm=900, owner="geology"),   # обычный взрыв ≈ 450 мм, неудачный — 900
     "crusher_stop": feat(False, owner="processing"),
     "sag_maintenance": feat(False, owner="processing"),
 })

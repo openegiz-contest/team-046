@@ -9,6 +9,11 @@ server {
     alias /usr/share/nginx/core/geometry.json;
     default_type application/json;
   }
+  # схема-макет рудника (места узлов и объектов в схеме), см. core/tools/make_diorama.py
+  location = /diorama.json {
+    alias /usr/share/nginx/core/diorama.json;
+    default_type application/json;
+  }
   # Рельеф и снимок (bozshakol/data/terrain), см. data/terrain/README.md
   location /terrain/ {
     alias /usr/share/nginx/terrain/;
