@@ -75,6 +75,11 @@
      "value": 0.0,
      "unit": "тыс. т/год"
     }
+   },
+   "shift": {
+    "properties": {
+     "value": 1
+    }
    }
   }
  },
@@ -152,6 +157,12 @@
     "properties": {
      "value": 0.0,
      "unit": "тыс. т/год"
+    }
+   },
+   "cu_in_concentrate_total": {
+    "properties": {
+     "value": 0.0,
+     "unit": "т Cu"
     }
    }
   }
@@ -418,7 +429,7 @@
    },
    "stop_forecast": {
     "properties": {
-     "value": "не ожидается"
+     "value": "запас в норме"
     }
    },
    "stop_expected": {
@@ -441,6 +452,17 @@
    "full": {
     "properties": {
      "value": false
+    }
+   },
+   "alarm": {
+    "properties": {
+     "value": false
+    }
+   },
+   "declining_min": {
+    "properties": {
+     "value": 0,
+     "unit": "мин"
     }
    }
   }
