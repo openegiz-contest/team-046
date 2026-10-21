@@ -989,8 +989,8 @@ const shadowCasters = new WeakSet();
 function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
-  // «Обычное»: кадр в разрешении 0,75 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
-  renderer.setPixelRatio(high ? 1 : 0.75);
+  // «Обычное»: кадр в разрешении 0,65 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
+  renderer.setPixelRatio(high ? 1 : 0.65);
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
