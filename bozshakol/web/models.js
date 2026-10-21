@@ -30,12 +30,13 @@
 //                                         setSwing(рад, + против часовой), setBoom(t 0..1: копает → выгрузка), setState
 //   models.drill()                        буровой станок: setMast(true — мачта вертикально / false — уложена), setState
 //   models.crusher()                      гирационная дробилка: setState('running'|'idle'|'stopped' и др.)
-//   models.conveyor(points, opts)         конвейер по ломаной (точки уже в сцене): setFlow(tph, dt)
+//   models.conveyor(points, opts)         конвейер по ломаной (точки уже в сцене) на A-образных опорах, с роликоопорами:
+//                                         setFlow(tph, dt) — при потоке виден слой руды и бегут кучки (шаг ~3 м при 2500 т/ч)
 //                                         opts: { height: 3 (высота ленты над точками), step: 25 (шаг опор) }
 //   models.building(type, opts)           'main'|'thickener'|'warehouse'|'substation'|'office'; opts.size = [д, ш, в]
 //   models.stockpile(volume_m3, opts)     штабель (откос 37°) с глыбами: setVolume(v); opts.color
 //   models.dump(radius, height, opts)     отвал — ступенчатые ярусы с плоскими площадками; opts.tiers (по умолчанию 3)
-//   models.lightMast(h)                   осветительная мачта с прожекторной площадкой
+//   models.lightMast(h)                   решётчатая осветительная мачта: площадка с перилами и рама 2×4 прожектора (+Z)
 //   models.powerLine(points, opts)        ЛЭП по точкам сцены: опоры + провода с провисом; opts.height (20)
 //   models.fence(points, opts)            ограждение по точкам сцены: столбики + проволока; opts.step, opts.height
 //   models.fuelStation()                  топливозаправочный пункт: резервуары, навес, колонки, будка
@@ -355,7 +356,7 @@ export function createModels(THREE, colors) {
   }
 
   // ================================================================ САМОСВАЛ (Cat 793 / 795)
-  // колесо: шина с шахматным протектором (вершины кромок беговой дорожки утоплены через одну), диск, ступица
+  // колесо: шина с шахматным протектором и грунтозацепами «ёлочкой», диск с гайками, ступица (вдали — только шина и диск)
   function tyreGeo(R, TW, seg, tread) {
     return cached(`tyre${R}|${TW}|${seg}|${tread ? 1 : 0}`, () => {
       const ri = R * 0.58, rs = R * 0.92, ch = TW * 0.16;
@@ -379,16 +380,31 @@ export function createModels(THREE, colors) {
   function wheelSet(R, TW, list, far) {
     const P = new Parts();
     const ri = R * 0.58;
-    const tyre = tyreGeo(R, TW, far ? 8 : 14, !far);
+    const tyre = tyreGeo(R, TW, far ? 8 : 18, !far);
     // диск: кольцо (середина закрыта ступицей), без вырожденных треугольников у оси
     const rim = far
       ? lathe([[ri, TW / 2 - 0.2], [ri, TW / 2 - 0.04], [0.01, TW / 2 + 0.02]], 8)
       : lathe([[ri + 0.02, TW / 2 - 0.25], [ri + 0.02, TW / 2 - 0.08], [ri * 0.74, TW / 2 - 0.02], [ri * 0.3, TW / 2 + 0.05]], 12);
     const hub = lathe([[ri * 0.32, TW / 2], [ri * 0.32, TW / 2 + 0.15], [0.01, TW / 2 + 0.18]], 8);
+    // гайки ступицы и грунтозацепы протектора «ёлочкой» (рёбра на беговой дорожке, через одно — к разным бортам)
+    const nut = box(0.14, 0.14, 0.1), lug = taper(TW * 0.42, 0.34, TW * 0.36, 0.22, 0.14);
+    const NL = 16;
     for (const [x, s, withRim] of list) {
       const m = T(x, 0, 0, 0, 0, s > 0 ? -Math.PI / 2 : Math.PI / 2);    // ось колеса — X, диск наружу
       P.add(tyre, C.tyre, m);
       if (withRim) { P.add(rim, C.rim, m); if (!far) P.add(hub, C.hub, m); }
+      if (far) continue;
+      if (withRim) for (let k = 0; k < 6; k++) {
+        const a = k * Math.PI / 3, r = ri * 0.46;
+        P.add(nut, C.dark, T(x + s * (TW / 2 + 0.03), Math.sin(a) * r, Math.cos(a) * r));
+      }
+      for (let k = 0; k < NL; k++) {
+        const a = (k + 0.5) / NL * Math.PI * 2, side = k % 2 ? 1 : -1;
+        // грунтозацеп: касательно к шине, сдвинут к одному борту и чуть повёрнут (ёлочка)
+        const lm = new THREE.Matrix4().makeRotationX(-a);
+        lm.multiply(T(x + side * TW * 0.15, R - 0.035, 0, 0, side * 0.35, 0));
+        P.add(lug, 0x1f2023, lm);
+      }
     }
     return P.build();
   }
@@ -480,7 +496,8 @@ export function createModels(THREE, colors) {
       for (const sx of [-1, 1]) {
         bed.add(side, s1, T(sx * (W / 2 - 0.13), 0, 0));
         bed.add(rbox(0.42, 0.42, zf - zb, 0.1), s2, TP(sx * (W / 2 - 0.2), yT + 0.1, (zb + zf) / 2));             // верхний пояс борта
-        for (let k = 1; k <= 3; k++) bed.add(box(0.2, yT - yF + 0.25, 0.32), s2, TP(sx * (W / 2 + 0.04), (yT + yF - 0.35) / 2, zb + 1.6 + k * (zf - zb - 1.6) / 4));
+        for (let k = 1; k <= 4; k++) bed.add(rbox(0.24, yT - yF + 0.25, 0.34, 0.06), s2, TP(sx * (W / 2 + 0.05), (yT + yF - 0.35) / 2, zb + 1.6 + k * (zf - zb - 1.6) / 5));
+        bed.add(rbox(0.3, 1.1, 0.4, 0.08), s2, TP(sx * (W / 2 + 0.06), yF + 0.8, zb + 0.6));                  // кормовое ребро
         bed.add(box(0.16, 0.24, zf - zb - 1.8), s2, TP(sx * (W / 2 + 0.02), yF + 0.3, (zf + zb + 1.6) / 2));     // горизонтальное ребро
         bed.add(box(0.5, 0.45, zf - zb - 1.8), s3, TP(sx * 1.0, yF - 0.55, (zf + zb + 1.6) / 2));                // продольные балки днища
         bed.add(box(0.6, 1.0, 1.0), s3, TP(sx * 1.0, pivotY + 0.35, pivotZ));                                   // проушины оси
@@ -846,14 +863,14 @@ export function createModels(THREE, colors) {
 
   // ================================================================ ЛЕНТОЧНЫЙ КОНВЕЙЕР
   // points — массив THREE.Vector3 в сцене (уже через toScene); лента на opts.height (3 м) над точками.
-  // Вся трасса — 5 вызовов отрисовки независимо от длины: став, мостки, опоры, роликоопоры, куски руды.
+  // Вся трасса — 6 вызовов отрисовки независимо от длины: став, мостки, слой руды, опоры, роликоопоры, куски руды.
   function conveyor(points, opts) {
     opts = opts || {};
     const g = new THREE.Group();
     const S = MODEL_SIZES.conveyor;
     const lift = opts.height ?? 3, step = opts.step ?? S.support_step, BW = S.belt_width;
     const pts = points.map((p) => new THREE.Vector3(p.x, p.y + lift, p.z));
-    const main = new Parts(), walk = new Parts();
+    const main = new Parts(), walk = new Parts(), oreBed = new Parts(), oreRnd = rng(5);
     const segs = []; let total = 0;
     const c30 = Math.cos(30 * DEG), s30 = Math.sin(30 * DEG), sw = BW * 0.32;
     for (let i = 0; i + 1 < pts.length; i++) {
@@ -869,6 +886,7 @@ export function createModels(THREE, colors) {
       main.add(box(BW * 0.45, 0.06, L2), C.belt, mul(M, T(0, 0, 0)));
       for (const s of [-1, 1]) main.add(box(sw, 0.06, L2), C.belt, mul(M, T(s * (BW * 0.225 + sw / 2 * c30), sw / 2 * s30, 0, 0, 0, s * 30 * DEG)));
       main.add(box(BW * 0.85, 0.04, L2), C.belt, mul(M, T(0, -0.55, 0)));
+      oreBed.add(taper(BW * 0.62, 1, BW * 0.2, 1, 0.2), sh(1), mul(M, T(0, 0.12, 0, 0, 0, 0, 1, 1, L2)), 0.12, oreRnd);   // слой руды на ленте
       for (const s of [-1, 1]) main.add(box(0.16, 0.5, L2), C.conveyor, mul(M, T(s * (BW / 2 + 0.3), -0.2, 0)));
       // мостик обслуживания и перила (мелочи)
       walk.add(box(0.8, 0.06, L2), C.grating, mul(M, T(BW / 2 + 0.85, -0.45, 0)));
@@ -891,13 +909,19 @@ export function createModels(THREE, colors) {
     const legPos = [];
     for (const s of segs) for (let d = step / 2; d < s.len; d += step) legPos.push([s.a.clone().addScaledVector(s.dir, d), Math.atan2(s.dir.x, s.dir.z)]);
     if (legPos.length) {
-      const fr = new Parts(), lx = BW / 2 + 0.3, hLeg = Math.max(0.5, lift - 0.15);
+      // A-образная рама: стойки расходятся к низу, распорка на трети высоты, ригель под ставом
+      const fr = new Parts(), lx = BW / 2 + 0.3, hLeg = Math.max(0.5, lift - 0.15), lb = lx + Math.min(1.4, hLeg * 0.22);
       for (const s of [-1, 1]) {
-        fr.add(box(0.25, hLeg, 0.25), C.conveyor, T(s * lx, hLeg / 2, 0));
-        fr.add(box(0.6, 0.15, 0.6), C.concreteDark, T(s * lx, 0.08, 0));
+        fr.add(box(0.24, 1, 0.24), C.conveyor, BM(V(s * lb, 0.1, 0), V(s * lx, hLeg, 0)));
+        fr.add(rbox(0.8, 0.3, 0.8, 0.05), C.concreteDark, T(s * lb, 0.15, 0));
       }
-      fr.add(box(BW + 1.0, 0.25, 0.25), C.conveyor, T(0, hLeg - 0.1, 0));
-      if (hLeg > 1.2) fr.add(box(0.12, 1, 0.12), C.conveyor, BM(V(-lx, 0.3, 0), V(lx, hLeg - 0.3, 0)));
+      fr.add(rbox(BW + 1.1, 0.28, 0.3, 0.05), C.conveyor, T(0, hLeg - 0.1, 0));
+      if (hLeg > 1.2) {
+        const yb = hLeg * 0.35, xb = lb + (lx - lb) * 0.35;
+        fr.add(box(2 * xb, 0.14, 0.14), C.conveyor, T(0, yb, 0));
+        fr.add(box(0.1, 1, 0.1), C.conveyor, BM(V(-xb, yb, 0), V(0, hLeg - 0.2, 0)));
+        fr.add(box(0.1, 1, 0.1), C.conveyor, BM(V(xb, yb, 0), V(0, hLeg - 0.2, 0)));
+      }
       const legs = new THREE.InstancedMesh(fr.build(), VC(), legPos.length);
       legPos.forEach(([p, yaw], i) => {
         _m.compose(_v.set(p.x, p.y - lift - 0.3, p.z), _q.setFromAxisAngle(UP, yaw), _s.set(1, 1, 1));
@@ -912,8 +936,13 @@ export function createModels(THREE, colors) {
     for (const s of segs) for (let d = 2; d < s.len && idl.length < 5000; d += 4) idl.push([s.a.clone().addScaledVector(s.dir, d), s.q]);
     if (idl.length) {
       const ip = new Parts();
-      ip.add(box(BW + 0.5, 0.08, 0.1), C.steel, T(0, -0.14, 0));
-      for (const s of [-1, 1]) ip.add(box(0.08, 0.42, 0.1), C.steel, T(s * (BW / 2 + 0.2), 0.05, 0));
+      ip.add(box(BW + 0.5, 0.08, 0.1), C.steel, T(0, -0.26, 0));
+      for (const s of [-1, 1]) ip.add(box(0.08, 0.5, 0.1), C.steel, T(s * (BW / 2 + 0.2), -0.02, 0));
+      // три ролика желоба (средний и два наклонных) и нижний ролик обратной ветви
+      const rol = cyl(0.09, 0.09, 1, 8);
+      ip.add(rol, C.roller, T(0, -0.12, 0, 0, 0, Math.PI / 2, 1, BW * 0.42, 1));
+      for (const s of [-1, 1]) ip.add(rol, C.roller, T(s * (BW * 0.225 + sw / 2 * c30), sw / 2 * s30 - 0.12, 0, 0, 0, Math.PI / 2 + s * 30 * DEG, 1, sw * 0.95, 1));
+      ip.add(rol, C.roller, T(0, -0.66, 0, 0, 0, Math.PI / 2, 1, BW * 0.8, 1));
       ip.add(box(0.05, 1.05, 0.05), C.safety, T(BW / 2 + 1.22, 0.08, 0));                      // стойка перил мостика
       ip.add(box(0.9, 0.06, 0.06), C.steel, T(BW / 2 + 0.85, -0.5, 0));                         // кронштейн мостика
       const idlers = new THREE.InstancedMesh(ip.build(), VC(), idl.length);
@@ -923,8 +952,11 @@ export function createModels(THREE, colors) {
       idlers.userData.detail = true;
       g.add(idlers);
     }
-    // груз: «кучки» руды скользят по ленте
-    const maxN = Math.max(1, Math.min(60, Math.floor(total / 10)));
+    // груз: сплошной слой руды на ленте (виден, пока есть поток) + «кучки» руды, которые скользят по ленте
+    const oreMat = mat(C.ore);
+    const bedMesh = oreBed.p.length ? mk(g, oreBed.build(), oreMat) : null;
+    if (bedMesh) bedMesh.visible = false;
+    const maxN = Math.max(1, Math.min(300, Math.floor(total / 3)));
     const lumpGeo = cached('lump' + BW, () => {
       const P = new Parts(), rnd = rng(7);
       P.add(dod(1), sh(1), T(0, 0, 0, 0.3, 0.5, 0, BW * 0.3, 0.24, 0.62), 0.25, rnd);
@@ -932,7 +964,7 @@ export function createModels(THREE, colors) {
       P.add(dod(1), sh(1.05), T(-BW * 0.1, 0.1, -0.3, 0.2, 1.1, 0.7, 0.2, 0.15, 0.28), 0.25, rnd);
       return P.build();
     });
-    const lumps = new THREE.InstancedMesh(lumpGeo, mat(C.ore), maxN);
+    const lumps = new THREE.InstancedMesh(lumpGeo, oreMat, maxN);
     lumps.count = 0; lumps.frustumCulled = false;
     g.add(lumps);
     let offset = 0;
@@ -951,8 +983,10 @@ export function createModels(THREE, colors) {
     const api = {
       length: total,
       setFlow(tph, dt) {
-        const n = tph > 0 && total > 0 ? Math.max(1, Math.min(maxN, Math.round(tph / 300))) : 0;
+        // число кучек растёт с производительностью: при ~2500 т/ч — кучка каждые 3 м
+        const n = tph > 0 && total > 0 ? Math.max(1, Math.min(maxN, Math.round(maxN * Math.min(1, tph / 2500)))) : 0;
         lumps.count = n;
+        if (bedMesh) bedMesh.visible = n > 0;
         if (!n) return;
         offset = (offset + S.speed_mps * (dt || 0)) % total;
         const spacing = total / n;
@@ -965,7 +999,7 @@ export function createModels(THREE, colors) {
         lumps.instanceMatrix.needsUpdate = true;
       },
     };
-    g.userData.parts = { lumps, segs };
+    g.userData.parts = { lumps, segs, oreBed: bedMesh };
     return finish(g, api, { length: total, width: BW });
   }
 
@@ -1014,6 +1048,15 @@ export function createModels(THREE, colors) {
           P.add(box(6, 7, 0.15), 0x5a6068, T(gx, 3.5, w / 2 + 0.1));
           P.add(box(6.8, 0.5, 0.3), C.accent, T(gx, 7.3, w / 2 + 0.15));
         }
+        // трубопроводы вдоль длинной стены (−Z): пульпа (серый), вода (синий), воздух (жёлтый) — на кронштейнах
+        const pz = -w / 2 - 0.9, px0 = -l / 2 + 2, px1 = l * 0.15, plen = px1 - px0;
+        const pipes = [[4.2, 0.45, C.steel], [5.3, 0.32, C.accent], [6.2, 0.22, C.safety]];
+        for (const [py, pr, pc] of pipes) {
+          P.add(cyl(pr, pr, plen, 10), pc, T((px0 + px1) / 2, py, pz - (0.55 - pr), 0, 0, Math.PI / 2));
+          P.add(cyl(pr * 1.25, pr * 1.25, 0.3, 10), pc, T(px0 + 0.15, py, pz - (0.55 - pr), 0, 0, Math.PI / 2));   // фланцы
+        }
+        P.add(cyl(0.45, 0.45, 4.2, 10), C.steel, T(px1 + 0.2, 2.1, pz - 0.1));                   // опуск в землю
+        for (let x = px0 + 2; x < px1; x += 6) D.add(box(0.15, 3.0, 1.2), C.dark, T(x, 5.0, pz + 0.05));   // кронштейны
         const cxh = -l / 2 + 4, czh = -w / 2 + 4;
         P.add(cyl(1.2, 1.8, h * 1.9, 10), C.concrete, T(cxh, h * 0.95, czh));
         for (const dy of [1.2, 4.6]) P.add(cyl(1.22, 1.26, 1.4, 10), C.paintDown, T(cxh, h * 1.9 - dy, czh));
@@ -1217,22 +1260,44 @@ export function createModels(THREE, colors) {
   function lightMast(h) {
     h = h || MODEL_SIZES.lightMast.height;
     const G = cached('mast' + h, () => {
+      // решётчатая четырёхгранная мачта (сужается кверху), площадка обслуживания, рама с прожекторами
       const P = new Parts(), D = new Parts(), L = new Parts();
-      P.add(rbox(1.8, 0.8, 1.8, 0.1), C.concrete, T(0, 0.4, 0));
-      P.add(cyl(0.22, 0.42, h, 8), C.pole, T(0, h / 2, 0));
-      P.add(rbox(2.8, 0.22, 2.8, 0.05), C.steel, T(0, h, 0));
-      for (let i = 0; i < 4; i++) {
-        const yaw = i * Math.PI / 2;
-        for (const off of [-0.6, 0.6]) {
-          const x = Math.sin(yaw) * 1.25 + Math.cos(yaw) * off, z = Math.cos(yaw) * 1.25 - Math.sin(yaw) * off;
-          P.add(rbox(0.9, 0.62, 0.28, 0.05), C.dark, TY(x, h + 0.6, z, yaw, 25 * DEG));
-          L.add(box(0.76, 0.48, 0.05), sh(1), mul(TY(x, h + 0.6, z, yaw, 25 * DEG), T(0, 0, 0.16)));
+      const hb = 1.1, ht = 0.45, hw = (y) => hb + (ht - hb) * (y / h);
+      P.add(rbox(3.0, 0.8, 3.0, 0.12), C.concrete, T(0, 0.4, 0));
+      const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+      for (const [sx, sz] of corners) P.add(box(0.2, 1, 0.2), C.pole, BM(V(sx * hb, 0.6, sz * hb), V(sx * ht, h, sz * ht)));
+      const lv = Math.max(4, Math.round(h / 2.5)), dy = (h - 0.6) / lv;
+      for (let i = 0; i <= lv; i++) {
+        const y = 0.6 + i * dy, a = hw(y);
+        for (let e = 0; e < 4; e++) {
+          const [x0, z0] = corners[e], [x1, z1] = corners[(e + 1) % 4];
+          const pa = V(x0 * a, y, z0 * a), pb = V(x1 * a, y, z1 * a);
+          D.add(box(0.07, 1, 0.07), C.pole, BM(pa, pb));                                      // пояс
+          if (i < lv) {                                                                       // раскос
+            const y2 = y + dy, a2 = hw(y2), f = i % 2;
+            D.add(box(0.06, 1, 0.06), C.pole, BM(f ? pa : pb, f ? V(x1 * a2, y2, z1 * a2) : V(x0 * a2, y2, z0 * a2)));
+          }
         }
       }
+      // лестница с кольцами вдоль одной грани
+      D.add(box(0.05, h - 1.2, 0.05), C.steel, T(-0.18, h / 2 + 0.3, hb * 0.7 + 0.3));
+      D.add(box(0.05, h - 1.2, 0.05), C.steel, T(0.18, h / 2 + 0.3, hb * 0.7 + 0.3));
+      // площадка и рама прожекторов: прямоугольная решётка 2 ряда × 4 прожектора, смотрит в одну сторону (+Z)
+      P.add(rbox(3.2, 0.2, 3.2, 0.05), C.grating, T(0, h, 0));
       for (const s of [-1, 1]) {
-        D.add(box(2.8, 0.05, 0.05), C.rail, T(0, h + 1.15, s * 1.38));
-        D.add(box(0.05, 0.05, 2.8), C.rail, T(s * 1.38, h + 1.15, 0));
-        D.add(box(0.05, h - 1.0, 0.05), C.steel, T(s * 0.2, h / 2, 0.5));
+        D.add(box(3.2, 0.05, 0.05), C.rail, T(0, h + 1.05, s * 1.58));
+        D.add(box(0.05, 0.05, 3.2), C.rail, T(s * 1.58, h + 1.05, 0));
+        for (const t of [-1, 1]) D.add(box(0.05, 1.05, 0.05), C.rail, T(s * 1.58, h + 0.55, t * 1.58));
+      }
+      const fy = h + 2.6, fz = 0.9;
+      P.add(box(4.6, 0.16, 0.16), C.steel, T(0, fy - 1.25, fz));
+      P.add(box(4.6, 0.16, 0.16), C.steel, T(0, fy + 1.25, fz));
+      for (const s of [-1, 1]) P.add(box(0.16, 2.66, 0.16), C.steel, T(s * 2.3, fy, fz));
+      for (const s of [-1, 1]) P.add(box(0.14, 1, 0.14), C.steel, BM(V(s * 1.2, h + 0.1, 0.2), V(s * 1.2, fy - 1.25, fz)));
+      for (const row of [-0.62, 0.62]) for (let k = 0; k < 4; k++) {
+        const x = -1.65 + k * 1.1, M = TY(x, fy + row, fz + 0.2, 0, 18 * DEG);
+        P.add(rbox(0.95, 0.95, 0.32, 0.06), C.dark, M);
+        L.add(box(0.78, 0.78, 0.05), sh(1), mul(M, T(0, 0, 0.17)));
       }
       return { main: P.build(), detail: D.build(), lamps: L.build() };
     });
