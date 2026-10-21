@@ -952,8 +952,10 @@ function applyLighting(l) {
   hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
   hemi.intensity = night ? 0.8 : 1.35;
   sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
-  const grid = scene.getObjectByName('diorama-grid');
-  if (grid) grid.material.color.setHex(night ? 0x34476b : 0xffffff);   // сетка фона ночью — тёмно-синяя
+  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (схема и «Карта местности») ночью — тёмно-синяя
+    const grid = scene.getObjectByName(name);
+    if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
+  }
   scene.traverse((o) => {   // ореолы прожекторов ночью крупнее
     if (!o.isSprite || !o.userData.glow) return;
     if (!o.userData.baseScale) o.userData.baseScale = o.scale.x;
@@ -1421,6 +1423,17 @@ function separateDrills() {
       const k = d > 0.01 ? R / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
       if (dio) o.position.y = dio.surfaceAt(o.position.x, -o.position.z);   // на поверхность схемы в новом месте
+    }
+  }
+  // самосвал под погрузкой у увеличенного экскаватора (×1,4) — не ближе 15 единиц от его центра (без наложения на гусеницы)
+  for (const o of clickable) {
+    if (!/:truck-/.test(o.userData.thingId || '') || o.isMesh) continue;
+    for (const e of ex) {
+      const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
+      const R = 15 * markerScale / 1.12;
+      if (d >= R || d < 0.01) continue;
+      o.position.x = e.position.x + dx * R / d; o.position.z = e.position.z + dz * R / d;
+      if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
     }
   }
 }
