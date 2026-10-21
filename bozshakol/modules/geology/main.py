@@ -435,6 +435,7 @@ def main():
                 face.absorb(watcher.get(face.excavator, "loaded_total"), dt)
             else:
                 face.last_loaded = None    # экскаватор в другом забое: счётчик чужой, отсчёт заново
+                face.last_delta = 0.0      # и прироста в этот тик нет (иначе старый прирост снова попал бы в оценку питания)
             face.update_values(clay_on, clay_p, blast_on, blast_p)
             if face.last_delta > 0 and face.role == "sulphide" and face.cur.get("recommended_destination") == "crusher-01":
                 tracker.add(face.last_delta, face.cur["cu_grade"])
