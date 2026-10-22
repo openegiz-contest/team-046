@@ -1452,6 +1452,28 @@ function lanePoint(lane, dist) {   // точка на ломаной на рас
   }
   return null;
 }
+function queueSide(pts) {   // 1 — правая полоса, −1 — левая: какая дальше от конвейера (на схеме)
+  const conv = dio.D.objects && dio.D.objects['conveyor-01'] && dio.D.objects['conveyor-01'].path;
+  if (!conv) return 1;
+  const distTo = (x, y) => {
+    let m = Infinity;
+    for (let i = 0; i < conv.length - 1; i++) {
+      const [ax, ay] = conv[i], [bx, by] = conv[i + 1], vx = bx - ax, vy = by - ay;
+      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1)));
+      m = Math.min(m, Math.hypot(x - ax - vx * t, y - ay - vy * t));
+    }
+    return m;
+  };
+  const near = { 1: Infinity, '-1': Infinity };
+  for (const q of pts) {
+    if (!q) continue;
+    const yaw = Math.atan2(q.dx, -q.dy);
+    for (const s of [1, -1]) {   // смещение в плане: восток −cos·s, север −sin·s (сцена z = −север)
+      near[s] = Math.min(near[s], distTo(q.x - Math.cos(yaw) * LANE * s, q.y - Math.sin(yaw) * LANE * s));
+    }
+  }
+  return near['-1'] > near[1] ? -1 : 1;
+}
 function lineUpQueues() {
   if (mode !== 'schema' || !dio) return;
   const groups = {};
@@ -1471,12 +1493,15 @@ function lineUpQueues() {
     const lane = queueLane(node);
     if (!lane) continue;
     list.sort((a, b) => (a.userData.thingId < b.userData.thingId ? -1 : 1));
+    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP));
+    const side = queueSide(pts);
     list.forEach((o, k) => {
-      const q = lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP);
+      const q = pts[k];
       if (!q) return;
       const p = dio.s(q.x, q.y, q.z + mp().road.lift);
       const yaw = Math.atan2(q.dx, -q.dy);      // носом к пункту (в сцене z = −север)
-      p.x += -Math.cos(yaw) * LANE; p.z += Math.sin(yaw) * LANE;   // очередь — на своей (правой) полосе, встречные проходят
+      // очередь — на одной полосе, встречные проходят; полоса — подальше от конвейера (подъезд к дробилке идёт вдоль него)
+      p.x += -Math.cos(yaw) * LANE * side; p.z += Math.sin(yaw) * LANE * side;
       o.position.copy(p);
       o.rotation.y = yaw;
     });
