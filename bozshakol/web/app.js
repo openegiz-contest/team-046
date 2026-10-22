@@ -1643,6 +1643,13 @@ window.__screenOf = (thingId) => {
   const r = canvas.getBoundingClientRect();
   return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
 };
+// для проверок: камера — поставить (точка и цель в сцене) и прочитать; кадр сцены — номер для покадровых сравнений
+window.__camera = {
+  set(px, py, pz, tx, ty, tz) { setPerspective(); tween = null; zoomGoal = null; stopOrbit(); followId = null;
+    perspCam.position.set(px, py, pz); controls.target.set(tx, ty, tz); controls.update(); markViewButton(''); },
+  get() { const p = camera.position, t = controls.target; return { x: p.x, y: p.y, z: p.z, tx: t.x, ty: t.y, tz: t.z, frame: window.__sceneFrames || 0 }; },
+  bounds: () => dio && dio.bounds, surfaceAt: (xs, ys) => (dio ? dio.surfaceAt(xs, ys) : 0),
+};
 // для проверок: места и курсы техники в сцене (после поправок)
 window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
