@@ -68,7 +68,7 @@ const groundAt = (x, y) => dio.groundAt(x, y);
 const PARAMS = {
   // постоянно — только подписи крупных объектов (3); техника и забои — при наведении или выборе
   unit: 1 / 2, labelDist: { 2: 0, 1: 0 }, hit: 0.6, follow: [-30, 15, 34], fly: [40, 2.6], markerFar: 800,
-  route: { r: 0.9, lift: 1.5 },
+  route: { r: 0.6, lift: 0.8 },
   cam: { near: 0.5, far: 60000, min: 6, max: 13000 }, orthoHalf: 1500, orthoAt: [-900, 4000, 150],
   sun: { pos: [-3900, 4000, 2850], tgt: [-700, 0, 0], box: [3600, 2000], near: 10, far: 13000 },
 };
@@ -325,7 +325,8 @@ function fmt(v, digits) {
   if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
     return v.slice(0, 10).split('-').reverse().join('.') + ' ' + v.slice(11, 16);
   }
-  if (typeof v === 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return v.length > 6 ? 'список из ' + v.length + ' значений' : JSON.stringify(v);
+  if (typeof v === 'object') { const j = JSON.stringify(v); return j.length > 80 ? j.slice(0, 77) + '…' : j; }
   return String(v);
 }
 const simClock = () => { const s = val(NS + ':mine', 'sim_time', ''); return typeof s === 'string' && s.length >= 16 ? s.slice(11, 16) : '—:—'; };
@@ -584,6 +585,14 @@ function watchState() {
 }
 function diffEvents() {
   const cur = watchState();
+  if (!prevWatch && Object.keys(cur).length) {   // первое открытие: состояние на сейчас
+    for (const [k, v] of Object.entries(cur)) {
+      if (k.startsWith('scen:') && v) logEvent('Сценарий «' + (SCENARIO_NAMES[k.slice(5)] || k.slice(5)) + '» уже включён');
+      else if (k === 'crusher.accepting' && v === false) logEvent(nameOf(NS + ':crusher-01') + ' не принимает самосвалы');
+      else if (k.startsWith('down:') && v) logEvent(nameOf(k.slice(5)) + ' — авария');
+      else if (k.startsWith('open:') && v === false) logEvent('Дорога «' + nameOf(k.slice(5)) + '» закрыта');
+    }
+  }
   if (prevWatch) {
     for (const [k, v] of Object.entries(cur)) {
       const was = prevWatch[k];
@@ -829,6 +838,10 @@ function updateCamera(dt) {
   }
   wheelZoomStep(dt);
   (camera === perspCam ? controls : topControls).update();
+  if (dio && camera === perspCam) {   // камера всегда над поверхностью (облёт вокруг техники в карьере уводил её в борт)
+    const g = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4;
+    if (perspCam.position.y < g) perspCam.position.y = g;
+  }
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
   markerScale = MACHINE_SCALE;
   if (orbitId && !tween && camera === perspCam) {   // облёт: цель — на объекте, камера вращается вокруг
@@ -1506,12 +1519,17 @@ function smoothShifts(dt) {
     else if (Math.hypot(ox - ud.shift.x, oz - ud.shift.z) > 400) { ud.shift.x = ox; ud.shift.z = oz; }   // перенос слоем
     else { ud.shift.x += (ox - ud.shift.x) * a; ud.shift.z += (oz - ud.shift.z) * a; }
     o.position.x = raw.x + ud.shift.x; o.position.z = raw.z + ud.shift.z;
+    // слой мог переставить машину скачком (смена состояния: встала в очередь) — показываем переезд за ≈ 0,5 с
+    if (!ud.disp) ud.disp = { x: o.position.x, z: o.position.z };
+    const jx = o.position.x - ud.disp.x, jz = o.position.z - ud.disp.z, j = Math.hypot(jx, jz);
+    if (j > 6 && j < 600) { const k = 1 - Math.exp(-dt / 0.18); ud.disp.x += jx * k; ud.disp.z += jz * k; o.position.x = ud.disp.x; o.position.z = ud.disp.z; }
+    else { ud.disp.x = o.position.x; ud.disp.z = o.position.z; }
     const yaw = o.rotation.y;
     if (ud.dispYaw === undefined) ud.dispYaw = yaw;
     let d = yaw - ud.dispYaw;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    ud.dispYaw += d * ar;
+    ud.dispYaw += Math.max(-3 * dt, Math.min(3 * dt, d * ar));   // разворот не быстрее 3 рад/с
     o.rotation.y = ud.dispYaw;
   }
 }
@@ -1657,11 +1675,28 @@ window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId,
 // для проверок: «земля одна для всех» — техника на поверхности, дороги не ниже рельефа, машины не налезают.
 // Высота машины сравнивается с dio.surfaceAt под ней (у самосвалов — плюс полотно дороги); отрезки дорог —
 // вершины лент полотна против поверхности под ними; наложения — самосвалы по габаритам с курсом и самосвал в экскаваторе
+const _ray = new THREE.Raycaster(), _down = new THREE.Vector3(0, -1, 0);
 window.__groundCheck = () => {
+  // поверхность, как она нарисована: видимые сетки земли, карьера и полотна дорог (не формула)
+  const surf = [];
+  const roadSet = new Set(Object.values(roadMats));
+  terrain.traverse((m) => { if (m.isMesh && (/^diorama-(ground|far|pit)$/.test(m.name) || roadSet.has(m.material))) {
+    let p = m, vis = true; while (p) { if (!p.visible) vis = false; p = p.parent; } if (vis) surf.push(m); } });
+  const drawnY = (x, z) => { _ray.set(new THREE.Vector3(x, 2000, z), _down); const h = _ray.intersectObjects(surf, false)[0]; return h ? h.point.y : NaN; };
   const machines = [];
   for (const o of machineList) {
     const want = dio.surfaceAt(o.position.x, -o.position.z) + (o.userData.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0);
-    machines.push({ id: o.userData.thingId.split(':')[1], dy: +(o.position.y - want).toFixed(3) });
+    // колёса: четыре угла корпуса — сколько ниже нарисованной поверхности (утонул) или выше (висит)
+    const s = o.scale.x || 1, size = o.userData.size || {}, L = (size.length || 12) * s * 0.4, W = (size.width || 7) * s * 0.4;
+    const fx = Math.sin(o.rotation.y), fz = Math.cos(o.rotation.y), lx = fz, lz = -fx;
+    let sunk = 0, hang = Infinity;
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const x = o.position.x + fx * L * a + lx * W * b, z = o.position.z + fz * L * a + lz * W * b;
+      const g = drawnY(x, z); if (!isFinite(g)) continue;
+      const wheelY = o.position.y - Math.sin(o.rotation.x) * L * a + Math.sin(o.rotation.z) * W * b;   // порядок поворотов YXZ
+      sunk = Math.max(sunk, g - wheelY); hang = Math.min(hang, wheelY - g);
+    }
+    machines.push({ id: o.userData.thingId.split(':')[1], dy: +(o.position.y - want).toFixed(3), sunk: +sunk.toFixed(2), hang: +(isFinite(hang) ? hang : 0).toFixed(2) });
   }
   let roadVerts = 0, roadBelow = 0, roadWorst = 0;
   for (const meshes of Object.values(roadMeshes)) for (const m of meshes) {
@@ -1681,7 +1716,9 @@ window.__groundCheck = () => {
     if (Math.hypot(t.position.x - e.position.x, t.position.z - e.position.z) < 18) overlaps.push(t.userData.thingId.split(':')[1] + '×' + e.userData.thingId.split(':')[1]);
   }
   const worst = machines.reduce((w, m) => (Math.abs(m.dy) > Math.abs(w.dy) ? m : w), { id: '—', dy: 0 });
-  return { machines: machines.length, offGround: machines.filter((m) => Math.abs(m.dy) > 0.5).length, worst,
+  const sunkList = machines.filter((m) => m.sunk > 1).map((m) => m.id + ' ' + m.sunk);
+  const hangList = machines.filter((m) => m.hang > 1.5).map((m) => m.id + ' ' + m.hang);
+  return { machines: machines.length, offGround: machines.filter((m) => Math.abs(m.dy) > 0.5).length, worst, sunkList, hangList,
     roadVerts, roadBelow, roadWorst: +roadWorst.toFixed(3), overlaps };
 };
 
@@ -1707,7 +1744,13 @@ canvas.addEventListener('dblclick', (e) => {
     d = Math.max(90, Math.max(sz.x, sz.z) * 1.2);
     if (!box.isEmpty()) box.getCenter(_v);
   }
-  flyTo(_v.clone().add(new THREE.Vector3(-d * 0.75, d * 0.45, d * 0.8)), _v.clone());
+  const to = _v.clone().add(new THREE.Vector3(-d * 0.75, d * 0.45, d * 0.8));
+  // облёт идёт по кругу на этой высоте: она должна быть выше борта во все стороны от объекта
+  let top = -Infinity;
+  for (let k = 0; k < 16; k++) { const a = k / 16 * Math.PI * 2, r = Math.hypot(d * 0.75, d * 0.8);
+    top = Math.max(top, dio.surfaceAt(_v.x + Math.cos(a) * r, -(_v.z + Math.sin(a) * r))); }
+  to.y = Math.max(to.y, top + 10);
+  flyTo(to, _v.clone());
   orbitId = id; controls.autoRotate = true; controls.autoRotateSpeed = 1.2;
   markViewButton('');
   openCard(id);
@@ -1730,7 +1773,7 @@ function orientTrucks(dt) {
     let d = m.yaw - m.cur;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
-    m.cur += d * Math.min(1, dt * 8);
+    m.cur += d * (1 - Math.exp(-dt * 8));
     o.rotation.y = m.cur;
   }
 }
