@@ -15,8 +15,7 @@
     <canvas id="scene"></canvas>
     <div id="labels"></div>
     <div id="scene-notes">
-      <span id="scale-note">Схема рудника 1 : 3 (техника крупнее в 2,5 раза). Реальное расположение — кнопка «Карта местности»</span>
-      <span id="attribution" hidden></span>
+      <span id="scale-note">Схема рудника: расстояния сжаты в 2 раза, здания — в реальном размере, техника крупнее в 1,25 раза. Реальная местность — кнопка «Фото местности»</span>
     </div>
     <!-- Подсказка по клавишам (controls.js): кнопка «?», клавиши ? или H -->
     <button id="help-hint" type="button" title="Показать клавиши управления">? — клавиши</button>
@@ -50,7 +49,7 @@
     <button type="button" data-view="crusher" title="Дробилка и магистральный конвейер">Дробилка и конвейер</button>
     <button type="button" data-view="plants" title="Сульфидная и глинистая фабрики">Фабрики</button>
     <button type="button" data-view="top" title="Карта сверху (ортографическая камера)">Сверху (карта)</button>
-    <button id="btn-map" type="button" title="Реальный рельеф со спутниковым снимком Sentinel-2 поверх макета">Карта местности</button>
+    <button id="btn-photo" type="button" title="Спутниковый снимок реального Бозшаколя (Sentinel-2) с подписями объектов">Фото местности</button>
     <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним">Следовать за самосвалом</button>
     <button id="btn-reality" type="button" title="Насколько модель совпадает с реальным Бозшаколем: средние за последний модельный час против фактов 2025 года">Сверка с реальностью</button>
     <button id="btn-help" type="button" title="Клавиши управления (? или H)">?</button>
@@ -123,6 +122,20 @@
     </section>
   </aside>
 
+  <!-- Фото местности: спутниковый снимок реального Бозшаколя (data/terrain/texture.jpg), подписи объектов -->
+  <div id="photo" hidden>
+    <div class="photo-card">
+      <div class="card-head">
+        <b>Фото местности — Бозшаколь, Sentinel-2</b>
+        <button id="photo-close" type="button" title="Закрыть (Esc)">×</button>
+      </div>
+      <div class="photo-frame"><img id="photo-img" alt="Спутниковый снимок карьера Бозшаколь и окрестностей"><div id="photo-marks"></div></div>
+      <p class="muted">Квадрат 6 × 6 км, ось карьера — по горизонтали (≈ 11° к северу от востока). Контур карьера совпадает
+        со снимком; подписи остальных объектов — их места в модели рудника.</p>
+      <p class="muted" id="photo-attr">Contains modified Copernicus Sentinel data 2024.</p>
+    </div>
+  </div>
+
   <!-- Путеводитель: открывается при первом посещении, потом — кнопкой «Как посмотреть» -->
   <div id="reality" hidden>
     <div class="reality-card">
@@ -154,8 +167,8 @@
       <ol>
         <li><b>Осмотритесь.</b> Мышь или клавиши W/A/S/D, Q/E, R/F; виды 1–5 —
           <a href="#" data-view-go="all">весь рудник</a>, <a href="#" data-view-go="pit">карьер</a>,
-          <a href="#" data-view-go="crusher">дробилка</a>, <a href="#" data-view-go="plants">фабрики</a>, <a href="#" data-view-go="top">сверху</a>. Это схема рудника в масштабе 1 : 3 (техника крупнее зданий в 2,5 раза); двойной клик по объекту — облёт, Esc — выход;
-          реальное расположение на рельефе со снимком — кнопка «Карта местности».</li>
+          <a href="#" data-view-go="crusher">дробилка</a>, <a href="#" data-view-go="plants">фабрики</a>, <a href="#" data-view-go="top">сверху</a>. Это схема рудника: расстояния сжаты в 2 раза, здания — в реальном размере; колесо мыши — плавное приближение,
+          двойной клик по объекту — облёт, Esc — выход; реальная местность на спутниковом снимке — кнопка «Фото местности».</li>
         <li><b>Кликните самосвал</b> — справа откроется карточка с живыми данными двойника (груз, скорость, топливо);
           «Следовать за самосвалом» — камера пойдёт за ним, голубая линия покажет его маршрут.</li>
         <li><b>Включите «Остановка дробилки»</b> в панели слева («Сценарии «что если»») и нажмите «показать»:

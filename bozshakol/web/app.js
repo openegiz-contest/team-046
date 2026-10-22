@@ -4,11 +4,10 @@ import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { loadTerrain } from './terrain.js';
 import { initKeyboard } from './controls.js';
-import { buildPit as buildPitModel } from './pit.js';
-import { buildEnvironment, glowTexture } from './environment.js';
+import { glowTexture } from './environment.js';
 import { createModels } from './models.js';
 import { loadDiorama } from './diorama.js';
-import { buildDiorama } from './diorama-scene.js';
+import { buildDiorama, roadRibbons } from './diorama-scene.js';
 
 // ---------------------------------------------------------------- палитра
 const colors = {
@@ -23,7 +22,6 @@ const colors = {
 };
 
 const NS = 'kz.bozshakol';
-const VZ = 1.5;   // вертикальное преувеличение рельефа (подпись в углу сцены); применяется через toScene ко всему
 const SCENARIO_NAMES = {
   blizzard: 'Метель', dispatch_off: 'Диспетчеризация выключена', road_closed: 'Дорога закрыта',
   excavator_down: 'Экскаватор сломан', clay_face: 'Глинистый забой', bad_blast: 'Неудачный взрыв',
@@ -60,36 +58,24 @@ let hoverThing = null;       // двойник под курсором = ctx.hov
 let markerScale = 1;         // множитель размера значков техники = ctx.markerScale
 let connState = 'нет';
 
-// Режим сцены: 'schema' — схема-макет рудника (по умолчанию, diorama.js), 'map' — «Карта местности»:
-// реальный масштаб, рельеф и снимок. Слои получают ctx.toScene / ctx.groundAt текущего режима;
-// при переключении мир (земля, карьер, дороги, окружение и слои) собирается заново без перезагрузки страницы.
-let mode = 'schema';
-let dio = null;              // перенос координат в схему (diorama.js); null — схемы нет, только «Карта местности»
-const realToScene = (x, y, z) => new THREE.Vector3(x, z * VZ, -y);
-const toScene = (x, y, z) => (mode === 'schema' && dio ? dio.toScene(x, y, z) : realToScene(x, y, z));
-const groundAt = (x, y) => (mode === 'schema' && dio ? dio.groundAt(x, y) : terrainApi.groundAt(x, y));
-// Параметры, зависящие от режима. Схема — карта рудника 1 : 3 (единица = 3 м местности, core/diorama.json):
-// расстояния и размеры объектов сжаты в 3 раза, подвижная техника крупнее зданий в 2,5 раза (MACHINE_SCALE).
-const MODE_PARAMS = {
-  map: {
-    unit: 1, labelDist: { 2: 3500, 1: 700 }, hit: 1, follow: [-90, 45, 100], fly: [60, 3], markerFar: 1500,
-    road: { w: 26, ramp: 50, lift: 1.5, h: 1.2 }, route: { r: 3.2, lift: 2.5 },
-    cam: { near: 1, far: 30000, min: 12, max: 14000 }, orthoHalf: 3000, orthoAt: [-1100, 3000, 200],
-    sun: { pos: [-4200, 3600, 2600], tgt: [-1100, 0, 200], box: [4600, 3600], near: 100, far: 14000 },
-  },
-  schema: {
-    // схема: постоянно — только подписи крупных объектов (3); техника и забои — при наведении или выборе
-    unit: 1 / 3, labelDist: { 2: 0, 1: 0 }, hit: 0.6, follow: [-16, 8, 18], fly: [25, 2.6], markerFar: 500,
-    road: { w: 14, ramp: 18, lift: 0.3, h: 0.5 }, route: { r: 0.6, lift: 1.0 },
-    cam: { near: 0.3, far: 40000, min: 4, max: 9000 }, orthoHalf: 1000, orthoAt: [-300, 3000, 100],
-    sun: { pos: [-2600, 2700, 1900], tgt: [-300, 0, 0], box: [2300, 1500], near: 10, far: 9000 },
-  },
+// Сцена одна — схема рудника (diorama.js): расстояния сжаты в 2 раза (единица карты = 2 м местности), здания
+// и склады — в реальном размере. Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
+// terrainApi (рельеф Copernicus DEM) нужен только для «высоты над землёй» в переносе координат, в сцене его нет.
+const mode = 'schema';
+let dio = null;              // перенос координат в схему (diorama.js)
+const toScene = (x, y, z) => dio.toScene(x, y, z);
+const groundAt = (x, y) => dio.groundAt(x, y);
+const PARAMS = {
+  // постоянно — только подписи крупных объектов (3); техника и забои — при наведении или выборе
+  unit: 1 / 2, labelDist: { 2: 0, 1: 0 }, hit: 0.6, follow: [-30, 15, 34], fly: [40, 2.6], markerFar: 800,
+  route: { r: 0.9, lift: 1.5 },
+  cam: { near: 0.5, far: 60000, min: 6, max: 13000 }, orthoHalf: 1500, orthoAt: [-900, 4000, 150],
+  sun: { pos: [-3900, 4000, 2850], tgt: [-700, 0, 0], box: [3600, 2000], near: 10, far: 13000 },
 };
-const mp = () => MODE_PARAMS[mode];
-// Масштаб подвижной техники (модели в метрах). Схема 1 : 3 → техника × 2,5 / 3: крупнее зданий и карьера в 2,5 раза,
-// экскаватор крупнее самосвала (реальные пропорции между машинами). «Карта местности» — натуральная величина.
-// Вдали (дальше markerFar) над машиной — цветной значок-стрелка, техника при этом не раздувается.
-const MACHINE_SCALE = { schema: 2.5 / 3, map: 1 };
+const mp = () => PARAMS;
+// Масштаб подвижной техники (модели в метрах): ×1,25 к реальному размеру — не больше чем в 2 раза; экскаватор
+// крупнее самосвала (реальные пропорции между машинами). Вдали (дальше markerFar) над машиной — значок-стрелка.
+const MACHINE_SCALE = 1.25;
 const val = (id, f, d) => {
   const t = twins[id]; const p = t && t.features && t.features[f] && t.features[f].properties;
   return p && p.value !== undefined && p.value !== null ? p.value : d;
@@ -109,11 +95,10 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 const SKY = 0xdde8f0;
 scene.background = new THREE.Color(SKY);   // до загрузки окружения (environment.js ставит небо и туман)
-let environment = null;      // небо, туман, хвостохранилище, ЛЭП, ограждение, мачты (environment.js)
-let terrainGround = null;    // группа земли (terrain.js), у неё setImagery(on)
+let environment = null;      // небо, туман, качество и вид земли (buildSchemaEnvironment)
 
 const perspCam = new THREE.PerspectiveCamera(50, 1, 2, 30000);
-perspCam.position.copy(toScene(-1500, -7900, 3600));
+perspCam.position.set(-950, 1700, 2700);
 const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
 orthoCam.position.set(-1100, 3000, 200);
 orthoCam.up.set(0, 0, -1);           // север — вверх экрана
@@ -121,16 +106,17 @@ orthoCam.lookAt(-1100, 0, 200);
 let camera = perspCam;
 
 const controls = new OrbitControls(perspCam, canvas);
-controls.target.copy(toScene(-1100, -300, 0));
+controls.target.set(-800, 0, 150);
 controls.maxPolarAngle = Math.PI * 0.49;
-controls.enableDamping = true; controls.dampingFactor = 0.12;   // плавное вращение и колесо (без «упора»)
-controls.zoomSpeed = 0.9;
+controls.enableDamping = true; controls.dampingFactor = 0.12;   // плавное вращение
+controls.enableZoom = false;   // колесо и тачпад — свой плавный зум (wheelZoom): шаг ≈ 11 % расстояния, мягкое торможение
 controls.minDistance = 60;
 controls.maxDistance = 14000;
 controls.update();
 const topControls = new OrbitControls(orthoCam, canvas);
 topControls.target.set(-1100, 0, 200);
 topControls.enableRotate = false;
+topControls.enableZoom = false;   // колесо — свой плавный зум (wheelZoom), как в перспективе
 // в виде сверху левая кнопка — панорамирование (вращение запрещено)
 topControls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 topControls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
@@ -216,9 +202,7 @@ function updateLabels() {
     L.show = false;
     if (!L.enabled || !(L.obj.visible || L.obj.userData.farHidden) || !L.obj.parent) continue;
     L.obj.getWorldPosition(_v);
-    // у уменьшенных в схеме зданий и складов отступ подписи (в метрах) уменьшается так же
-    const so = L.obj.userData.schemaScaled ? L.obj : (L.obj.parent && L.obj.parent.userData.schemaScaled ? L.obj.parent : null);
-    _v.y += L.dy * (so ? so.scale.y : 1);
+    _v.y += L.dy;
     const dist = ortho ? orthoDist : _c.distanceTo(_v);
     const id = thingOf(L.obj);
     const focused = id && (id === openedThing || id === hoverThing);
@@ -718,107 +702,41 @@ function startSSE() {
 }
 setInterval(() => { if (panelDirty) { panelDirty = false; renderPanel(); } }, 1000);
 
-// ---------------------------------------------------------------- степь и карьер
+// ---------------------------------------------------------------- земля, карьер, дороги (группа terrain)
 const terrain = new THREE.Group();
 scene.add(terrain);
-// Карьер рисует pit.js (уступы, бермы, оттенки руды, отбойные валы); здесь — клик и подписи
-function buildPit() {
-  const faces = (geometry.objects || []).filter((o) => o.kind === 'face')
-    .map((o) => ({ x: o.position[0], y: o.position[1], ore: o.ore_type }));
-  terrain.add(buildPitModel(THREE, geometry, terrainApi, toScene, colors, faces));
-  const pit = geometry.pit, A = pit.semi_axes_top[0], B = pit.semi_axes_top[1], inset = pit.inset_per_bench, count = pit.bench_count;
-  // невидимое дно — цель клика и подписи карьера
-  const fShape = new THREE.Shape(); fShape.absellipse(0, 0, A - count * inset, B - count * inset, 0, Math.PI * 2, false, 0);
-  const floor = new THREE.Mesh(new THREE.ShapeGeometry(fShape, 32), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
-  floor.rotation.x = -Math.PI / 2; floor.position.y = -pit.depth * VZ + 1;
-  terrain.add(floor);
-  register(floor, NS + ':pit-central', { hitRadius: 0 });
-  addLabel(floor, 'Карьер · дно −' + pit.depth + ' м', { importance: 3, dy: 4 });
-  const rimAnchor = new THREE.Object3D(); rimAnchor.position.copy(toScene(0, B, terrainApi.demAt(0, B))); terrain.add(rimAnchor);
-  addLabel(rimAnchor, 'Карьер Бозшаколь · ' + fmt(2 * A / 1000, 1) + ' × ' + fmt(2 * B / 1000, 1) + ' км', { importance: 3, dy: 6 });
-}
 
 // ---------------------------------------------------------------- дороги
 const roadMeshes = {};   // roadId -> [mesh]
+const roadMatKind = {};  // материал -> 'lambert' | 'basic' (качество)
 const roadMats = {
   open: new THREE.MeshLambertMaterial({ color: colors.road }),
   ramp: new THREE.MeshLambertMaterial({ color: colors.ramp }),
   edge: new THREE.MeshLambertMaterial({ color: colors.roadEdge }),
-  shoulder: new THREE.MeshLambertMaterial({ color: 0xbfae86 }),   // обочина в схеме
-  berm: new THREE.MeshLambertMaterial({ color: 0xa8916c }),       // отбойный вал съездов в схеме
+  shoulder: new THREE.MeshLambertMaterial({ color: 0xbfae86 }),   // обочина
   closed: new THREE.MeshLambertMaterial({ color: colors.roadClosed }),
 };
-// Высота узла дороги в сцене: Z узлов geometry.json уже абсолютные — наземные узлы получают
-// высоту рельефа в core/tools/make_geometry.py (их читает и модуль транспорта), ничего не добавляем
-function nodePos(n) {
-  return toScene(n[0], n[1], n[2] + mp().road.lift);
-}
-// Коробки дорог сливаются в одну геометрию на (дорогу, материал): вызовов отрисовки в разы меньше
-function mergeBoxes(list) {
-  const pos = [], nor = [];
-  for (const { geo, matrix } of list) {
-    const g = geo.toNonIndexed(); g.applyMatrix4(matrix);
-    pos.push(...g.attributes.position.array); nor.push(...g.attributes.normal.array);
-    geo.dispose(); g.dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  return out;
-}
 function buildRoads() {
-  const ramps = {};   // road -> [точки] для подписи (середина съезда)
-  const parts = {};   // 'дорога|материал' -> [{geo, matrix}]
-  const add = (road, mat, geo, matrix) => (parts[road + '|' + mat] || (parts[road + '|' + mat] = [])).push({ geo, matrix });
-  const R = mp().road, schema = mode === 'schema';
-  // в схеме ребро режется на куски ≈ 80 единиц: дорога идёт по поверхности (съезд выходит на борт, а не под землю)
-  const pieces = [];
-  for (const e of geometry.edges) {
-    const a = geometry.nodes[e.from], b = geometry.nodes[e.to];
-    if (!a || !b) continue;
-    const n = schema ? Math.max(1, Math.ceil(nodePos(a).distanceTo(nodePos(b)) / 80)) : 1;
-    for (let i = 0; i < n; i++) {
-      const p = (t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-      pieces.push({ e, a: p(i / n), b: p((i + 1) / n), first: i === 0 });
-    }
-  }
-  for (const { e, a, b } of pieces) {
-    const isRamp = /^road-ramp/.test(e.road);
-    const pa = nodePos(a), pb = nodePos(b);
-    const len = pa.distanceTo(pb);
-    const width = isRamp ? R.ramp : R.w;
-    const o = new THREE.Object3D();
-    o.position.copy(pa).add(pb).multiplyScalar(0.5);
-    o.lookAt(pb);                       // ось Z коробки — вдоль ребра
-    o.updateMatrix();
-    add(e.road, isRamp ? 'ramp' : 'open', new THREE.BoxGeometry(width, R.h, len + width), o.matrix.clone());
-    const below = (dy) => new THREE.Matrix4().makeTranslation(0, -dy, 0).multiply(o.matrix);
-    if (schema) {
-      // схема: светлая обочина чуть ниже полотна; у съездов — отбойный вал по обеим сторонам
-      add(e.road, 'shoulder', new THREE.BoxGeometry(width + 2.4, R.h, len + width + 1.2), below(0.2));
-      if (isRamp) for (const side of [-1, 1]) {
-        add(e.road, 'berm', new THREE.BoxGeometry(1.1, 1.3, len), o.matrix.clone().multiply(new THREE.Matrix4().makeTranslation(side * (width / 2 + 0.9), 0.5, 0)));
-      }
-    } else {
-      // бровка: чуть шире и чуть ниже полотна — у всех дорог (на съездах шире — отбойный вал); верх бровки ниже полотна
-      add(e.road, 'edge', new THREE.BoxGeometry(width + (isRamp ? 10 : 7), isRamp ? 2.6 : 1.4, len + width + 6), below(isRamp ? 1.2 : 0.4));
-    }
-    if (isRamp) (ramps[e.road] || (ramps[e.road] = [])).push(pa, pb);
-  }
-  for (const [key, list] of Object.entries(parts)) {
+  // полотно — лента по единой поверхности (diorama-scene.js roadRibbons): нигде не уходит под землю
+  for (const m of Object.values(roadMats)) Object.assign(m, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  for (const [key, geo] of Object.entries(roadRibbons(THREE, dio))) {
     const [road, mat] = key.split('|');
-    const m = new THREE.Mesh(mergeBoxes(list), roadMats[mat]);
+    const m = new THREE.Mesh(geo, roadMats[mat]);
     terrain.add(m);
     if (mat === 'open' || mat === 'ramp') { m.userData.road = road; (roadMeshes[road] || (roadMeshes[road] = [])).push(m); }
   }
-  for (const [rid, pts] of Object.entries(ramps)) {
-    const mid = pts[Math.floor(pts.length / 2)].clone(); mid.y += 2 * mp().unit;
-    const anchor = new THREE.Object3D(); anchor.position.copy(mid); terrain.add(anchor);
-    for (const m of roadMeshes[rid]) m.userData.thingId = NS + ':' + rid;   // клик по полотну — карточка дороги
+  // подписи и клик по съездам: середина съезда (по рёбрам схемы)
+  const ramps = {};
+  for (const e of dio.edges) if (/^road-ramp/.test(e.road)) (ramps[e.road] || (ramps[e.road] = [])).push(e);
+  for (const [rid, list] of Object.entries(ramps)) {
+    const e = list[Math.floor(list.length / 2)];
+    const xs = (e.sa[0] + e.sb[0]) / 2, ys = (e.sa[1] + e.sb[1]) / 2;
+    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(xs, ys, dio.surfaceAt(xs, ys) + 2)); terrain.add(anchor);
+    for (const m of roadMeshes[rid] || []) m.userData.thingId = NS + ':' + rid;   // клик по полотну — карточка дороги
     register(anchor, NS + ':' + rid, { hitRadius: 0 });
-    clickable.push(...roadMeshes[rid]);
+    clickable.push(...(roadMeshes[rid] || []));
     const info = (geometry.roads && geometry.roads[rid]) || {};
-    addLabel(anchor, info.name || rid, { importance: 3, dy: mode === 'schema' ? 2 : 10 });
+    addLabel(anchor, info.name || rid, { importance: 3, dy: 3 });
   }
 }
 // Дороги road-* при open=false — красные
@@ -831,45 +749,37 @@ function updateRoads() {
 }
 
 // ---------------------------------------------------------------- камера: виды, плавные переходы, слежение
-// Координаты — рудника (м), по geometry.json: карьер в центре, дробилка на южном борту,
-// конвейер и фабрика к западу-юго-западу, отвалы к юго-востоку
-const VIEWS = {
-  all: { target: [-1100, -300, 0], pos: [-1500, -7900, 3600] },      // косой вид ≈ 35° на весь макет
-  pit: { target: [150, -50, -110], pos: [-300, -2500, 1250] },       // карьер: техника на уступах и дне
-  crusher: { target: [-420, -640, 0], pos: [-760, -1650, 430] },     // дробилка, заправка, начало конвейера
-  plants: { target: [-2600, -800, 15], pos: [-2950, -1850, 520] },   // фабрика, склад, подстанция
-};
 let tween = null;         // {fromPos, toPos, fromTgt, toTgt, t}
 let followId = null;      // thingId самосвала, за которым идёт камера
 const btnFollow = document.getElementById('btn-follow');
 function setPerspective() {
   if (camera === perspCam) return;
-  camera = perspCam; controls.enabled = true; topControls.enabled = false;
+  camera = perspCam; controls.enabled = true; topControls.enabled = false; zoomGoal = null;
   markViewButton('');
 }
 function flyTo(pos, target) {
-  setPerspective();
+  setPerspective(); zoomGoal = null;
   tween = { fromPos: perspCam.position.clone(), toPos: pos.clone(), fromTgt: controls.target.clone(), toTgt: target.clone(), t: 0 };
 }
 function markViewButton(name) {
   for (const b of document.querySelectorAll('#topbar button[data-view]')) b.classList.toggle('active', b.dataset.view === name);
 }
-// Виды схемы — в координатах схемы [x — восток, y — север, z — высота], единицы
+// Виды — в координатах схемы [x — восток, y — север, z — высота], единицы
 const VIEWS_SCHEMA = {
-  all: { target: [-400, -130, 0], pos: [-480, -1500, 1000] },    // косой вид ≈ 35° на весь рудник
-  pit: { target: [-60, -20, -40], pos: [-140, -560, 330] },      // карьер: 13 уступов, съезды, техника на дне
-  crusher: { target: [-100, -200, 0], pos: [-150, -330, 90] },   // дробилка, заправка, начало конвейера
-  plants: { target: [-860, -270, 5], pos: [-920, -480, 150] },   // фабрика, склад, подстанция
+  all: { target: [-650, -200, 0], pos: [-760, -2500, 1500] },    // косой вид ≈ 33° на весь рудник
+  pit: { target: [-120, -20, -90], pos: [-200, -640, 420] },     // карьер: 13 уступов, съезды, техника на дне
+  crusher: { target: [-160, -330, 0], pos: [-240, -560, 160] },  // дробилка, заправка, начало конвейера
+  plants: { target: [-1290, -400, 10], pos: [-1380, -880, 330] }, // фабрика, склад, подстанция
 };
 // Переход к виду по имени (кнопки сверху и клавиши 1–5)
 function setView(name) {
-  if (mode === 'schema' && !dio) return;   // схема ещё загружается
-  const views = mode === 'schema' ? VIEWS_SCHEMA : VIEWS;
-  const conv = (p) => (mode === 'schema' ? dio.s(...p) : realToScene(...p));
+  if (!dio) return;   // схема ещё загружается
+  const views = VIEWS_SCHEMA;
+  const conv = (p) => dio.s(...p);
   if (name !== 'top' && !views[name]) return;
   followId = null; updateFollowButton(); stopOrbit();
   if (name === 'top') {
-    camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
+    camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null; zoomGoal = null;
   } else {
     const v = views[name];
     const target = conv(v.target);
@@ -917,13 +827,46 @@ function updateCamera(dt) {
       controls.target.add(_d); perspCam.position.add(_d);
     }
   }
+  wheelZoomStep(dt);
   (camera === perspCam ? controls : topControls).update();
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
-  markerScale = MACHINE_SCALE[mode];
+  markerScale = MACHINE_SCALE;
   if (orbitId && !tween && camera === perspCam) {   // облёт: цель — на объекте, камера вращается вокруг
     const obj = byThing(orbitId);
     if (obj) { obj.getWorldPosition(_v); _d.subVectors(_v, controls.target).multiplyScalar(Math.min(1, dt * 4)); controls.target.add(_d); perspCam.position.add(_d); }
   }
+}
+
+// Колесо мыши и тачпад: шаг ≈ 11 % расстояния за щелчок колеса (тачпад — пропорционально прокрутке), камера
+// подходит к новому расстоянию плавно (≈ 0,3 с, мягкое торможение), без прыжков к земле или вверх
+let zoomGoal = null;   // целевое расстояние до цели (перспектива) или целевой zoom (вид сверху)
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  let d = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
+  d = Math.max(-150, Math.min(150, d));               // один щелчок колеса ≈ 100 → множитель ≈ 1,11
+  const k = Math.exp(d * 0.00105);
+  tween = null;
+  if (camera === orthoCam) {
+    const cur = zoomGoal === null ? orthoCam.zoom : zoomGoal;
+    zoomGoal = Math.min(topControls.maxZoom, Math.max(topControls.minZoom, cur / k));
+  } else {
+    const cur = zoomGoal === null ? perspCam.position.distanceTo(controls.target) : zoomGoal;
+    zoomGoal = Math.min(controls.maxDistance, Math.max(controls.minDistance, cur * k));
+  }
+}, { passive: false });
+function wheelZoomStep(dt) {
+  if (zoomGoal === null) return;
+  const a = 1 - Math.exp(-dt * 9);                    // экспоненциальное приближение: плавное торможение
+  if (camera === orthoCam) {
+    orthoCam.zoom += (zoomGoal - orthoCam.zoom) * a; orthoCam.updateProjectionMatrix();
+    if (Math.abs(zoomGoal - orthoCam.zoom) < 1e-3) zoomGoal = null;
+    return;
+  }
+  _d.subVectors(perspCam.position, controls.target);
+  const dist = _d.length();
+  const nd = dist + (zoomGoal - dist) * a;
+  perspCam.position.copy(controls.target).addScaledVector(_d, nd / (dist || 1));
+  if (Math.abs(zoomGoal - nd) < Math.max(0.01, nd * 1e-3)) zoomGoal = null;
 }
 
 // ---------------------------------------------------------------- слои
@@ -946,7 +889,7 @@ async function loadLayers(suffix = '') {
     const ctx = {
       THREE, scene, group, geometry, toScene, register, colors, dt: 0, camera, label: addLabel,
       markerScale, hover: null, selected: null, heightAt: groundAt, groundAt, place, mode,
-      models: modelsLib, verticalScale: mode === 'schema' ? 1 : VZ,
+      models: modelsLib, verticalScale: 1,
     };
     try {
       const mod = await import('./layers/' + name + '.js' + suffix);
@@ -961,8 +904,6 @@ async function loadLayers(suffix = '') {
 // ---------------------------------------------------------------- клавиатура (controls.js)
 let keyboard = null;
 function initKeys() {
-  const half = (terrainApi && terrainApi.meta && terrainApi.meta.half_m) || 3000;   // квадрат рельефа, м
-  const area = (terrainApi && terrainApi.areaHalf) || 3000;   // земля 10 × 10 км
   keyboard = initKeyboard({
     camera: () => camera,
     controls: () => (camera === perspCam ? controls : topControls),
@@ -971,14 +912,9 @@ function initKeys() {
     stopFly: () => { tween = null; },
     unit: () => mp().unit,
     // высота земли под точкой сцены (sx, sz) — в единицах сцены
-    groundY: (sx, sz) => (mode === 'schema' && dio ? dio.surfaceAt(sx, -sz) : terrainApi.heightAt(sx, -sz) * VZ),
+    groundY: (sx, sz) => dio.surfaceAt(sx, -sz),
     // границы движения камеры (координаты рудника или схемы): макет и поле вокруг; камера общего вида южнее макета
-    bounds: () => {
-      if (mode === 'schema' && dio) { const b = dio.bounds; return { minX: b.minX - 100, maxX: b.maxX + 100, minY: b.minY - 420, maxY: b.maxY + 100 }; }
-      return terrainApi && terrainApi.bounds
-        ? { minX: terrainApi.bounds.minX - 2500, maxX: terrainApi.bounds.maxX + 2500, minY: terrainApi.bounds.minY - 6000, maxY: terrainApi.bounds.maxY + 2500 }
-        : { minX: -area, maxX: area, minY: -area, maxY: area };
-    },
+    bounds: () => { const b = dio.bounds; return { minX: b.minX - 300, maxX: b.maxX + 300, minY: b.minY - 1500, maxY: b.maxY + 300 }; },
   });
 }
 
@@ -990,17 +926,37 @@ const shadowCasters = new WeakSet();
 function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
-  // «Обычное»: кадр в разрешении 0,65 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
-  renderer.setPixelRatio(high ? 1 : 0.65);
+  // «Обычное»: кадр в разрешении 0,5 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
+  renderer.setPixelRatio(high ? 1 : 0.5);
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
   if (environment && environment.setQuality) environment.setQuality(high || lighting === 'night');   // ночью огни горят всегда
   if (environment && environment.setLook) environment.setLook({ cheap: !high, night: lighting === 'night' });
   for (const s of glowSprites) s.visible = high;
+  // дороги в «Обычном» — без расчёта освещения (ровная лента освещена одинаково)
+  for (const [k, m] of Object.entries(roadMats)) {
+    const want = high ? 'lambert' : 'basic';
+    if (roadMatKind[k] === want) continue;
+    const c = m.userData.base ?? m.color.getHex(), next = high ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshBasicMaterial({ color: c });
+    next.userData.base = c;
+    Object.assign(next, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    for (const meshes of Object.values(roadMeshes)) for (const mesh of meshes) if (mesh.material === m) mesh.material = next;
+    terrain.traverse((o) => { if (o.material === m) o.material = next; });
+    roadMats[k] = next; roadMatKind[k] = want;
+  }
+  roadNight();
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   const sel = document.getElementById('quality');
   if (sel) sel.value = quality;
+}
+// дороги без расчёта света («Обычное») ночью темнеют сами (освещённые материалы темнеют от луны)
+function roadNight() {
+  for (const m of Object.values(roadMats)) {
+    if (!m.isMeshBasicMaterial) continue;
+    if (m.userData.base === undefined) m.userData.base = m.color.getHex();
+    m.color.setHex(m.userData.base).multiplyScalar(lighting === 'night' ? 0.32 : 0.92);
+  }
 }
 // ---------------------------------------------------------------- освещение: «День» / «Ночная смена»
 // Ночью: тёмное небо, приглушённые небо и луна, ореолы прожекторов мачт (при любом качестве), фары самосвалов
@@ -1018,7 +974,7 @@ function applyLighting(l) {
   hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
   hemi.intensity = night ? 0.8 : 1.35;
   sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
-  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (схема и «Карта местности») ночью — тёмно-синяя
+  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (если есть) ночью — тёмно-синяя
     const grid = scene.getObjectByName(name);
     if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
   }
@@ -1029,6 +985,7 @@ function applyLighting(l) {
   });
   renderer.toneMappingExposure = night ? 1.15 : 1.05;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
+  roadNight();
   if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
   if (environment && environment.setLook) environment.setLook({ cheap: quality !== 'high', night });
   if (night) nightSky();
@@ -1189,7 +1146,6 @@ function updateRoute() {
 let last = performance.now(), lastFrame = 0, frameNo = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  if (now - lastFrame < 33) return;          // не чаще 30 кадров/с
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now; lastFrame = now; frameNo++;
   if (keyboard) keyboard.update(dt);      // клавиатура: движение камеры до перелётов и рендера
@@ -1232,10 +1188,8 @@ function buildFuelStation() {
   if (!o || !modelsLib || !modelsLib.fuelStation) return;
   const g = modelsLib.fuelStation();
   g.position.copy(toScene(o.position[0], o.position[1], groundAt(o.position[0], o.position[1])));
-  const s = mode === 'schema' && dio && dio.D.objects['fuel-station'] ? dio.D.objects['fuel-station'].scale || 1 : 1;
-  g.scale.setScalar(s);
   terrain.add(g);
-  addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 * s });
+  addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
 }
 
 
@@ -1255,8 +1209,8 @@ function applyModeCamera() {
 }
 // Сразу (без перелёта) поставить камеру в вид
 function jumpToView(name) {
-  const views = mode === 'schema' ? VIEWS_SCHEMA : VIEWS, v = views[name];
-  const conv = (p) => (mode === 'schema' ? dio.s(...p) : realToScene(...p));
+  const v = VIEWS_SCHEMA[name];
+  const conv = (p) => dio.s(...p);
   setPerspective(); tween = null;
   const target = conv(v.target);
   perspCam.position.copy(fitToAspect(conv(v.pos), target)); controls.target.copy(target); controls.update();
@@ -1273,7 +1227,7 @@ function buildSchemaEnvironment() {
   if (d.anchors.tailings) addLabel(d.anchors.tailings, 'Хвостохранилище', { importance: 2, dy: 2 });
   // степь уходит в дымку у горизонта: небо и туман одного светлого тона, краёв карты не видно
   scene.background = new THREE.Color(0xdde5ea);
-  scene.fog = new THREE.Fog(0xdde5ea, 2600, 15000);
+  scene.fog = new THREE.Fog(0xdde5ea, 3500, 22000);
   return {
     group: null,
     setQuality: d.setQuality,
@@ -1281,88 +1235,29 @@ function buildSchemaEnvironment() {
     setWeather({ blizzard = false } = {}) {
       scene.background.setHex(blizzard ? 0xdfe3e7 : 0xdde5ea);
       scene.fog.color.setHex(blizzard ? 0xdfe2e5 : 0xdde5ea);
-      scene.fog.near = blizzard ? 120 : 2600; scene.fog.far = blizzard ? 700 : 15000;
+      scene.fog.near = blizzard ? 150 : 3500; scene.fog.far = blizzard ? 900 : 22000;
     },
     update() {},
   };
 }
 function buildWorld() {
   applyModeCamera();
-  if (mode === 'schema') environment = buildSchemaEnvironment();
-  else {
-    terrainGround = terrainApi.buildGround(terrain, { toScene });
-    buildPit();
-    environment = buildEnvironment(THREE, geometry, terrainApi, toScene, scene, modelsLib);
-    if (terrainGround && terrainGround.setImagery) terrainGround.setImagery(true);   // «Карта местности» — со снимком
-  }
+  environment = buildSchemaEnvironment();
   buildRoads(); updateRoads();
   buildFuelStation();
   jumpToView('all');
-  updateModeUi();
 }
-// В схеме здания, склады и отвал меньше натуральной величины (множитель — core/diorama.json)
+// Здания и склады — в реальном размере. Плитки блоков («Содержание меди») — квадраты по сетке блоков в метрах,
+// а сетка в схеме сжата в 2 раза: плитку уменьшаем так же (один раз, общая геометрия)
 function applySchemaScales() {
-  if (mode !== 'schema' || !dio) return;
-  for (const o of clickable) {
-    const id = (o.userData.thingId || '').slice(NS.length + 1);
-    const s = dio.D.objects[id] && dio.D.objects[id].scale;
-    if (s && s !== 1 && !o.userData.schemaScaled) { o.scale.set(s, s * 1.5, s); o.userData.schemaScaled = true; }   // высота — с вертикальным масштабом ×1,5
-  }
-  // маячки состояния слоя переработки (шар радиусом 3 м) — в схеме рядом с уменьшенными зданиями слишком крупные
-  const proc = scene.getObjectByName('layer-processing');
-  if (proc) proc.traverse((m) => {
-    const g = m.isMesh && m.geometry;
-    if (g && g.type === 'SphereGeometry' && g.parameters.radius === 3 && !g.userData.schemaScaled) { g.scale(0.4, 0.4, 0.4); g.userData.schemaScaled = true; }
-  });
-  // плитки блоков («Содержание меди») — общая геометрия плитки в метрах: уменьшаем один раз
   const tiles = scene.getObjectByName('geology-cu-tiles');
   if (tiles) tiles.traverse((m) => {
-    if (m.isInstancedMesh && !m.geometry.userData.schemaScaled) { m.geometry.scale(1 / 3, 1, 1 / 3); m.geometry.userData.schemaScaled = true; }
+    if (m.isInstancedMesh && !m.geometry.userData.schemaScaled) { m.geometry.scale(1 / 2, 1, 1 / 2); m.geometry.userData.schemaScaled = true; }
   });
-}
-const isAttached = (o) => { while (o.parent) o = o.parent; return o === scene; };
-function teardownWorld() {
-  for (const L of layers) scene.remove(L.ctx.group);
-  layers.length = 0;
-  if (environment && environment.group) scene.remove(environment.group);
-  environment = null; terrainGround = null;
-  terrain.clear();
-  for (const k of Object.keys(roadMeshes)) delete roadMeshes[k];
-  if (routeMesh) { routeMesh.geometry.dispose(); routeMesh = null; }
-  routeKey = '';
-  glowSprites.length = 0;
-  for (let i = clickable.length - 1; i >= 0; i--) if (!isAttached(clickable[i])) clickable.splice(i, 1);
-  for (let i = labels.length - 1; i >= 0; i--) if (!isAttached(labels[i].obj)) { labels[i].el.remove(); labels.splice(i, 1); }
-  for (const k of Object.keys(badges)) delete badges[k];
-  for (const k of Object.keys(adviceBadges)) delete adviceBadges[k];
-  for (const k of Object.keys(downBadges)) delete downBadges[k];
-  // кнопки, которые слои добавили в верхнюю панель (их обработчики — у старой копии модуля): слой создаст заново
-  for (const id of ['btn-geo-cu']) { const el = document.getElementById(id); if (el) el.remove(); }
-  for (const d of dust) d.sp.visible = false;
-  machineList = []; if (markerMesh) markerMesh.count = 0; stopOrbit();
-  lastAdviceRaw = null;
-  followId = null; tween = null;
-}
-let worldGen = 0, switching = false;
-async function switchMode(next) {
-  if (switching || next === mode || (next === 'schema' && !dio)) return;
-  switching = true;
-  try {
-    teardownWorld();
-    mode = next;
-    buildWorld();
-    await loadLayers('?w=' + (++worldGen));   // свежие копии модулей слоёв: их состояние — заново, в новом режиме
-    applySchemaScales();
-    applyQuality(quality);
-    applyLighting(lighting);
-    renderPanel();
-    updateFollowButton();
-  } finally { switching = false; }
 }
 // В схеме вся техника ближе 2,5 км «по метрам» слоёв — дальнюю (дальше 150 единиц от камеры) переводим
 // в упрощённую детализацию после update слоёв: силуэт тот же, кадров больше
 function schemaDetail() {
-  if (mode !== 'schema') return;
   camera.getWorldPosition(_c);
   for (const o of clickable) {
     if (typeof o.setDetail !== 'function' || !/:(truck|excavator|drill)-/.test(o.userData.thingId || '')) continue;
@@ -1374,7 +1269,8 @@ function schemaDetail() {
       o.setDetail = (level) => orig.call(o, o.userData.schemaDetail || level);
     }
     o.getWorldPosition(_v);
-    o.userData.schemaDetail = camera === orthoCam || _v.distanceTo(_c) > 250 ? 'far' : 'full';
+    // упрощённая модель — дальше 450 единиц («Высокое») или 200 («Обычное»: без видеокарты главное — число треугольников)
+    o.userData.schemaDetail = camera === orthoCam || _v.distanceTo(_c) > (quality === 'high' ? 450 : 200) ? 'far' : 'full';
     o.setDetail(o.userData.schemaDetail);
   }
 }
@@ -1433,7 +1329,8 @@ function updateDust(dt) {
 // пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль дороги, по которой к пункту
 // приезжают (к забою — путь от дробилки, к дробилке — путь из карьера), с шагом в длину самосвала
 // (только в схеме, только картинка)
-const QUEUE_STEP = 17;   // единиц: самосвал 180 т (15 м × 2,5 / 3 ≈ 12,5) + зазор (с запасом на повороты подъезда)
+const QUEUE_STEP = 25;   // единиц: самосвал 180 т (15 м × 1,25 ≈ 19) + зазор (с запасом на повороты подъезда)
+const queueSlots = {};   // пункт -> [thingId по порядку прихода]: место в очереди закреплено за машиной
 const queueLanes = {};
 function queueLane(node) {
   if (queueLanes[node] !== undefined) return queueLanes[node];
@@ -1472,10 +1369,10 @@ function queueSide(pts) {   // 1 — правая полоса, −1 — лев�
       near[s] = Math.min(near[s], distTo(q.x - Math.cos(yaw) * LANE * s, q.y - Math.sin(yaw) * LANE * s));
     }
   }
-  return near[1] < 12 && near['-1'] > near[1] ? -1 : 1;   // 12 единиц: полкорпуса самосвала + ширина конвейера + зазор
+  return near[1] < 20 && near['-1'] > near[1] ? -1 : 1;   // 20 единиц: полкорпуса самосвала + ширина конвейера + зазор
 }
 function lineUpQueues() {
-  if (mode !== 'schema' || !dio) return;
+  if (!dio) return;
   const groups = {};
   for (const o of clickable) {
     const id = o.userData.thingId || '';
@@ -1489,16 +1386,22 @@ function lineUpQueues() {
     if (!node || !dio.D.nodes[node]) continue;
     (groups[node] || (groups[node] = [])).push(o);
   }
+  for (const node of Object.keys(queueSlots)) if (!groups[node]) queueSlots[node].length = 0;
   for (const [node, list] of Object.entries(groups)) {
     const lane = queueLane(node);
     if (!lane) continue;
-    list.sort((a, b) => (a.userData.thingId < b.userData.thingId ? -1 : 1));
+    // порядок — по приходу в очередь (закреплён за машиной): ушедшие освобождают место, новые встают в хвост
+    const slots = queueSlots[node] || (queueSlots[node] = []);
+    const ids = new Set(list.map((o) => o.userData.thingId));
+    for (let i = slots.length - 1; i >= 0; i--) if (!ids.has(slots[i])) slots.splice(i, 1);
+    for (const o of list) if (!slots.includes(o.userData.thingId)) slots.push(o.userData.thingId);
+    list.sort((a, b) => slots.indexOf(a.userData.thingId) - slots.indexOf(b.userData.thingId));
     const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP));
     const side = queueSide(pts);
     list.forEach((o, k) => {
       const q = pts[k];
       if (!q) return;
-      const p = dio.s(q.x, q.y, q.z + mp().road.lift);
+      const p = dio.s(q.x, q.y, q.z);   // высоту ставит groundMachines
       const yaw = Math.atan2(q.dx, -q.dy);      // носом к пункту (в сцене z = −север)
       // очередь — на одной полосе, встречные проходят; полоса — подальше от конвейера (подъезд к дробилке идёт вдоль него)
       p.x += -Math.cos(yaw) * LANE * side; p.z += Math.sin(yaw) * LANE * side;
@@ -1510,17 +1413,16 @@ function lineUpQueues() {
 // Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
 // после update слоёв отводим буровые не ближе 24 единиц от экскаваторов (только в схеме, только картинка)
 function separateDrills() {
-  if (mode !== 'schema') return;
   const ex = clickable.filter((o) => /:excavator-/.test(o.userData.thingId || '') && !o.isMesh);
   for (const o of clickable) {
     if (!/:drill-/.test(o.userData.thingId || '') || o.isMesh) continue;
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      const R = 16;   // единиц: полкорпуса экскаватора (≈ 7) + полкорпуса бурового (≈ 5) + зазор
+      const R = 26;   // единиц: полкорпуса экскаватора (≈ 10,5) + полкорпуса бурового (≈ 7) + зазор
       if (d >= R) continue;
       const k = d > 0.01 ? R / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
-      if (dio) o.position.y = dio.surfaceAt(o.position.x, -o.position.z);   // на поверхность схемы в новом месте
+
     }
   }
   // самосвал под погрузкой у увеличенного экскаватора (×1,4) — не ближе 15 единиц от его центра (без наложения на гусеницы)
@@ -1528,24 +1430,22 @@ function separateDrills() {
     if (!/:truck-/.test(o.userData.thingId || '') || o.isMesh) continue;
     for (const e of ex) {
       const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      const R = 15;   // единиц: полкорпуса экскаватора + полкорпуса самосвала + зазор
+      const R = 23;   // единиц: полкорпуса экскаватора (≈ 10,5) + полкорпуса самосвала (≈ 9,4) + зазор
       if (d >= R) continue;
       // самосвал в самой точке экскаватора (забой на заезде): отводим назад по его ходу — он стоит носом к экскаватору
       const ux = d > 0.01 ? dx / d : -Math.sin(o.rotation.y), uz = d > 0.01 ? dz / d : -Math.cos(o.rotation.y);
       o.position.x = e.position.x + ux * R; o.position.z = e.position.z + uz * R;
-      if (dio) o.position.y = Math.max(o.position.y, dio.surfaceAt(o.position.x, -o.position.z));
     }
   }
 }
 // Зоны забоев слоя геологии нарисованы в метрах (плоскость или группа плиток ≈ 120 × 60 м), слой каждый кадр ставит им
-// масштаб ctx.markerScale — в схеме после обновления слоя ставим 1 : 3, как у карьера
+// масштаб ctx.markerScale — в схеме после обновления слоя ставим 1 : 2, как у карьера
 function shrinkFaceZones() {
-  if (mode !== 'schema') return;
   for (const o of clickable) {
     if (!/:face-/.test(o.userData.thingId || '')) continue;
-    // плоскость (повёрнута в горизонталь: локальные x, y) или группа плиток (x, z сцены): в схеме — 1 : 3
-    if (o.isMesh) o.scale.set(1 / 3, 1 / 3, 1);
-    else o.scale.set(1 / 3, 1, 1 / 3);
+    // плоскость (повёрнута в горизонталь: локальные x, y) или группа плиток (x, z сцены): в схеме — 1 : 2
+    if (o.isMesh) o.scale.set(1 / 2, 1 / 2, 1);
+    else o.scale.set(1 / 2, 1, 1 / 2);
   }
 }
 // ---------------------------------------------------------------- техника: исходные места слоёв и поправки сцены
@@ -1560,7 +1460,7 @@ function restoreRaw() {
 function adjustMachines(dt) {
   machineList = clickable.filter((o) => !o.isMesh && o.parent && MACHINE_RE.test(o.userData.thingId || ''));
   for (const o of machineList) (o.userData.rawPos || (o.userData.rawPos = new THREE.Vector3())).copy(o.position);
-  if (mode === 'schema' && dio) {
+  if (dio) {
     orientTrucks(dt);
     shrinkFaceZones();
     for (const o of machineList) if (/:drill-/.test(o.userData.thingId)) o.scale.setScalar(markerScale);   // как остальная техника
@@ -1570,11 +1470,80 @@ function adjustMachines(dt) {
     separateDrills();
     separateTrucks();
     separateDrills();   // ещё раз: отведённый назад самосвал не должен въехать в экскаватор
+    drillsToBerms();
+    smoothShifts(dt);
+    separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
+    separateDrills();
+    groundMachines(dt);
   }
   updateMarkers();
 }
+// Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке
+function drillsToBerms() {
+  const P = dio.pit;
+  for (const o of machineList) {
+    if (o.userData.thingId.indexOf(':drill-') < 0) continue;
+    const xs = o.position.x, ys = -o.position.z;
+    const ds = dio.schemaInset(xs, ys);
+    if (ds < 0 || ds >= P.Ds) continue;
+    const k = Math.floor(ds / P.inset);
+    const t = Math.atan2((ys - P.cy) / (P.b - ds), (xs - P.cx) / (P.a - ds));
+    const [bx, by] = dio.ringPoint(k * P.inset + P.berm / 2, t);
+    o.position.x = bx; o.position.z = -by;
+    // вдоль бермы: касательная к эллипсу в этой точке
+    const tx = -(P.a - ds) * Math.sin(t), ty = (P.b - ds) * Math.cos(t);
+    o.rotation.y = Math.atan2(tx, -ty);
+  }
+}
+// Без телепортов: сдвиг отображения (полоса, место в очереди, разведение) — поправка к месту слоя; она меняется
+// плавно (≈ 0,6 с), курс — тоже. Место слоя (rawPos) по-прежнему его собственное
+function smoothShifts(dt) {
+  const a = 1 - Math.exp(-dt / 0.25), ar = 1 - Math.exp(-dt / 0.2);
+  for (const o of machineList) {
+    const raw = o.userData.rawPos, ud = o.userData;
+    const ox = o.position.x - raw.x, oz = o.position.z - raw.z;
+    if (!ud.shift) ud.shift = { x: ox, z: oz };
+    else if (Math.hypot(ox - ud.shift.x, oz - ud.shift.z) > 400) { ud.shift.x = ox; ud.shift.z = oz; }   // перенос слоем
+    else { ud.shift.x += (ox - ud.shift.x) * a; ud.shift.z += (oz - ud.shift.z) * a; }
+    o.position.x = raw.x + ud.shift.x; o.position.z = raw.z + ud.shift.z;
+    const yaw = o.rotation.y;
+    if (ud.dispYaw === undefined) ud.dispYaw = yaw;
+    let d = yaw - ud.dispYaw;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    ud.dispYaw += d * ar;
+    o.rotation.y = ud.dispYaw;
+  }
+}
+// Колёса и гусеницы — на поверхности (единая функция высоты dio.surfaceAt + полотно дороги), наклон корпуса —
+// по уклону под машиной: продольный (тангаж) и поперечный (крен), сглаженно
+const ROAD_LIFT = 0.45;   // полотно дороги над поверхностью (diorama-scene.js roadRibbons)
+function groundMachines(dt) {
+  const k = 1 - Math.exp(-dt / 0.15);
+  for (const o of machineList) {
+    const ud = o.userData, s = o.scale.x || 1;
+    const size = ud.size || {};
+    const L = (size.length || size.l || 12) * s * 0.45, W = (size.width || size.w || 7) * s * 0.45;
+    const fx = Math.sin(o.rotation.y), fz = Math.cos(o.rotation.y);     // вперёд (локальная +Z)
+    const lx = Math.cos(o.rotation.y), lz = -Math.sin(o.rotation.y);    // локальная +X
+    const H = (x, z) => dio.surfaceAt(x, -z);
+    const x = o.position.x, z = o.position.z;
+    const h0 = H(x, z);
+    // точка за кромкой уступа (перепад больше 3 единиц) — не опора: считаем её на уровне центра
+    const near = (h) => (Math.abs(h - h0) > 3 ? h0 : h);
+    const hf = near(H(x + fx * L, z + fz * L)), hb = near(H(x - fx * L, z - fz * L));
+    const hl = near(H(x + lx * W, z + lz * W)), hr = near(H(x - lx * W, z - lz * W));
+    const onRoad = ud.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0;
+    o.position.y = h0 + onRoad;
+    const pitch = -Math.atan2(hf - hb, 2 * L), roll = Math.atan2(hl - hr, 2 * W);
+    if (o.rotation.order !== 'YXZ') o.rotation.order = 'YXZ';
+    ud.tilt = ud.tilt || { p: pitch, r: roll };
+    ud.tilt.p += (pitch - ud.tilt.p) * k; ud.tilt.r += (roll - ud.tilt.r) * k;
+    o.rotation.x = Math.max(-0.35, Math.min(0.35, ud.tilt.p)); o.rotation.z = Math.max(-0.3, Math.min(0.3, ud.tilt.r));
+  }
+}
 // Две полосы: едущий самосвал смещается вправо по ходу (гружёные и порожние идут навстречу — по разным сторонам)
-const LANE = 3.5;   // единиц: четверть ширины дороги 14
+const LANE = 7;   // единиц: четверть ширины дороги 28
 const MOVING = new Set(['hauling', 'returning', 'to_fuel', 'refueling_trip', 'traveling']);
 function laneOffsets() {
   for (const o of machineList) {
@@ -1587,7 +1556,7 @@ function laneOffsets() {
 }
 // Если два самосвала всё равно налезают (по габаритам с учётом курса) — задний отходит назад вдоль своего хода;
 // два стоящих на разгрузке в одной точке — второй сдвигается в сторону
-const TRUCK_L = 15 * 2.5 / 3 + 1.5, TRUCK_W = 8 * 2.5 / 3 + 0.8;   // единиц: самосвал 180 т + зазор
+const TRUCK_L = 15 * 1.25 + 2, TRUCK_W = 8 * 1.25 + 1;   // единиц: самосвал 180 т + зазор
 function truckBox(o) { return { cx: o.position.x, cz: o.position.z, ux: Math.sin(o.rotation.y), uz: Math.cos(o.rotation.y) }; }
 function boxesOverlap(A, B) {   // разделяющая ось для двух прямоугольников TRUCK_L × TRUCK_W
   const hl = TRUCK_L / 2, hw = TRUCK_W / 2, dx = B.cx - A.cx, dz = B.cz - A.cz;
@@ -1598,11 +1567,11 @@ function boxesOverlap(A, B) {   // разделяющая ось для двух
   }
   return true;
 }
-function separateTrucks() {
+function separateTrucks(nudge = 0, passes = 8) {
   const trucks = machineList.filter((o) => o.userData.thingId.indexOf(':truck-') >= 0);
   // под погрузкой и разгрузкой самосвал стоит у экскаватора / пункта — его не двигаем, отходит другой
   const fixed = (o) => { const st = val(o.userData.thingId, 'state', ''); return st === 'loading' || st === 'dumping'; };
-  for (let pass = 0; pass < 8; pass++) {
+  for (let pass = 0; pass < passes; pass++) {
     let moved = false;
     for (let i = 0; i < trucks.length; i++) for (let j = i + 1; j < trucks.length; j++) {
       const a = trucks[i], b = trucks[j];
@@ -1617,9 +1586,8 @@ function separateTrucks() {
         if (fixed(back)) back = back === a ? b : a;
         ux = Math.sin(back.rotation.y); uz = Math.cos(back.rotation.y);
       }
-      const step = fixed(a) && fixed(b) ? TRUCK_W : TRUCK_L * 0.5;
+      const step = nudge || (fixed(a) && fixed(b) ? TRUCK_W : TRUCK_L * 0.5);
       back.position.x -= ux * step; back.position.z -= uz * step;
-      if (dio) back.position.y = Math.max(back.position.y, dio.surfaceAt(back.position.x, -back.position.z));
       moved = true;
     }
     if (!moved) break;
@@ -1658,7 +1626,7 @@ function updateMarkers() {
     if (!ortho && dist < far) continue;
     const size = dist * 0.0055;                                  // ≈ одинаковый размер на экране
     _ms.setScalar(size);
-    _v.y += 12 * o.scale.y + size * 0.4;
+    _v.y += 10 * o.scale.y + size * 0.4;
     _mm.compose(_v, _mq, _ms);
     markerMesh.setMatrixAt(n, _mm);
     markerMesh.setColorAt(n, _mc.setHex(markerColor(o.userData.thingId)));
@@ -1676,8 +1644,39 @@ window.__screenOf = (thingId) => {
   return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
 };
 // для проверок: места и курсы техники в сцене (после поправок)
-window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, z: o.position.z,
+window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
+
+// для проверок: «земля одна для всех» — техника на поверхности, дороги не ниже рельефа, машины не налезают.
+// Высота машины сравнивается с dio.surfaceAt под ней (у самосвалов — плюс полотно дороги); отрезки дорог —
+// вершины лент полотна против поверхности под ними; наложения — самосвалы по габаритам с курсом и самосвал в экскаваторе
+window.__groundCheck = () => {
+  const machines = [];
+  for (const o of machineList) {
+    const want = dio.surfaceAt(o.position.x, -o.position.z) + (o.userData.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0);
+    machines.push({ id: o.userData.thingId.split(':')[1], dy: +(o.position.y - want).toFixed(3) });
+  }
+  let roadVerts = 0, roadBelow = 0, roadWorst = 0;
+  for (const meshes of Object.values(roadMeshes)) for (const m of meshes) {
+    const p = m.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const below = dio.surfaceAt(p.getX(i), -p.getZ(i)) - p.getY(i);
+      roadVerts++; if (below > 0.5) roadBelow++; roadWorst = Math.max(roadWorst, below);
+    }
+  }
+  const trucks = machineList.filter((o) => o.userData.thingId.indexOf(':truck-') >= 0);
+  const ex = machineList.filter((o) => o.userData.thingId.indexOf(':excavator-') >= 0);
+  const overlaps = [];
+  for (let i = 0; i < trucks.length; i++) for (let j = i + 1; j < trucks.length; j++) {
+    if (boxesOverlap(truckBox(trucks[i]), truckBox(trucks[j]))) overlaps.push(trucks[i].userData.thingId.split(':')[1] + '×' + trucks[j].userData.thingId.split(':')[1]);
+  }
+  for (const t of trucks) for (const e of ex) {
+    if (Math.hypot(t.position.x - e.position.x, t.position.z - e.position.z) < 18) overlaps.push(t.userData.thingId.split(':')[1] + '×' + e.userData.thingId.split(':')[1]);
+  }
+  const worst = machines.reduce((w, m) => (Math.abs(m.dy) > Math.abs(w.dy) ? m : w), { id: '—', dy: 0 });
+  return { machines: machines.length, offGround: machines.filter((m) => Math.abs(m.dy) > 0.5).length, worst,
+    roadVerts, roadBelow, roadWorst: +roadWorst.toFixed(3), overlaps };
+};
 
 // Облёт: двойной клик по объекту — камера летит к нему и вращается вокруг; Esc, виды или перетаскивание — выход
 let orbitId = null;
@@ -1691,10 +1690,14 @@ canvas.addEventListener('dblclick', (e) => {
   let d;
   if (MACHINE_RE.test(id)) {   // техника — крупный план: 20–30 м местности
     const len = ((obj.userData.size && (obj.userData.size.length || obj.userData.size[0])) || 13) * (obj.scale.x || 1);
-    d = Math.max(mp().cam.min * 2.5, len * 1.8);
+    d = Math.max(mp().cam.min * 2.5, len * 2.8);
   } else {                     // здания и площадки — по габаритам, снаружи (≈ 135 м и дальше)
-    const box = new THREE.Box3().setFromObject(obj), sz = box.getSize(new THREE.Vector3());
-    d = Math.max(45 * mp().unit * 3, Math.max(sz.x, sz.z) * 1.4);
+    // клик мог попасть в точку подписи (пустой Object3D внутри модели здания) — габариты берём у модели
+    let box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty() && obj.parent && obj.parent !== scene) box = new THREE.Box3().setFromObject(obj.parent);
+    if (!box.isEmpty() && box.getSize(new THREE.Vector3()).length() > 2000) box.makeEmpty();   // не весь слой
+    const sz = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
+    d = Math.max(90, Math.max(sz.x, sz.z) * 1.2);
     if (!box.isEmpty()) box.getCenter(_v);
   }
   flyTo(_v.clone().add(new THREE.Vector3(-d * 0.75, d * 0.45, d * 0.8)), _v.clone());
@@ -1708,7 +1711,6 @@ canvas.addEventListener('pointerdown', () => { if (orbitId) controls.autoRotate 
 // В схеме дороги повёрнуты не так, как в жизни: самосвал разворачивается носом по направлению своего движения в сцене
 const truckMotion = new WeakMap();
 function orientTrucks(dt) {
-  if (mode !== 'schema') return;
   for (const o of clickable) {
     if ((o.userData.thingId || '').indexOf(':truck-') < 0 || !o.parent) continue;
     const p = o.position;
@@ -1726,31 +1728,39 @@ function orientTrucks(dt) {
   }
 }
 
-// ---------------------------------------------------------------- кнопка «Карта местности» / «Схема» и подписи источников
-function updateAttribution() {
-  const a = document.getElementById('attribution');
-  if (mode !== 'map' || !terrainApi || !terrainApi.attribution) { a.hidden = true; return; }
-  const on = terrainGround && terrainGround.imageryEnabled && terrainGround.imageryEnabled();
-  a.textContent = terrainApi.attribution.dem + (on ? ' ' + terrainApi.attribution.image : '');
-  a.hidden = !a.textContent;
-}
-function updateModeUi() {
-  const btn = document.getElementById('btn-map');
-  if (btn) {
-    btn.classList.toggle('active', mode === 'map');
-    btn.textContent = mode === 'map' ? 'Схема' : 'Карта местности';
-    btn.title = mode === 'map' ? 'Вернуться к схеме-макету рудника' : 'Реальный масштаб: рельеф Copernicus DEM и снимок Sentinel-2';
+// ---------------------------------------------------------------- «Фото местности»: окно со снимком Sentinel-2
+// Реальный Бозшаколь — снимок data/terrain/texture.jpg (квадрат 6 × 6 км в координатах рудника, 10 м/пиксель).
+// Подписи — места объектов модели (geometry.json); окно закрывается крестиком и Esc, сцена от него не зависит.
+const PHOTO_LABELS = [
+  ['Карьер', 0, 0], ['Дробилка', -250, -575], ['Сульфидная фабрика', -2700, -760], ['Глинистая фабрика', -300, -1060],
+  ['Отвал', 2200, -1100], ['Хвостохранилище (за краем снимка)', -2900, 2650],
+];
+function initPhoto() {
+  const box = document.getElementById('photo'), btn = document.getElementById('btn-photo');
+  if (!box || !btn) return;
+  const img = document.getElementById('photo-img'), marks = document.getElementById('photo-marks');
+  const half = (terrainApi && terrainApi.meta && terrainApi.meta.half_m) || 3000;
+  if (!marks.childElementCount) for (const [text, x, y] of PHOTO_LABELS) {
+    const el = document.createElement('div'); el.className = 'photo-mark';
+    // у края снимка подпись сдвигается внутрь, чтобы не обрезалась
+    el.style.left = Math.min(91, Math.max(9, (x + half) / (2 * half) * 100)).toFixed(2) + '%';
+    el.style.top = Math.min(95, Math.max(5, (half - y) / (2 * half) * 100)).toFixed(2) + '%';
+    el.textContent = text; marks.appendChild(el);
   }
-  const note = document.getElementById('scale-note');
-  if (note) note.textContent = mode === 'schema'
-    ? 'Схема рудника 1 : 3 (техника крупнее в 2,5 раза). Реальное расположение — кнопка «Карта местности»'
-    : 'вертикальный масштаб ×1,5';
-  updateAttribution();
-}
-function initModeButton() {
-  const btn = document.getElementById('btn-map');
-  if (btn) btn.addEventListener('click', () => { switchMode(mode === 'schema' ? 'map' : 'schema'); btn.blur(); });
-  updateModeUi();
+  const attr = document.getElementById('photo-attr');
+  if (terrainApi && terrainApi.meta) {
+    const src = terrainApi.meta.sources;
+    attr.textContent = src.image.attribution + ' (' + src.image.name + ', ' + terrainApi.meta.texture.date + ', 10 м/пиксель). ' +
+      'Рельеф для высот модели: ' + src.dem.name + ', ' + src.dem.attribution + '.';
+  }
+  const show = (on) => {
+    box.hidden = !on; btn.classList.toggle('active', on);
+    if (on && !img.src) img.src = './terrain/' + ((terrainApi && terrainApi.meta && terrainApi.meta.texture.file) || 'texture.jpg');
+  };
+  btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
+  document.getElementById('photo-close').addEventListener('click', () => show(false));
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) show(false); });
+  box.addEventListener('click', (e) => { if (e.target === box) show(false); });
 }
 
 // ---------------------------------------------------------------- путеводитель «Как посмотреть двойник»
@@ -1776,15 +1786,14 @@ function initGuide() {
     geometry = await r.json();
     terrainApi = await loadTerrain(THREE, geometry);
     modelsLib = createModels(THREE, colors);   // библиотека моделей для слоёв (ctx.models) и окружения
-    try { dio = await loadDiorama(THREE, geometry, terrainApi); }
-    catch (e) { console.warn('схема рудника недоступна — показываем «Карту местности»', e); dio = null; mode = 'map'; }
+    dio = await loadDiorama(THREE, geometry, terrainApi);
     buildWorld();
-    initModeButton();
+    initPhoto();
     initKeys();
     initQuality();
     initLighting();
     initReality();
-  } catch (e) { status.textContent = 'ошибка геометрии'; console.error('geometry.json', e); return; }
+  } catch (e) { status.textContent = 'ошибка загрузки схемы'; console.error('geometry.json / diorama.json', e); return; }
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {
       const a = document.getElementById('grafana-link');

@@ -36,6 +36,8 @@
 //   models.building(type, opts)           'main'|'thickener'|'warehouse'|'substation'|'office'; opts.size = [д, ш, в]
 //   models.stockpile(volume_m3, opts)     штабель (откос 37°) с глыбами: setVolume(v); opts.color
 //   models.dump(radius, height, opts)     отвал — ступенчатые ярусы с плоскими площадками; opts.tiers (по умолчанию 3)
+//   models.muckpile(shape, color)         взорванная горная масса — неровная насыпь кусков: shape = { length, width, height }
+//                                         (м) или контур [[x, z], …] (м, в плане); color — цвет породы (по умолчанию C.pile)
 //   models.lightMast(h)                   решётчатая осветительная мачта: площадка с перилами и рама 2×4 прожектора (+Z)
 //   models.powerLine(points, opts)        ЛЭП по точкам сцены: опоры + провода с провисом; opts.height (20)
 //   models.fence(points, opts)            ограждение по точкам сцены: столбики + проволока; opts.step, opts.height
@@ -1270,6 +1272,54 @@ export function createModels(THREE, colors) {
     return finish(g, api, { radius: g.userData.radius, height: g.userData.height });
   }
 
+  // ================================================================ ВЗОРВАННАЯ ГОРНАЯ МАССА — неровная насыпь кусков
+  // muckpile(shape, color): shape — { length, width, height } (м, длина — вдоль локальной X) или контур [[x, z], …]
+  // (м, в плане; высота — 0,15 меньшего размера). Основание — бугристый купол, сверху — глыбы 0,6–2,4 м разного тона
+  function muckpile(shape, color) {
+    let L = 60, W = 30, H = 0, cx = 0, cz = 0;
+    if (Array.isArray(shape) && shape.length >= 3) {
+      const xs = shape.map((p) => p[0]), zs = shape.map((p) => p[1]);
+      L = Math.max(4, Math.max(...xs) - Math.min(...xs)); W = Math.max(4, Math.max(...zs) - Math.min(...zs));
+      cx = (Math.max(...xs) + Math.min(...xs)) / 2; cz = (Math.max(...zs) + Math.min(...zs)) / 2;
+    } else if (shape && typeof shape === 'object') {
+      L = Number(shape.length) || L; W = Number(shape.width) || W; H = Number(shape.height) || 0;
+    }
+    H = H || Math.max(2, Math.min(L, W) * 0.15);
+    const hex = color ?? C.pile;
+    const g = new THREE.Group();
+    const r = rng(Math.round(L * 131 + W * 17 + H * 7));
+    // основание: верхняя половина сферы, растянутая по габаритам, с бугристостью ±15 %
+    const base = new THREE.SphereGeometry(1, 28, 9, 0, Math.PI * 2, 0, Math.PI / 2);
+    const p = base.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), k = y > 0.02 ? 1 + (r() - 0.5) * 0.3 : 1;
+      p.setXYZ(i, p.getX(i) * L / 2 * k, y * H * k, p.getZ(i) * W / 2 * k);
+    }
+    base.computeVertexNormals();
+    const mound = mk(g, base, mat(hex, { vertexColors: false }));
+    mound.position.set(cx, 0, cz);
+    // глыбы на поверхности купола: три тона, размеры 0,6–2,4 м
+    const n = Math.max(12, Math.min(260, Math.round(L * W / 14)));
+    const tones = [new THREE.Color(hex).multiplyScalar(0.8), new THREE.Color(hex), new THREE.Color(hex).lerp(new THREE.Color(0xffffff), 0.18)];
+    const rocksMesh = new THREE.InstancedMesh(dod(1), mat(0xffffff, { vertexColors: false }), n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      const a = r() * Math.PI * 2, d = Math.sqrt(r()) * 0.95;
+      const x = Math.cos(a) * d * L / 2, z = Math.sin(a) * d * W / 2;
+      const y = H * Math.sqrt(Math.max(0, 1 - d * d));
+      const sz = 0.6 + r() * r() * 1.8;
+      v.set(cx + x, y + sz * 0.2, cz + z);
+      q.setFromEuler(e.set(r() * 3, r() * 3, r() * 3));
+      s.set(sz, sz * (0.6 + r() * 0.4), sz * (0.8 + r() * 0.4));
+      rocksMesh.setMatrixAt(i, m4.compose(v, q, s));
+      rocksMesh.setColorAt(i, tones[i % 3]);
+    }
+    rocksMesh.userData.detail = true;   // вдали — только купол
+    g.add(rocksMesh);
+    g.userData.parts = { mound, rocks: rocksMesh };
+    return finish(g, {}, { length: L, width: W, height: H });
+  }
+
   // ================================================================ ОТВАЛ — ступенчатые ярусы с плоскими площадками
   function dump(radius, height, opts) {
     opts = opts || {};
@@ -1488,7 +1538,7 @@ export function createModels(THREE, colors) {
   }
 
   return {
-    truck, excavator, drill, crusher, conveyor, building, stockpile, dump, lightMast, powerLine, fence, fuelStation,
+    truck, excavator, drill, crusher, conveyor, building, stockpile, muckpile, dump, lightMast, powerLine, fence, fuelStation,
     setNight, colors: C, sizes: MODEL_SIZES, materials: matCache,
   };
 }
