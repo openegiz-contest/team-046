@@ -95,7 +95,8 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 const SKY = 0xdde8f0;
 scene.background = new THREE.Color(SKY);   // до загрузки окружения (environment.js ставит небо и туман)
-let environment = null;      // небо, туман, качество и вид земли (buildSchemaEnvironment)
+let environment = null;
+let weatherBlizzard = false;   // метель: туман пересчитывается по расстоянию камеры (updateCamera)      // небо, туман, качество и вид земли (buildSchemaEnvironment)
 
 const perspCam = new THREE.PerspectiveCamera(50, 1, 2, 30000);
 perspCam.position.set(-950, 1700, 2700);
@@ -170,6 +171,17 @@ function defaultImportance(obj) {
   return 2;
 }
 const MAX_LABELS = 30;
+// закрыта ли точка поверхностью (земля, карьер) или зданием (дробилка, корпуса) с места камеры: луч от камеры к точке
+const _occRay = new THREE.Raycaster(), _occDir = new THREE.Vector3();
+function occludedByGround(from, to) {
+  const surf = [];
+  terrain.traverse((m) => { if (m.isMesh && m.visible && /^diorama-(ground|pit)$/.test(m.name)) surf.push(m); });
+  const proc = scene.getObjectByName('layer-processing');
+  if (proc) proc.traverse((m) => { if (m.isMesh && m.visible && !(m.material && m.material.transparent)) surf.push(m); });
+  _occDir.subVectors(to, from); const len = _occDir.length(); _occDir.normalize();
+  _occRay.set(from, _occDir); _occRay.far = len - 3;
+  return _occRay.intersectObjects(surf, false).length > 0;
+}
 // подписи важности 2 и 1 показываются ближе mp().labelDist (м в «Карте местности», единицы в схеме)
 function addLabel(obj, text, arg) {
   let opts = {}, importance = defaultImportance(obj);
@@ -181,7 +193,8 @@ function addLabel(obj, text, arg) {
   el.style.display = 'none';
   labelRoot.appendChild(el);
   if (!opts.cls) obj.userData.label = text;            // служебные плашки (cls) текст объекта не трогают
-  const rec = { obj, el, dy: opts.dy || 0, small: !!opts.small, importance, last: text, text, enabled: true, warn: !!opts.cls };
+  const rec = { obj, el, dy: opts.dy || 0, small: !!opts.small, importance, last: text, text, enabled: true, warn: !!opts.cls,
+    occlude: !!opts.occlude, hidden: false };
   labels.push(rec);
   return rec;
 }
@@ -209,6 +222,10 @@ function updateLabels() {
     let imp = L.importance;
     if (focused) imp = 4;
     if (imp < 3 && dist > (LABEL_DIST[Math.max(1, Math.min(2, Math.round(imp)))] ?? 2600)) continue;
+    if (L.occlude && !ortho) {   // подпись за бортом карьера (дно не видно из-за борта) — не показываем
+      if (frameNo % 10 === 0 || L.hidden === undefined) L.hidden = occludedByGround(_c, _v);
+      if (L.hidden) continue;
+    }
     _v.project(camera);
     if (_v.z > 1 || _v.x < -1.05 || _v.x > 1.05 || _v.y < -1.05 || _v.y > 1.05) continue;
     L.sx = (_v.x + 1) / 2 * w; L.sy = (1 - _v.y) / 2 * h; L.imp = imp; L.dist = dist;
@@ -838,6 +855,12 @@ function updateCamera(dt) {
   }
   wheelZoomStep(dt);
   (camera === perspCam ? controls : topControls).update();
+  if (weatherBlizzard && scene.fog) {
+    // метель: густая дымка от места, куда смотрит камера (видимость 300 м ≈ 150 единиц карты), — вблизи плотная,
+    // на общем виде рудник виден сквозь пелену, а не пропадает целиком
+    const d = camera === orthoCam ? 1500 : perspCam.position.distanceTo(controls.target);
+    scene.fog.near = Math.max(60, d * 0.55 - 150); scene.fog.far = d + 450 + d * 0.35;
+  }
   if (dio && camera === perspCam) {   // камера всегда над поверхностью (облёт вокруг техники в карьере уводил её в борт)
     const g = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4;
     if (perspCam.position.y < g) perspCam.position.y = g;
@@ -1234,7 +1257,7 @@ function buildSchemaEnvironment() {
   const d = buildDiorama(THREE, dio, modelsLib, colors, glowTexture);
   terrain.add(d.group);
   register(d.anchors.pitFloor, NS + ':pit-central', { hitRadius: 0 });
-  addLabel(d.anchors.pitFloor, 'Карьер · дно −' + geometry.pit.depth + ' м', { importance: 3, dy: 2 });
+  addLabel(d.anchors.pitFloor, 'Карьер · дно −' + geometry.pit.depth + ' м', { importance: 3, dy: 2, occlude: true });
   const A = geometry.pit.semi_axes_top;
   addLabel(d.anchors.pitName, 'Карьер Бозшаколь · ' + fmt(2 * A[0] / 1000, 1) + ' × ' + fmt(2 * A[1] / 1000, 1) + ' км', { importance: 3, dy: 3 });
   if (d.anchors.tailings) addLabel(d.anchors.tailings, 'Хвостохранилище', { importance: 2, dy: 2 });
@@ -1248,7 +1271,8 @@ function buildSchemaEnvironment() {
     setWeather({ blizzard = false } = {}) {
       scene.background.setHex(blizzard ? 0xdfe3e7 : 0xdde5ea);
       scene.fog.color.setHex(blizzard ? 0xdfe2e5 : 0xdde5ea);
-      scene.fog.near = blizzard ? 150 : 3500; scene.fog.far = blizzard ? 900 : 22000;
+      weatherBlizzard = blizzard;
+      if (!blizzard) { scene.fog.near = 3500; scene.fog.far = 22000; }
     },
     update() {},
   };
