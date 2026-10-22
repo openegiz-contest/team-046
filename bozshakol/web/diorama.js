@@ -58,11 +58,15 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     e.zAt = (t) => e.sa[2] + (e.sb[2] - e.sa[2]) * t;
     if (ia === ib || !e.pit) return e;
     let lo = 0, hi = 1;                                       // точка пересечения борта (доля пути)
+    const Ls = Math.hypot(e.sb[0] - e.sa[0], e.sb[1] - e.sa[1]) || 1;
     for (let i = 0; i < 40; i++) {
       const m = (lo + hi) / 2, p = [e.sa[0] + (e.sb[0] - e.sa[0]) * m, e.sa[1] + (e.sb[1] - e.sa[1]) * m];
       if (inPit(p) === ia) lo = m; else hi = m;
     }
-    const tc = (lo + hi) / 2;
+    // съезд выходит на уровень борта чуть раньше пересечения (на ширину дороги с откосом): борт пересекается
+    // наискосок, и край полотна иначе оказывался бы на 12 единиц ниже степи рядом с ним (ступенька)
+    const m = Math.min(0.4, (ROAD_W + CORRIDOR_BLEND) * 1.5 / Ls);
+    const tc = ia ? Math.max(0.2, (lo + hi) / 2 - m) : Math.min(0.8, (lo + hi) / 2 + m);
     e.zAt = ia ? (t) => (t < tc ? e.sa[2] * (1 - t / tc) : 0) : (t) => (t > tc ? e.sb[2] * (t - tc) / (1 - tc) : 0);
     return e;
   }
@@ -157,25 +161,36 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   // --- высота поверхности схемы: уступы, врезанные в них съезды и дороги карьера
   const pitEdges = edges.filter((e) => e.pit);
   const facePads = Object.entries(D.nodes).filter(([n]) => n.startsWith('face-')).map(([, p]) => p);
+  // Внутри карьера: полотно (±HW от оси) и площадка забоя — ровно на своей высоте; между двумя близкими полосами
+  // (витки съезда, съезд и площадка) — ровный откос от края одной до края другой, без обрыва посередине;
+  // дальше — плавный возврат к уступам
+  const HW = ROAD_W / 2 + 2, NEAR2 = 2 * (CORRIDOR + CORRIDOR_BLEND - HW), RIM_FADE = 18;
   function surfaceAt(xs, ys) {
     const ds = schemaInset(xs, ys);
     if (ds < 0) return 0;
-    let z = benchProfile(ds);
-    let best = Infinity, zr = 0;
+    const z = benchProfile(ds);
+    // все близкие полосы (рёбра карьера и площадки) — с весом 1/d²: высота меняется плавно, без обрыва на середине
+    // между витками съезда; на самой полосе её вес подавляет остальные
+    let num = 0, den = 0, amin = Infinity;
+    const take = (d, zz) => {
+      if (d >= NEAR2) return;
+      const w = smooth((NEAR2 - d) / 8) / ((Math.max(d, 0) + 0.4) ** 2);   // у границы дальности вес плавно → 0
+      num += w * zz; den += w; if (d < amin) amin = d;
+    };
     for (const e of pitEdges) {
       const dx = e.sb[0] - e.sa[0], dy = e.sb[1] - e.sa[1], L2 = dx * dx + dy * dy || 1;
       const t = Math.max(0, Math.min(1, ((xs - e.sa[0]) * dx + (ys - e.sa[1]) * dy) / L2));
-      const d = Math.hypot(xs - (e.sa[0] + dx * t), ys - (e.sa[1] + dy * t));
-      if (d < best) { best = d; zr = e.zAt(t); }
+      take(Math.hypot(xs - (e.sa[0] + dx * t), ys - (e.sa[1] + dy * t)) - HW, e.zAt(t));
     }
     // рабочие площадки у забоев: ровный круг на уровне забоя (там стоят экскаватор и самосвал под погрузкой)
-    for (const [fx, fy, fz] of facePads) {
-      const d = Math.hypot(xs - fx, ys - fy) - FACE_PAD;
-      if (d < best) { best = d; zr = fz; }
-    }
-    if (best < CORRIDOR) return zr;
-    if (best < CORRIDOR + CORRIDOR_BLEND) { const w = smooth((best - CORRIDOR) / CORRIDOR_BLEND); return zr + (z - zr) * w; }
-    return z;
+    for (const [fx, fy, fz] of facePads) take(Math.hypot(xs - fx, ys - fy) - FACE_PAD, fz);
+    if (den < 1e-9) return z;
+    // у самого борта врезка сходит на нет: на кромке поверхность всегда на уровне степи (без обрыва у края)
+    const rim = smooth(ds / RIM_FADE);
+    const zr = z + (num / den - z) * rim;
+    if (amin <= 0) return zr;
+    const span = CORRIDOR + CORRIDOR_BLEND - HW;
+    return amin < span ? zr + (z - zr) * smooth(amin / span) : z;
   }
 
   // --- полный перенос точки: место в схеме, высота дороги/поверхности, «земля» в реальных координатах
@@ -199,7 +214,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     }
     const realGround = () => terrainApi.groundAt(x, y);
     if (road && ne.d < ROAD_NEAR) {
-      xs = road.xs; ys = road.ys; base = road.zs; ground = road.zr;
+      xs = road.xs; ys = road.ys; base = surfaceAt(clampX(xs), clampY(ys)); ground = road.zr;   // высота — единая функция
     } else {
       const [gx, gy] = generalMap(x, y);
       const gb = surfaceAt(gx, gy), gg = realGround();

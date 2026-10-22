@@ -276,8 +276,8 @@ export function roadRibbons(THREE, dio) {
         const s = -ext + (L + 2 * ext) * i / n;
         const cxp = ax + dx * s, cyp = ay + dy * s;
         const lx = cxp + nx * half, ly = cyp + ny * half, rx = cxp - nx * half, ry = cyp - ny * half;
-        const h = Math.max(dio.surfaceAt(cxp, cyp), dio.surfaceAt(lx, ly), dio.surfaceAt(rx, ry)) + lift;
-        const cur = [lx, h, -ly, rx, h, -ry];
+        // каждый край полотна — на поверхности под ним (край не уходит под откос соседнего витка или уступа)
+        const cur = [lx, dio.surfaceAt(lx, ly) + lift, -ly, rx, dio.surfaceAt(rx, ry) + lift, -ry];
         if (prev) tri.push(...prev.slice(0, 3), ...prev.slice(3), ...cur.slice(0, 3), ...cur.slice(0, 3), ...prev.slice(3), ...cur.slice(3));
         prev = cur;
       }
