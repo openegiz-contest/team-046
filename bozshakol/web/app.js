@@ -1472,7 +1472,7 @@ function queueSide(pts) {   // 1 — правая полоса, −1 — лев�
       near[s] = Math.min(near[s], distTo(q.x - Math.cos(yaw) * LANE * s, q.y - Math.sin(yaw) * LANE * s));
     }
   }
-  return near['-1'] > near[1] ? -1 : 1;
+  return near[1] < 12 && near['-1'] > near[1] ? -1 : 1;   // 12 единиц: полкорпуса самосвала + ширина конвейера + зазор
 }
 function lineUpQueues() {
   if (mode !== 'schema' || !dio) return;
