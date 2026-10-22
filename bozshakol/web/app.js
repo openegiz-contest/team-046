@@ -938,15 +938,25 @@ function applyQuality(q) {
   for (const [k, m] of Object.entries(roadMats)) {
     const want = high ? 'lambert' : 'basic';
     if (roadMatKind[k] === want) continue;
-    const c = m.color.getHex(), next = high ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(0.92) });
+    const c = m.userData.base ?? m.color.getHex(), next = high ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshBasicMaterial({ color: c });
+    next.userData.base = c;
     Object.assign(next, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     for (const meshes of Object.values(roadMeshes)) for (const mesh of meshes) if (mesh.material === m) mesh.material = next;
     terrain.traverse((o) => { if (o.material === m) o.material = next; });
     roadMats[k] = next; roadMatKind[k] = want;
   }
+  roadNight();
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   const sel = document.getElementById('quality');
   if (sel) sel.value = quality;
+}
+// дороги без расчёта света («Обычное») ночью темнеют сами (освещённые материалы темнеют от луны)
+function roadNight() {
+  for (const m of Object.values(roadMats)) {
+    if (!m.isMeshBasicMaterial) continue;
+    if (m.userData.base === undefined) m.userData.base = m.color.getHex();
+    m.color.setHex(m.userData.base).multiplyScalar(lighting === 'night' ? 0.32 : 0.92);
+  }
 }
 // ---------------------------------------------------------------- освещение: «День» / «Ночная смена»
 // Ночью: тёмное небо, приглушённые небо и луна, ореолы прожекторов мачт (при любом качестве), фары самосвалов
@@ -975,6 +985,7 @@ function applyLighting(l) {
   });
   renderer.toneMappingExposure = night ? 1.15 : 1.05;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
+  roadNight();
   if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
   if (environment && environment.setLook) environment.setLook({ cheap: quality !== 'high', night });
   if (night) nightSky();
