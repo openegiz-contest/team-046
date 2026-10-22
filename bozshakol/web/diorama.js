@@ -1,4 +1,4 @@
-// Схема-макет рудника (режим «Схема», по умолчанию): компактный макет ≈ 600 × 400 единиц сцены на подставке.
+// Схема рудника (режим «Схема», по умолчанию): карта рудника в масштабе 1 : 3 (core/diorama.json, scale).
 // Места узлов дорог и объектов — core/diorama.json (генератор core/tools/make_diorama.py). Здесь —
 // перенос реальных координат (м, geometry.json и двойники) в схему и постройка макета.
 //
@@ -20,8 +20,8 @@
 // Объекты с точным местом в diorama.json (здания, склады, экскаваторы) встают ровно туда.
 
 const ROAD_NEAR = 20, ROAD_BLEND = 35, SIDE_K = 0.4;   // м, м, множитель бокового сдвига у дороги
-const CORRIDOR = 7.5, CORRIDOR_BLEND = 5;                // единицы: врезка съездов в уступы схемы
-const FACE_PAD = 8;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
+const CORRIDOR = 10, CORRIDOR_BLEND = 6;                // единицы: врезка съездов в уступы схемы
+const FACE_PAD = 16;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
 
 export async function loadDiorama(THREE, geometry, terrainApi) {
   const r = await fetch('/diorama.json');
@@ -43,7 +43,23 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   for (const e of geometry.edges) {
     const ra = geometry.nodes[e.from], rb = geometry.nodes[e.to], sa = D.nodes[e.from], sb = D.nodes[e.to];
     if (!ra || !rb || !sa || !sb) continue;
-    edges.push({ road: e.road, from: e.from, to: e.to, ra, rb, sa, sb, pit: sa[2] < -0.01 || sb[2] < -0.01 });
+    edges.push(edgeProfile({ road: e.road, from: e.from, to: e.to, ra, rb, sa, sb, pit: sa[2] < -0.01 || sb[2] < -0.01 }));
+  }
+  // Профиль высоты ребра в схеме: обычно — линейно между узлами; ребро съезда, которое пересекает борт карьера,
+  // поднимается до уровня земли ровно на борту (дальше — по земле), иначе его край уходил бы под ровную степь
+  function edgeProfile(e) {
+    const inPit = (p) => ((p[0] - cx) / a) ** 2 + ((p[1] - cy) / b) ** 2 < 1;
+    const ia = inPit(e.sa), ib = inPit(e.sb);
+    e.zAt = (t) => e.sa[2] + (e.sb[2] - e.sa[2]) * t;
+    if (ia === ib || !e.pit) return e;
+    let lo = 0, hi = 1;                                       // точка пересечения борта (доля пути)
+    for (let i = 0; i < 40; i++) {
+      const m = (lo + hi) / 2, p = [e.sa[0] + (e.sb[0] - e.sa[0]) * m, e.sa[1] + (e.sb[1] - e.sa[1]) * m];
+      if (inPit(p) === ia) lo = m; else hi = m;
+    }
+    const tc = (lo + hi) / 2;
+    e.zAt = ia ? (t) => (t < tc ? e.sa[2] * (1 - t / tc) : 0) : (t) => (t > tc ? e.sb[2] * (t - tc) / (1 - tc) : 0);
+    return e;
   }
   function nearestEdge(x, y) {
     let best = null;
@@ -145,7 +161,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
       const dx = e.sb[0] - e.sa[0], dy = e.sb[1] - e.sa[1], L2 = dx * dx + dy * dy || 1;
       const t = Math.max(0, Math.min(1, ((xs - e.sa[0]) * dx + (ys - e.sa[1]) * dy) / L2));
       const d = Math.hypot(xs - (e.sa[0] + dx * t), ys - (e.sa[1] + dy * t));
-      if (d < best) { best = d; zr = e.sa[2] + (e.sb[2] - e.sa[2]) * t; }
+      if (d < best) { best = d; zr = e.zAt(t); }
     }
     // рабочие площадки у забоев: ровный круг на уровне забоя (там стоят экскаватор и самосвал под погрузкой)
     for (const [fx, fy, fz] of facePads) {
@@ -172,7 +188,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
       road = {
         xs: e.sa[0] + (e.sb[0] - e.sa[0]) * t + ne.ox * SIDE_K,
         ys: e.sa[1] + (e.sb[1] - e.sa[1]) * t + ne.oy * SIDE_K,
-        zs: e.sa[2] + (e.sb[2] - e.sa[2]) * t,
+        zs: e.zAt(t),
         zr: e.ra[2] + (e.rb[2] - e.ra[2]) * t,
       };
     }
