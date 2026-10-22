@@ -22,14 +22,14 @@ VZ = 1.5                # вертикальный масштаб к сжато�
 TAILINGS = {"center_s": [-2750, 330], "radii": [1000, 700]}
 # Комплексы: якорь (объект или узел) → соседи на реальном расстоянии от него (+ сдвиг якоря в схеме, единицы)
 CLUSTERS = [
-    {"anchor": ("obj", "plant-sulphide"), "shift": [0, 0],
+    {"anchor": ("obj", "plant-sulphide"), "shift": [-120, 0],   # комплекс — западнее: склад не тянется к карьеру
      "objects": ["sag-mill-01", "flotation-01", "power-grid"], "extra": {"stockpile-coarse": [20, 0]}},
     {"anchor": ("node", "crusher"), "shift": [0, -30], "objects": ["crusher-01"]},
     {"anchor": ("node", "fuel-station"), "shift": [0, 0], "objects": ["fuel-station"]},
     {"anchor": ("node", "stockpile-clay"), "shift": [0, 0], "objects": ["stockpile-clay"]},
     {"anchor": ("node", "dump-waste-1"), "shift": [0, 0], "objects": ["dump-waste-1"]},
 ]
-SHIFT_OBJ = {"plant-clay": [30, -10]}     # глинистая фабрика — чуть в сторону от дороги к складу глины
+SHIFT_OBJ = {"plant-clay": [0, -35]}      # глинистая фабрика — чуть южнее, от дороги к складу глины
 SHIFT_NODE = {"rim-ne": [0, -30]}         # узел у дробилки — вслед за ней
 
 

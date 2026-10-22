@@ -707,6 +707,7 @@ scene.add(terrain);
 
 // ---------------------------------------------------------------- дороги
 const roadMeshes = {};   // roadId -> [mesh]
+const roadMatKind = {};  // материал -> 'lambert' | 'basic' (качество)
 const roadMats = {
   open: new THREE.MeshLambertMaterial({ color: colors.road }),
   ramp: new THREE.MeshLambertMaterial({ color: colors.ramp }),
@@ -764,8 +765,8 @@ function markViewButton(name) {
 }
 // Виды — в координатах схемы [x — восток, y — север, z — высота], единицы
 const VIEWS_SCHEMA = {
-  all: { target: [-850, -150, 0], pos: [-1000, -2900, 1800] },   // косой вид ≈ 33° на весь рудник
-  pit: { target: [-90, -30, -60], pos: [-210, -860, 520] },      // карьер: 13 уступов, съезды, техника на дне
+  all: { target: [-650, -200, 0], pos: [-760, -2500, 1500] },    // косой вид ≈ 33° на весь рудник
+  pit: { target: [-120, -20, -90], pos: [-200, -640, 420] },     // карьер: 13 уступов, съезды, техника на дне
   crusher: { target: [-160, -330, 0], pos: [-240, -560, 160] },  // дробилка, заправка, начало конвейера
   plants: { target: [-1290, -400, 10], pos: [-1380, -880, 330] }, // фабрика, склад, подстанция
 };
@@ -925,13 +926,23 @@ function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
   // «Обычное»: кадр в разрешении 0,65 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
-  renderer.setPixelRatio(high ? 1 : 0.65);
+  renderer.setPixelRatio(high ? 1 : 0.6);
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
   if (environment && environment.setQuality) environment.setQuality(high || lighting === 'night');   // ночью огни горят всегда
   if (environment && environment.setLook) environment.setLook({ cheap: !high, night: lighting === 'night' });
   for (const s of glowSprites) s.visible = high;
+  // дороги в «Обычном» — без расчёта освещения (ровная лента освещена одинаково)
+  for (const [k, m] of Object.entries(roadMats)) {
+    const want = high ? 'lambert' : 'basic';
+    if (roadMatKind[k] === want) continue;
+    const c = m.color.getHex(), next = high ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshBasicMaterial({ color: new THREE.Color(c).multiplyScalar(0.92) });
+    Object.assign(next, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    for (const meshes of Object.values(roadMeshes)) for (const mesh of meshes) if (mesh.material === m) mesh.material = next;
+    terrain.traverse((o) => { if (o.material === m) o.material = next; });
+    roadMats[k] = next; roadMatKind[k] = want;
+  }
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   const sel = document.getElementById('quality');
   if (sel) sel.value = quality;
@@ -1448,7 +1459,7 @@ function adjustMachines(dt) {
     separateDrills();   // ещё раз: отведённый назад самосвал не должен въехать в экскаватор
     drillsToBerms();
     smoothShifts(dt);
-    separateTrucks(2, 12);   // дожим после сглаживания: мелкими шагами, без заметных скачков
+    separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
     separateDrills();
     groundMachines(dt);
   }

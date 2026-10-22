@@ -55,7 +55,8 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   group.add(rocks(THREE, dio, [x0, y0, x1, y1], u));
 
   // --- карьер: кольца по отступу от борта, высоты — dio.surfaceAt (уступы и врезанные съезды)
-  group.add(buildPitMesh(THREE, dio, colors, u, ts));
+  const pitMesh = buildPitMesh(THREE, dio, colors, u, ts);
+  group.add(pitMesh);
 
   // --- хвостохранилище (реальный размер): светлый пляж, гладкая вода с бликом, насыпная дамба
   const tl = D.extra && D.extra.tailings;
@@ -132,12 +133,14 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   }
   // Земля в «Обычном» — без расчёта освещения (ровная степь освещена одинаково): заметно быстрее без видеокарты.
   // Цвет подобран под освещённую днём землю; ночью — тёмный; в «Высоком» — обычный материал (тени от солнца)
-  const litMats = new Map([[ground, ground.material], [far, far.material]]);
-  const flatMats = new Map([[ground, new THREE.MeshBasicMaterial({ map: groundTex })], [far, new THREE.MeshBasicMaterial({ color: GROUND })]]);
+  // карьер в «Обычном» — цвета вершин уже с освещением от солнца (стенки на теневой стороне темнее), без расчёта света
+  const litMats = new Map([[ground, ground.material], [far, far.material], [pitMesh, pitMesh.material]]);
+  const flatMats = new Map([[ground, new THREE.MeshBasicMaterial({ map: groundTex })], [far, new THREE.MeshBasicMaterial({ color: GROUND })],
+    [pitMesh, new THREE.MeshBasicMaterial({ vertexColors: true })]]);
   function setLook({ cheap = false, night = false } = {}) {
     for (const [mesh, lit] of litMats) {
       const flat = flatMats.get(mesh);
-      flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : 0xffffff));
+      flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : mesh === pitMesh ? 0xf0f0f0 : 0xffffff));
       mesh.material = cheap ? flat : lit;
     }
   }
@@ -233,12 +236,13 @@ function buildPitMesh(THREE, dio, colors, u, ts) {
   pos.push(pit.cx, dio.surfaceAt(pit.cx, pit.cy), -pit.cy); col.push(floor.r, floor.g, floor.b);
   const lastRing = (insets.length - 1) * SEG;
   for (let i = 0; i < SEG; i++) idx.push(lastRing + i, c0, lastRing + (i + 1) % SEG);
+  for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }   // лицевая сторона — вверх
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
-  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }));
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
   m.receiveShadow = true;
   m.name = 'diorama-pit';
   return m;
