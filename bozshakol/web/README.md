@@ -16,9 +16,11 @@ Ditto по `/ditto/...` (пароль подставляет nginx, в брау�
   за 5 с или оборвался — опрос раз в секунду), загрузка слоёв.
 - `controls.js` — управление сценой с клавиатуры (см. раздел ниже): `initKeyboard(opts) → {update(dt), help}`;
   `app.js` создаёт его после загрузки рельефа и зовёт `keyboard.update(dt)` в начале каждого кадра.
-- `terrain.js` — рельеф степи: `loadTerrain(THREE, geometry)` → `{ok, heightAt(x, y), buildGround(scene), attribution}`.
-  Сейчас заглушка (ровная степь с отверстием под карьер, `heightAt = 0`); настоящий рельеф подключается заменой
-  этого файла, `app.js` не меняется; `attribution` показывается мелким текстом в углу сцены.
+- `terrain.js` — только высоты реального рельефа (Copernicus DEM): `loadTerrain(THREE, geometry)` →
+  `{ok, meta, heightAt(x, y), groundAt(x, y), attribution}`; в сцене его нет, высоты нужны переносу координат
+  в схему (`diorama.js`), `meta` — окну «Фото местности».
+- `diorama.js` — перенос координат в схему и единая функция высоты `surfaceAt`; `diorama-scene.js` — земля,
+  карьер, полотно дорог, хвостохранилище, ограждение, мачты, ЛЭП.
 - `layers/haulage.js` — самосвалы и экскаваторы; `layers/geology.js` — забои и буровые;
   `layers/processing.js` — дробилка, конвейер, склады, фабрики, подстанция, отвал.
 - `vendor/three/` — three.js 0.160.0 (см. `VERSION.txt`), подключается через importmap, без CDN.

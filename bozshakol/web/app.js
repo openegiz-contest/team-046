@@ -116,6 +116,7 @@ controls.update();
 const topControls = new OrbitControls(orthoCam, canvas);
 topControls.target.set(-1100, 0, 200);
 topControls.enableRotate = false;
+topControls.enableZoom = false;   // колесо — свой плавный зум (wheelZoom), как в перспективе
 // в виде сверху левая кнопка — панорамирование (вращение запрещено)
 topControls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 topControls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
@@ -753,7 +754,7 @@ let followId = null;      // thingId самосвала, за которым и�
 const btnFollow = document.getElementById('btn-follow');
 function setPerspective() {
   if (camera === perspCam) return;
-  camera = perspCam; controls.enabled = true; topControls.enabled = false;
+  camera = perspCam; controls.enabled = true; topControls.enabled = false; zoomGoal = null;
   markViewButton('');
 }
 function flyTo(pos, target) {
@@ -778,7 +779,7 @@ function setView(name) {
   if (name !== 'top' && !views[name]) return;
   followId = null; updateFollowButton(); stopOrbit();
   if (name === 'top') {
-    camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null;
+    camera = orthoCam; controls.enabled = false; topControls.enabled = true; tween = null; zoomGoal = null;
   } else {
     const v = views[name];
     const target = conv(v.target);
@@ -963,7 +964,7 @@ function applyLighting(l) {
   hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
   hemi.intensity = night ? 0.8 : 1.35;
   sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
-  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (схема и «Карта местности») ночью — тёмно-синяя
+  for (const name of ['diorama-grid', 'grid']) {   // сетка фона (если есть) ночью — тёмно-синяя
     const grid = scene.getObjectByName(name);
     if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
   }
@@ -1631,7 +1632,7 @@ window.__screenOf = (thingId) => {
   return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
 };
 // для проверок: места и курсы техники в сцене (после поправок)
-window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, z: o.position.z,
+window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
 
 // для проверок: «земля одна для всех» — техника на поверхности, дороги не ниже рельефа, машины не налезают.
@@ -1677,9 +1678,13 @@ canvas.addEventListener('dblclick', (e) => {
   let d;
   if (MACHINE_RE.test(id)) {   // техника — крупный план: 20–30 м местности
     const len = ((obj.userData.size && (obj.userData.size.length || obj.userData.size[0])) || 13) * (obj.scale.x || 1);
-    d = Math.max(mp().cam.min * 2.5, len * 1.8);
+    d = Math.max(mp().cam.min * 2.5, len * 2.8);
   } else {                     // здания и площадки — по габаритам, снаружи (≈ 135 м и дальше)
-    const box = new THREE.Box3().setFromObject(obj), sz = box.getSize(new THREE.Vector3());
+    // клик мог попасть в точку подписи (пустой Object3D внутри модели здания) — габариты берём у модели
+    let box = new THREE.Box3().setFromObject(obj);
+    if (box.isEmpty() && obj.parent && obj.parent !== scene) box = new THREE.Box3().setFromObject(obj.parent);
+    if (!box.isEmpty() && box.getSize(new THREE.Vector3()).length() > 2000) box.makeEmpty();   // не весь слой
+    const sz = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
     d = Math.max(90, Math.max(sz.x, sz.z) * 1.2);
     if (!box.isEmpty()) box.getCenter(_v);
   }
@@ -1725,8 +1730,9 @@ function initPhoto() {
   const half = (terrainApi && terrainApi.meta && terrainApi.meta.half_m) || 3000;
   if (!marks.childElementCount) for (const [text, x, y] of PHOTO_LABELS) {
     const el = document.createElement('div'); el.className = 'photo-mark';
-    el.style.left = ((x + half) / (2 * half) * 100).toFixed(2) + '%';
-    el.style.top = ((half - y) / (2 * half) * 100).toFixed(2) + '%';
+    // у края снимка подпись сдвигается внутрь, чтобы не обрезалась
+    el.style.left = Math.min(91, Math.max(9, (x + half) / (2 * half) * 100)).toFixed(2) + '%';
+    el.style.top = Math.min(95, Math.max(5, (half - y) / (2 * half) * 100)).toFixed(2) + '%';
     el.textContent = text; marks.appendChild(el);
   }
   const attr = document.getElementById('photo-attr');
