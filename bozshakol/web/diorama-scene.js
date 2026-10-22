@@ -21,17 +21,19 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const K = D.scale || 2;             // м местности на единицу карты
   const u = (m) => m / K;             // расстояние по карте: метры → единицы
   const glows = [];
-  const ts = pitParams(dio);
+  const ts = pitParams(dio, PIT_SEG), tsLow = pitParams(dio, PIT_SEG / 2);
 
   // --- степь до горизонта: внешнее поле одного цвета, внутри области рудника — текстура с пятнами и площадками
   const x0 = B.minX, x1 = B.maxX, y0 = B.minY, y1 = B.maxY;
+  // подложка под всей землёй (ниже на 1,5 единицы) с отверстием чуть меньше карьера: на любых стыках сеток
+  // вместо щели видна степь, а под первой бермой карьера подложка не видна
   const outer = new THREE.Shape();
   outer.moveTo(-FAR, -FAR); outer.lineTo(FAR, -FAR); outer.lineTo(FAR, FAR); outer.lineTo(-FAR, FAR); outer.closePath();
-  const rectHole = new THREE.Path();
-  rectHole.moveTo(x0, y0); rectHole.lineTo(x0, y1); rectHole.lineTo(x1, y1); rectHole.lineTo(x1, y0); rectHole.closePath();
-  outer.holes.push(rectHole);
-  const far = new THREE.Mesh(new THREE.ShapeGeometry(outer), new THREE.MeshLambertMaterial({ color: GROUND }));
-  far.rotation.x = -Math.PI / 2; far.position.y = -0.05; far.receiveShadow = true; far.name = 'diorama-far';
+  const farHole = new THREE.Path();
+  farHole.absellipse(pit.cx, pit.cy, pit.a - 3, pit.b - 3, 0, Math.PI * 2, true, 0);
+  outer.holes.push(farHole);
+  const far = new THREE.Mesh(new THREE.ShapeGeometry(outer, 160), new THREE.MeshLambertMaterial({ color: GROUND }));
+  far.rotation.x = -Math.PI / 2; far.position.y = -1.5; far.receiveShadow = true; far.name = 'diorama-far';
   group.add(far);
 
   // земля вокруг карьера: отверстие — ровно по верхнему кольцу сетки карьера (те же точки, без щелей)
@@ -56,7 +58,10 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
 
   // --- карьер: кольца по отступу от борта, высоты — dio.surfaceAt (уступы и врезанные съезды)
   const pitMesh = buildPitMesh(THREE, dio, colors, u, ts);
-  group.add(pitMesh);
+  const pitLow = buildPitMesh(THREE, dio, colors, u, tsLow);   // «Обычное»: вдвое меньше точек на кольцо
+  pitLow.material = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xf0f0f0 });
+  pitLow.visible = false;
+  group.add(pitMesh, pitLow);
 
   // --- хвостохранилище (реальный размер): светлый пляж, гладкая вода с бликом, насыпная дамба
   const tl = D.extra && D.extra.tailings;
@@ -143,6 +148,8 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
       flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : mesh === pitMesh ? 0xf0f0f0 : 0xffffff));
       mesh.material = cheap ? flat : lit;
     }
+    pitMesh.visible = !cheap; pitLow.visible = cheap;
+    pitLow.material.color.setHex(night ? 0x46506a : 0xf0f0f0);
   }
   return {
     group, anchors, glowAt, setLook,
@@ -152,7 +159,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
 }
 
 // Углы точек на кольцах карьера: равный шаг по длине верхнего борта (у длинных боков эллипса точек больше)
-function pitParams(dio) {
+function pitParams(dio, SEG) {
   const { a, b } = dio.pit, N = 8192, cum = [0];
   for (let i = 1; i <= N; i++) {
     const t0 = (i - 1) / N * Math.PI * 2, t1 = i / N * Math.PI * 2;
@@ -160,8 +167,8 @@ function pitParams(dio) {
   }
   const ts = [];
   let j = 0;
-  for (let k = 0; k < PIT_SEG; k++) {
-    const L = k / PIT_SEG * cum[N];
+  for (let k = 0; k < SEG; k++) {
+    const L = k / SEG * cum[N];
     while (cum[j + 1] < L) j++;
     ts.push((j + (L - cum[j]) / ((cum[j + 1] - cum[j]) || 1)) / N * Math.PI * 2);
   }

@@ -926,8 +926,8 @@ const shadowCasters = new WeakSet();
 function applyQuality(q) {
   quality = q === 'normal' ? 'normal' : 'high';
   const high = quality === 'high';
-  // «Обычное»: кадр в разрешении 0,65 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
-  renderer.setPixelRatio(high ? 1 : 0.6);
+  // «Обычное»: кадр в разрешении 0,5 от экрана — без видеокарты отрисовка пикселей самая дорогая часть кадра
+  renderer.setPixelRatio(high ? 1 : 0.5);
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
@@ -1258,7 +1258,8 @@ function schemaDetail() {
       o.setDetail = (level) => orig.call(o, o.userData.schemaDetail || level);
     }
     o.getWorldPosition(_v);
-    o.userData.schemaDetail = camera === orthoCam || _v.distanceTo(_c) > 450 ? 'far' : 'full';
+    // упрощённая модель — дальше 450 единиц («Высокое») или 200 («Обычное»: без видеокарты главное — число треугольников)
+    o.userData.schemaDetail = camera === orthoCam || _v.distanceTo(_c) > (quality === 'high' ? 450 : 200) ? 'far' : 'full';
     o.setDetail(o.userData.schemaDetail);
   }
 }
