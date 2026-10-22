@@ -1,13 +1,15 @@
-// Схема рудника (режим «Схема», по умолчанию): карта рудника в масштабе 1 : 3 (core/diorama.json, scale).
+// Схема рудника — единственная сцена: расстояния сжаты в 2 раза, здания в реальном размере (core/diorama.json).
 // Места узлов дорог и объектов — core/diorama.json (генератор core/tools/make_diorama.py). Здесь —
-// перенос реальных координат (м, geometry.json и двойники) в схему и постройка макета.
+// перенос реальных координат (м, geometry.json и двойники) в схему и одна функция высоты поверхности.
 //
 //   const dio = await loadDiorama(THREE, geometry, terrainApi)
 //   dio.toScene(x, y, z)  -> THREE.Vector3   реальные координаты → точка сцены в схеме
 //   dio.groundAt(x, y)    -> м               «земля» в реальных координатах, согласованная с toScene:
 //                                            toScene(x, y, groundAt(x, y)) лежит на поверхности схемы
 //   dio.mapXY(x, y)       -> [xs, ys]        место в схеме (единицы; x — восток, y — север)
-//   dio.surfaceAt(xs, ys) -> zs              высота поверхности схемы (уступы карьера, съезды)
+//   dio.surfaceAt(xs, ys) -> zs              ЕДИНАЯ высота поверхности: степь, бермы и стенки уступов, съезды,
+//                                            дороги и площадки. Из неё строятся земля, карьер и дороги,
+//                                            по ней ставится вся техника (ctx.groundAt)
 //   buildDiorama(THREE, dio, models, colors) -> { group, labels: [[obj, text, opts]], glows: [sprite], setWeather, setQuality, update(dt) }
 //
 // Правила переноса (toScene):
@@ -20,8 +22,11 @@
 // Объекты с точным местом в diorama.json (здания, склады, экскаваторы) встают ровно туда.
 
 const ROAD_NEAR = 20, ROAD_BLEND = 35, SIDE_K = 0.4;   // м, м, множитель бокового сдвига у дороги
-const CORRIDOR = 10, CORRIDOR_BLEND = 6;                // единицы: врезка съездов в уступы схемы
-const FACE_PAD = 16;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
+// Врезка дорог и съездов в уступы: полотно (ширина ROAD_W) лежит на ровной полосе ±CORRIDOR от оси,
+// дальше за CORRIDOR_BLEND поверхность плавно возвращается к уступам — край полотна никогда не под землёй
+export const ROAD_W = 28;                                // единицы: две полосы самосвала (ширина ≈ 10) + зазоры
+const CORRIDOR = ROAD_W / 2 + 4, CORRIDOR_BLEND = 10;    // единицы
+const FACE_PAD = 30;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
 
 export async function loadDiorama(THREE, geometry, terrainApi) {
   const r = await fetch('/diorama.json');
@@ -217,7 +222,9 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
 
   return {
     faceOre: Object.fromEntries((geometry.objects || []).filter((o) => o.kind === 'face').map((o) => [o.id, o.ore_type])),
-    D, toScene, groundAt, mapXY, surfaceAt, schemaInset, benchProfile, pitMap, nearestEdge, edges,
+    D, toScene, groundAt, mapXY, surfaceAt, schemaInset, benchProfile, pitMap, nearestEdge, edges, roadW: ROAD_W,
+    // точка на кольце карьера: отступ от борта ds (единицы), угол t эллипса
+    ringPoint: (ds, t) => [cx + (a - ds) * Math.cos(t), cy + (b - ds) * Math.sin(t)],
     pit: { cx, cy, a, b, Ds, depth: depthS, inset: P.inset, berm: P.berm, benchHeight: P.bench_height, benches: P.benches },
     bounds: { minX: bx0, minY: by0, maxX: bx1, maxY: by1 },
     // в сцене: x — восток, y — вверх, z = −север
