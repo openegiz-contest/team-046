@@ -379,7 +379,7 @@ def _shifted(model, level, x, y, shift_m):
 def build_panel(model, role, x, y, z, target_t, claimed, levels=None, desired_cu=None):
     """Рудоконтроль: панель для забоя с ролью role (sulphide / clay / waste) на уступе точки (x, y, z) или на уступе ниже.
 
-    Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе лучшая из найденных
+    Берётся первая панель, где нужного типа не меньше MATCH_OK тоннажа; иначе наиболее подходящая из найденных
     (role_mismatch, если нужного типа меньше MATCH_MIN)."""
     want = ROLE_TYPES.get(role)
     target_t = max(float(target_t), 1.0)
