@@ -6,7 +6,7 @@
 face-01…06 своя панель — цепочка соседних блоков уступа. Экскаватор в забое (читается через
 платформу, накопительный loaded_total) отрабатывает панель; содержание забоя — смесь текущего
 и следующего блока по доле выработки текущего. Когда панель кончается, забой переходит на
-уступ ниже.
+новую панель своего уступа или уступа ниже.
 
 Буровые станки (drilling.py) бурят блоки панелей по сетке, измеряют крепость по скорости
 бурения (MWD) и «взрывают» блок: блоку присваиваются крепость и P80 по модели
@@ -156,6 +156,9 @@ class Face:
             rem = num(prev.get("remaining"))
             if rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
                 self.extracted = max(0.0, self.panel.total - rem)
+        i = self.cur_index()
+        if self.extracted > 0 and i < len(self.panel.blocks) and not self.panel.blasted[i]:    # после перезапуска запас снова один блок: текущий
+            self.blast(self.panel, i, self.model.hard[self.panel.blocks[i]] * (1.0 + self.rng.gauss(0.0, 0.03)))
         if self.extracted > 0 or self.panel_no > 1:
             log.info("%s: продолжаем с панели %d, отработано %.0f т, остаток %.0f т (из Ditto)", self.id, self.panel_no, self.extracted,
                      max(0.0, self.panel.total - self.extracted))
@@ -423,7 +426,8 @@ def main():
         # производительность бурения при текущем составе работ (руда и вскрыша): спрос / нужное число станков × число станков
         capacity = demand * n / need if need > 0 else n * rate["ore"]
         telemetry.publish("drill-summary", {
-            "drill_utilisation_pct": feature(round(100.0 * sum(d.util for d in drills) / n, 1), "%"),
+            "drill_utilisation_pct": feature(round(100.0 * demand / capacity, 1) if capacity > 0 else 0.0, "%"),     # спрос / мощность
+            "drill_busy_pct": feature(round(100.0 * sum(d.util for d in drills) / n, 1), "%"),    # доля времени станков в работе
             "drilling_capacity_tph": feature(round(capacity, 0), "т/ч"),
             "blasting_demand_tph": feature(round(demand, 0), "т/ч"),
             "drills_needed": feature(round(need, 2), "шт"),

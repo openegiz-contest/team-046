@@ -1058,6 +1058,12 @@
      "unit": "%"
     }
    },
+   "drill_busy_pct": {
+    "properties": {
+     "value": 0.0,
+     "unit": "%"
+    }
+   },
    "drilling_capacity_tph": {
     "properties": {
      "value": 0.0,
