@@ -94,6 +94,13 @@ FOLLOW_GAP_M = 90.0       # не ближе этого к впереди иду�
 # Две полосы: самосвал едет правее оси дороги на четверть ширины полотна (в 3D-схеме полотно 28 единиц, а боковой
 # сдвиг у дороги переносится туда с множителем 0,4: 17,5 м → 7 единиц); на съездах так же. Встречные не пересекаются
 LANE_M = 17.5
+# Стоянка у заправки (заправка и резерв): два ряда друг напротив друга через проезд, западнее узла fuel-station (там
+# свободно: конвейер — севернее, дорога к складу глины — южнее), носом к проезду: машина заезжает задом и уезжает
+# передом. Ряд — (смещение по северу от узла, м; курс носом к проезду); места вдоль ряда — на запад
+PARK_ROWS = ((0.0, 180.0), (-100.0, 0.0))
+PARK_X0_M, PARK_DX_M = -65.0, -32.0
+# Следующий встаёт под погрузку или к разгрузке, когда предыдущий отъехал от пункта на столько (место для манёвра)
+STATION_CLEAR_M = 60.0
 JUNCTION_STOP_M = 50.0    # стоп-линия — за столько метров до узла
 JUNCTION_BOX_M = 50.0     # узел занят, пока проехавший его самосвал ближе этого к узлу
 JUNCTION_LOOK_M = 160.0   # соперник за проезд — тот, кто подходит к узлу ближе этого
@@ -387,6 +394,7 @@ class Truck:
         self.queue_index = 0
         self.trail = []                 # последние проеханные узлы (откуда приехал) — очередь стоит вдоль пути подъезда
         self.queue_back = None          # путь подъезда от пункта назад: [пункт, предыдущий узел, ...]
+        self.park_slot = None           # место на стоянке у заправки (номер), пока стоит там
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
         self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
         self.evac_until = None          # едет по формально ЗАКРЫТОЙ дороге до этого узла (эвакуация из
@@ -434,6 +442,7 @@ class Excavator:
         self.state = "idle"
         self.queue = []       # самосвалы в очереди (объекты)
         self.loading = None
+        self.last_out = None  # последний, кто уехал из-под погрузки (место освобождается, когда он отъехал)
         self.loaded_total = 0.0
         self.passes_total = 0
         self.down = False
@@ -466,6 +475,7 @@ class DumpPoint:
         self.pos = roads.nodes[node]
         self.queue = []
         self.dumping = None
+        self.last_out = None  # последний, кто разгрузился (место освобождается, когда он отъехал)
         self.accepting = True
         self.received = 0.0
         self.trips = 0  # диагностика: сколько самосвалов разгрузилось здесь
@@ -1557,9 +1567,11 @@ class Haulage:
             active = pt.dumping
         else:
             return None
-        if truck.path[-1] != pt.node or (active is None and not pt.queue):
+        if truck.path[-1] != pt.node:
             return None
         back = [pt.node] + truck.path[-2::-1] + [truck.node]
+        # пункт свободен — всё равно до первого места очереди: оттуда манёвр под погрузку или к разгрузке (не с узла,
+        # где рядом экскаватор или бункер)
         return self._queue_dist(back, len(pt.queue), len(pt.queue) + 1)
 
     def _queue_dist(self, back, i, n):
@@ -1706,6 +1718,7 @@ class Haulage:
         for dump in self.dumps.values():
             self._dump_point(dump)
         self._queue_positions()
+        self._park_positions()
 
     def _excavator(self, ex):
         if ex.down:
@@ -1735,7 +1748,7 @@ class Haulage:
                 ex.loading = None
             ex.state = EXCAVATOR_SHORT_STOP_STATE
             return
-        if ex.loading is None and ex.queue:
+        if ex.loading is None and ex.queue and self._station_clear(ex.node, ex.last_out):
             truck = ex.queue.pop(0)
             ex.loading = truck
             truck.state = "loading"
@@ -1785,10 +1798,12 @@ class Haulage:
             truck.load_sessions_s.append(truck.time_in["load"] - truck._load_session_start_s)  # диагностика
             ex.trucks_served += 1
             ex.loading = None
+            ex.last_out = truck
             self._depart(truck)
 
     def _dump_point(self, dump):
-        if dump.dumping is None and dump.queue and dump.accepting and not self._through_coming(dump):
+        if (dump.dumping is None and dump.queue and dump.accepting and not self._through_coming(dump)
+                and self._station_clear(dump.node, dump.last_out)):
             truck = dump.queue.pop(0)
             dump.dumping = truck
             truck.state = "dumping"
@@ -1823,6 +1838,7 @@ class Haulage:
             self._trips_log.append(self._sim_t)
             dump.trips += 1
             dump.dumping = None
+            dump.last_out = truck
             if truck.fuel < REFUEL_FUEL_PCT:
                 self._start_refuel(truck)
             else:
@@ -1841,6 +1857,37 @@ class Haulage:
                 dq.popleft()
         while self._fleet_state_log and self._fleet_state_log[0][0] < horizon:
             self._fleet_state_log.popleft()
+
+    def _station_clear(self, node, last):
+        """Предыдущий самосвал отъехал от пункта на STATION_CLEAR_M (или стоит/ждёт — тогда не мешает)."""
+        if last is None or last.travel_pending or last.state not in ("hauling", "returning"):
+            return True
+        p = self.roads.nodes[node]
+        return math.hypot(last.pos[0] - p[0], last.pos[1] - p[1]) >= STATION_CLEAR_M
+
+    def _park_positions(self):
+        """Стоящие на заправке и в резерве — на своих местах стоянки (место закреплено, пока стоит), носом к проезду."""
+        node = self.roads.nodes["fuel-station"]
+        used = set()
+        for t in self.trucks:
+            if t.state not in ("refueling", "reserve"):
+                t.park_slot = None
+            elif t.park_slot is not None:
+                used.add(t.park_slot)
+        for t in self.trucks:
+            if t.state not in ("refueling", "reserve"):
+                continue
+            if t.park_slot is None:
+                k = 0
+                while k in used:
+                    k += 1
+                t.park_slot = k
+                used.add(k)
+            row, i = t.park_slot % 2, t.park_slot // 2
+            dy, heading = PARK_ROWS[row]
+            t.pos = [node[0] + PARK_X0_M + PARK_DX_M * i, node[1] + dy, node[2]]
+            t.heading = heading
+            t.speed = 0.0
 
     def _queue_positions(self):
         """Стоящие самосвалы выстраиваются цепочкой от точки — очередь видна в 3D."""

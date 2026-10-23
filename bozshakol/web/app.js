@@ -1751,18 +1751,6 @@ function truckStation(id, st) {
   }
   return null;
 }
-// стоянка у заправки: ряды вдоль подъезда к ней с южной стороны (с северной — трасса конвейера), носом к дороге;
-// места по порядку: ближний ряд, второй, третий, потом ближе к узлу rim-ne
-const PARK_SLOTS = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [5, 0], [3, 1], [2, 2], [6, 0]];
-function parkingSpot(k) {
-  const N = dio.D.nodes['fuel-station'], R = dio.D.nodes['rim-ne'];
-  if (!N || !R) return null;
-  let ax = N[0] - R[0], ay = N[1] - R[1]; const L = Math.hypot(ax, ay) || 1; ax /= L; ay /= L;   // подъезд к заправке
-  const lx = -ay, ly = ax;                                                                     // влево от подъезда (юг)
-  const [i, j] = PARK_SLOTS[k % PARK_SLOTS.length];
-  const along = -35 - 13 * i, side = 24 + 24 * j;
-  return { key: 'park:' + k, S: [N[0] + ax * along + lx * side, N[1] + ay * along + ly * side], u: [-lx, -ly], s: -1 };
-}
 // трасса манёвра от показанного места f: подъезд передом, дуга вперёд (разворот на 90°), дуга задом, прямо задом к месту
 function buildManeuver(f, st) {
   const [Sx, Sy] = st.S, [ux, uy] = st.u, s = st.s, nx = -uy, ny = ux, r = MAN.r;
@@ -1837,7 +1825,6 @@ function truckTargets() {
     if (id.indexOf(':truck-') < 0) continue;
     const ud = o.userData, st = val(id, 'state', '');
     if (PARKED.has(st)) { parked.push(o); continue; }
-    ud.parkKey = null;
     const sta = truckStation(id, st);
     if (sta) {   // у пункта — по манёвру (followTrucks)
       if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
@@ -1846,7 +1833,11 @@ function truckTargets() {
     if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw, E: ud.man.E }; ud.man = null; }
     // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, за местом погрузки
     // (дальше от экскаватора), бортом к полотну (не на полосе съезда)
-    if (st === 'queued_load') {
+    const nearBench = st === 'returning' && (() => {
+      const nd = dio.D.nodes['face-' + String(val(id, 'excavator', '')).slice(-2)], r = ud.rawPos || o.position;
+      return nd && Math.hypot(r.x - nd[0], -r.z - nd[1]) < 30;
+    })();
+    if (st === 'queued_load' || nearBench) {
       const slot = benchQueueSlot(o, id);
       if (slot) { o.position.x = slot[0]; o.position.z = -slot[1]; o.rotation.y = slot[2]; continue; }
     }
@@ -1893,13 +1884,16 @@ function truckTargets() {
       } else ud.depart = null;
     }
   }
-  // стоянка у заправки: место закреплено за машиной, пока она там стоит
-  const used = new Set(parked.map((o) => o.userData.parkKey).filter(Boolean));
+  // стоянка у заправки: место и курс (носом к проезду) — из модели; сцена ведёт только заезд задом, разворот —
+  // в сторону дальнего конца стоянки (от узла заправки), где места занимаются последними
+  const N = dio.D.nodes['fuel-station'];
   for (const o of parked) {
-    const ud = o.userData;
-    if (!ud.parkKey) { let k = 0; while (used.has('park:' + k)) k++; ud.parkKey = 'park:' + k; used.add(ud.parkKey); }
-    const sta = parkingSpot(Number(ud.parkKey.slice(5)));
-    if (!sta) continue;
+    const ud = o.userData, id = ud.thingId;
+    const x = Number(val(id, 'x', 0)), y = Number(val(id, 'y', 0)), h = Number(val(id, 'heading', 0)) * Math.PI / 180;
+    const S = dio.mapXY(x, y), F = dio.mapXY(x + Math.sin(h) * 20, y + Math.cos(h) * 20);
+    let ux = F[0] - S[0], uy = F[1] - S[1]; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+    const s = N && (-uy * (S[0] - N[0]) + ux * (S[1] - N[1])) < 0 ? -1 : 1;
+    const sta = { key: 'park:' + Math.round(S[0]) + ',' + Math.round(S[1]), S, u: [ux, uy], s };
     if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
   }
 }
@@ -1910,7 +1904,13 @@ function followTrucks(dt) {
     if (id.indexOf(':truck-') < 0) continue;
     const ud = o.userData, tx = o.position.x, tz = o.position.z;
     let f = ud.follow;
+    const fresh = !f;
     if (!f || (!ud.man && !ud.station && Math.hypot(tx - f.x, tz - f.z) > FOLLOW.snap)) f = ud.follow = { x: tx, z: tz, yaw: o.rotation.y, v: 0, px: tx, pz: tz, vx: 0, vz: 0 };
+    if (fresh && ud.station) {   // страница только открылась, а самосвал уже у пункта (как в модели) — сразу на месте
+      const m = buildManeuver(f, ud.station);
+      m.i = m.pts.length - 1; m.done = true; ud.man = m; ud.station = null;
+      f.x = m.S[0]; f.z = -m.S[1]; f.yaw = m.yaw;
+    }
     if (dt > 0 && isFinite(tx) && isFinite(tz)) {   // скорость цели (сглаженная) — упреждение при погоне
       const k = 1 - Math.exp(-dt / 0.3);
       f.vx += ((tx - f.px) / dt - f.vx) * k; f.vz += ((tz - f.pz) / dt - f.vz) * k;
