@@ -14,7 +14,7 @@ import blasting as bl
 BLOCK_XY = bl.BLOCK_XY
 UTIL_TAU_S = 6 * 3600.0     # постоянная времени сглаживания загрузки станка, модельных секунд
 AHEAD_TARGET_H = 72.0       # взорванный запас, который держит станок, часов работы экскаватора
-PICK_TOL_H = 1.0           # разница запасов (часов работы экскаватора), меньше которой забои считаются равными при выборе работы
+PICK_TOL = 0.10          # относительная разница пользы работы, меньше которой забои считаются равными при выборе
 HOLE_MOVE_S = 120.0         # переезд между скважинами одного блока, модельных секунд
 TRAM_KMH = 3.0              # скорость переезда станка между блоками (допущение), км/ч
 ROP_NOISE = 0.04            # разброс скорости бурения от скважины к скважине
@@ -79,18 +79,25 @@ class Drill:
         return self.model.block_vol * (bl.DENS_REF if kind == "ore" else 2.65) / hours
 
     # -- выбор работы ----------------------------------------------------------------
+    def _score(self, ahead, face):
+        """Польза работы в забое: срочность (1 / запас², ч; чем меньше запас, тем резче растёт), делённая на время переезда к забою и бурения блока, ч."""
+        kind = "waste" if face.role == "waste" else "ore"
+        drill_h = self.model.block_vol * (bl.DENS_REF if kind == "ore" else 2.65) / self.rates[kind]
+        travel_h = math.dist(self.pos[:2], (face.x, face.y)) / (TRAM_KMH * 1000.0)
+        return 1.0 / max(ahead, 1.0) ** 2 / (travel_h + drill_h)
+
     def _pick(self):
-        """Выбирает работу: забои по возрастанию запаса впереди; берём первый, где ещё есть что бурить."""
+        """Выбирает работу: забой с наибольшей пользой (срочность / время переезда и бурения блока); берём первый, где ещё есть что бурить."""
         needy = []
         for face in self.faces:
             ahead = face.ahead_with_pending_h()
             if ahead < AHEAD_TARGET_H:
-                needy.append((ahead, face.id, face))
-        needy.sort(key=lambda x: (x[0], x[1]))
-        # запас, отличающийся меньше чем на PICK_TOL_H часов, считается равным: среди таких забоев берём ближайший (станок не ездит через карьер из-за ничтожной разницы)
+                needy.append((self._score(ahead, face), face.id, face))
+        needy.sort(key=lambda x: (-x[0], x[1]))
+        # польза, отличающаяся меньше чем на PICK_TOL (доля), считается равной: среди таких забоев берём ближайший (станок не переключается из-за ничтожной разницы)
         order, rest = [], needy
         while rest:
-            group = [x for x in rest if x[0] - rest[0][0] <= PICK_TOL_H]
+            group = [x for x in rest if x[0] >= rest[0][0] * (1.0 - PICK_TOL)]
             group.sort(key=lambda x: (math.dist(self.pos[:2], (x[2].x, x[2].y)), x[1]))
             order += group
             rest = rest[len(group):]
