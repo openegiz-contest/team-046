@@ -14,9 +14,10 @@ const CU_LOW = 0.1, CU_HIGH = 0.7;   // шкала плиток: серый → 
 // Развал забоя: неровная насыпь кусков породы, размеры в единицах сцены (экскаватор в схеме — около 21 единицы). Длина — вдоль уступа,
 // ширина — от экскаватора вглубь забоя; экскаватор стоит у подошвы насыпи, перед его ковшом.
 const HEAP_L = 96, HEAP_W = 12, HEAP_H = 4.5;
+const HEAP_SHAPES = [{ name: 'long', L: HEAP_L, W: HEAP_W }, { name: 'short', L: 56, W: 20 }];   // длинная полоса и короткая широкая форма той же площади (около 1150): вторая — там, где рядом дорога
 const HEAP_FRONT = 14;           // от центра экскаватора до ближнего края насыпи: полкорпуса экскаватора (≈ 10,5 в сцене) и запас; машина стоит у подошвы, а не на насыпи
-const ROAD_HW = 8;              // полуширина полотна дороги с запасом, единиц сцены: насыпь к дороге ближе не подходит
-const HEAP_TURNS = [0, 25, -25, 50, -50, 80, -80, 110, -110, 150, -150, 180];   // углы (градусы), на которые поворачивается направление «вглубь забоя», если насыпь попала на дорогу
+const ROAD_HW = 16;             // полуширина полотна дороги (ROAD_W = 28 в схеме, половина 14) и запас, единиц сцены: насыпь к дороге ближе не подходит
+const HEAP_TURNS = [0, 15, -15, 30, -30, 45, -45, 60, -60, 70, -70, 80, -80, 110, -110, 150, -150, 180];   // углы (градусы), на которые поворачивается направление «вглубь забоя», только если иначе не уйти от дороги: берётся наименьший достаточный
 const HEAP_LIFT = 0.2;          // основание над землёй схемы (ctx.groundAt): небольшой запас, чтобы основание не мерцало вровень с поверхностью
 const HEAP_LEVELS = 3;          // ступеней крупности развала: 0 — обычный, 3 — крупные глыбы
 const HEAP_COLORS = { sulphide: 0x4f8a6e, clay: 0xc9682a, waste: 0x77777a };   // приглушённые: медно-зелёный, рыжий, серый
@@ -124,7 +125,7 @@ function ownMuckpile(THREE, seed, L, W, H, K, hex) {
 // Строит развал: ore — тип руды (цвет), dim — не взорван (приглушённый и низкий), level — ступень крупности кусков.
 // Если в общей библиотеке есть ctx.models.muckpile() — берём её (форма и куски — её), иначе строим свою геометрию.
 // Начало координат группы — центр насыпи на земле, локальная X — вдоль уступа, Z — вглубь забоя.
-function buildMuckpile(ctx, ore, dim, level, seed) {
+function buildMuckpile(ctx, ore, dim, level, seed, shape) {
   const THREE = ctx.THREE;
   const color = new THREE.Color(HEAP_COLORS[ore] || HEAP_COLORS.waste);
   if (dim) color.lerp(new THREE.Color(HEAP_DIM_TO), 0.7);
@@ -133,10 +134,10 @@ function buildMuckpile(ctx, ore, dim, level, seed) {
   let g;
   if (ctx.models && typeof ctx.models.muckpile === 'function') {
     // куски модели одного размера (0,6–2,4 м): для крупного развала строим насыпь тех же габаритов, уменьшенную в K раз, и увеличиваем группу в K раз
-    g = ctx.models.muckpile({ length: HEAP_L / K, width: HEAP_W / K, height: H / K }, color.getHex());
+    g = ctx.models.muckpile({ length: shape.L / K, width: shape.W / K, height: H / K }, color.getHex());
     g.scale.setScalar(K);
   } else {
-    g = ownMuckpile(THREE, seed, HEAP_L, HEAP_W, H, K, color.getHex());
+    g = ownMuckpile(THREE, seed, shape.L, shape.W, H, K, color.getHex());
   }
   g.userData.top = H + 2.4 * K;        // примерная высота гребня с кусками, ед. сцены
   return g;
@@ -151,21 +152,22 @@ function roadSegments(ctx) {
   for (const e of ctx.geometry.edges || []) {
     const a = nodes[e.from], b = nodes[e.to];
     if (!a || !b) continue;
+    if (/^face-/.test(e.from) || /^face-/.test(e.to)) continue;       // подъезд к самому забою: машина стоит на его конце, насыпь лежит за ней
     const pa = ctx.toScene(a[0], a[1], a[2]), pb = ctx.toScene(b[0], b[1], b[2]);
     roadSegs.push([pa.x, pa.z, pb.x, pb.z]);
   }
   return roadSegs;
 }
 
-// Расстояние от насыпи (прямоугольник с центром c, осью «вглубь» v = (vx, vz), длина HEAP_L вдоль перпендикуляра) до ближайшей дороги, единиц.
-function roadClearance(ctx, cx, cz, vx, vz) {
+// Расстояние от насыпи (прямоугольник с центром c, осью «вглубь» v = (vx, vz), длина shape.L вдоль перпендикуляра) до ближайшей дороги, единиц.
+function roadClearance(ctx, cx, cz, vx, vz, shape) {
   let best = Infinity;
   for (const [ax, az, bx, bz] of roadSegments(ctx)) {
     const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
     for (let k = 0; k <= n; k++) {
       const px = ax + (bx - ax) * k / n - cx, pz = az + (bz - az) * k / n - cz;
       const lz = px * vx + pz * vz, lx = px * -vz + pz * vx;       // координаты точки дороги в осях насыпи
-      const d = Math.hypot(Math.max(Math.abs(lx) - HEAP_L / 2, 0), Math.max(Math.abs(lz) - HEAP_W / 2, 0));
+      const d = Math.hypot(Math.max(Math.abs(lx) - shape.L / 2, 0), Math.max(Math.abs(lz) - shape.W / 2, 0));
       if (d < best) best = d;
     }
   }
@@ -174,7 +176,7 @@ function roadClearance(ctx, cx, cz, vx, vz) {
 
 // Положение развала: перед экскаватором, у его подошвы: ближний край насыпи в HEAP_FRONT от центра экскаватора, направление — от экскаватора к забою,
 // длинной стороной вдоль уступа. Позиция экскаватора — из его двойника (x, y); признака курса у двойника нет. Если насыпь попадает на дорогу,
-// направление поворачивается (HEAP_TURNS) до первого положения без пересечения, иначе берётся то, что дальше всего от дорог.
+// направление поворачивается (HEAP_TURNS, по возрастанию угла) до первого положения без пересечения; при угле 0 сначала пробуется длинная форма, при повороте — короткая; если ничего не подходит, берётся то, что дальше всего от дорог.
 // Если экскаватор стоит в самом забое — направление от центра карьера наружу.
 function placeHeap(ctx, rec, ex) {
   const key = ex[0] + ',' + ex[1];
@@ -190,20 +192,24 @@ function placeHeap(ctx, rec, ex) {
   }
   const len = Math.hypot(dx, dz) || 1;
   dx /= len; dz /= len;
-  const off = HEAP_FRONT + HEAP_W / 2;
   let pick = null;
+  search:
   for (const deg of HEAP_TURNS) {
     const a = deg * Math.PI / 180, vx = dx * Math.cos(a) - dz * Math.sin(a), vz = dx * Math.sin(a) + dz * Math.cos(a);
-    const cx = pe.x + vx * off, cz = pe.z + vz * off;
-    const clear = roadClearance(ctx, cx, cz, vx, vz);
-    if (!pick || clear > pick.clear) pick = { vx, vz, cx, cz, clear };
-    if (clear >= ROAD_HW) { pick = { vx, vz, cx, cz, clear }; break; }
+    for (const shape of (deg === 0 ? HEAP_SHAPES : [...HEAP_SHAPES].reverse())) {      // при повороте сначала короткая форма: с дорогой рядом длинная полоса не нужна
+      const off = HEAP_FRONT + shape.W / 2;
+      const cx = pe.x + vx * off, cz = pe.z + vz * off;
+      const clear = roadClearance(ctx, cx, cz, vx, vz, shape);
+      if (!pick || clear > pick.clear) pick = { vx, vz, cx, cz, clear, shape };
+      if (clear >= ROAD_HW) { pick = { vx, vz, cx, cz, clear, shape }; break search; }
+    }
   }
   rec.heap.position.set(pick.cx, pe.y + HEAP_LIFT, pick.cz);
   rec.heap.rotation.y = Math.atan2(pick.vx, pick.vz);     // локальная Z — вглубь забоя, локальная X — вдоль уступа
   rec.patch.position.copy(rec.heap.position);
   rec.baseY = rec.heap.position.y;
   rec.roadClear = pick.clear;
+  rec.shape = pick.shape;
 }
 
 export function init(ctx) {
@@ -246,7 +252,7 @@ export function init(ctx) {
       inst.frustumCulled = false;
       tg.add(inst);
       tilesGroup.add(tg);
-      faces[id] = { patch, heap, variants: {}, key: '', placeKey: '', seed, x, y, exc: excOf[o.id] || null, top: HEAP_H, baseY: patch.position.y, tg, inst, perFace, previewRaw: null };
+      faces[id] = { patch, heap, variants: {}, shape: HEAP_SHAPES[0], key: '', placeKey: '', seed, x, y, exc: excOf[o.id] || null, top: HEAP_H, baseY: patch.position.y, tg, inst, perFace, previewRaw: null };
     } else if (o.kind === 'drill') {
       const g = ctx.models.drill();
       g.position.copy(ctx.toScene(o.position[0], o.position[1], ctx.groundAt(o.position[0], o.position[1])));
@@ -297,12 +303,12 @@ export function update(ctx, twins) {
     if (!ex[0] && !ex[1]) ex = rec.exc || [rec.x, rec.y];
     placeHeap(ctx, rec, ex);
     // вариант развала: тип руды, взорван ли блок, ступень крупности; каждый строится один раз и дальше только показывается
-    const key = ore + '|' + (blasted ? 1 : 0) + '|' + level;
+    const key = ore + '|' + (blasted ? 1 : 0) + '|' + level + '|' + rec.shape.name;
     if (key !== rec.key) {
       if (rec.variants[rec.key]) rec.variants[rec.key].visible = false;
       let v = rec.variants[key];
       if (!v) {
-        v = rec.variants[key] = buildMuckpile(ctx, ore, !blasted, level, rec.seed);
+        v = rec.variants[key] = buildMuckpile(ctx, ore, !blasted, level, rec.seed, rec.shape);
         rec.heap.add(v);
       }
       v.visible = true;
