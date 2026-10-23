@@ -51,25 +51,43 @@ export function init(ctx) {
     if (o.kind === 'crusher') {
       const g = M.crusher();
       place(g, o); g.rotation.y = -(o.yaw_deg || 0) * Math.PI / 180;
-      // у дробилки — штатная сигнальная лампа модели (на корпусе, цвет меняет setState)
-      add(id, { kind: o.kind, g, model: g, lamp: null, modelLamp: g.userData.parts && g.userData.parts.lamp }, o.id, 3, 36);
+      // корпус дробилки в модели — к востоку (+X) от площадки разгрузки: центр корпуса x = 18,5 м, крыша 16,8 м
+      // (models.js, crusherGeos). Подпись и лампа — на корпусе, а не над площадкой и не на верху привода (26,5 м)
+      const BODY_X = 18.5, ROOF_Y = 16.8;
+      const anchor = new THREE.Object3D(); anchor.position.set(BODY_X, ROOF_Y, 0); g.add(anchor);
+      const lamp = addLamp(g, ROOF_Y, BODY_X + 4.5, 6.5);                       // на краю крыши корпуса
+      if (g.userData.parts && g.userData.parts.lamp) g.userData.parts.lamp.visible = false;   // вторая лампа модели не нужна
+      add(id, { kind: o.kind, g, model: g, anchor, lamp, hit: 30 }, o.id, 3, 6);
     } else if (o.kind === 'conveyor' && o.path && o.path.length >= 2) {
       // трасса из geometry.json, уплотнённая через CONVEYOR_STEP_M: высота — по точкам трассы,
       // но не ниже земли сцены (иначе лента уходит под рельеф между опорными точками)
       const pts = [];
+      // начало ленты — внутри портала у разгрузки дробилки (портал строит общая сцена: короб 7 м назад от первой точки
+      // трассы, проём под ленту на высоте 1,6–4,0 м); лента идёт по проёму и выходит из портала наружу.
+      // Точки трассы geometry.json не меняются: добавлена точка внутри портала, первая точка опущена до высоты проёма.
+      const LIFT = 3, BELT_IN_PORTAL_M = 2.8;
+      {
+        const [ax, ay] = o.path[0], [bx, by] = o.path[1];
+        const L0 = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / L0, uy = (by - ay) / L0;
+        for (const back of [6.5, 0]) {
+          const x = ax - ux * back, y = ay - uy * back;
+          const p = ctx.toScene(x, y, BELT_IN_PORTAL_M); p.y -= LIFT;     // конвейер поднимает ленту на LIFT над точкой
+          pts.push(p);
+        }
+      }
       for (let i = 0; i + 1 < o.path.length; i++) {
         const [x0, y0, z0] = o.path[i], [x1, y1, z1] = o.path[i + 1];
         const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / CONVEYOR_STEP_M));
-        for (let k = 0; k < n; k++) {
+        for (let k = i === 0 ? 1 : 0; k < n; k++) {                      // первая точка трассы уже добавлена у портала
           const t = k / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
           pts.push(ctx.toScene(x, y, Math.max(z0 + (z1 - z0) * t, ctx.groundAt(x, y))));
         }
       }
       const [xe, ye, ze] = o.path[o.path.length - 1];
       pts.push(ctx.toScene(xe, ye, Math.max(ze, ctx.groundAt(xe, ye))));
-      const g = M.conveyor(pts, { height: 3 });
+      const g = M.conveyor(pts, { height: LIFT });
       const anchor = new THREE.Object3D(); anchor.position.copy(pts[Math.floor(pts.length / 2)]); g.add(anchor);
-      const head = new THREE.Object3D(); head.position.copy(pts[0]); g.add(head);
+      const head = new THREE.Object3D(); head.position.copy(pts[2] || pts[1]); g.add(head);   // лампа — сразу за порталом
       add(id, { kind: o.kind, g, model: g, anchor, hit: 40, lamp: addLamp(head, 4) }, o.id, 3, 12);
     } else if (o.kind === 'stockpile') {
       const isClay = o.id.includes('clay');
@@ -116,7 +134,6 @@ export function update(ctx, twins) {
     // лампы в натуральную величину; только в виде сверху (ортокамера) — крупнее, чтобы были видны
     const lampScale = ctx.camera && ctx.camera.isOrthographicCamera ? Math.min(6, Math.max(3, 1.5 * (ctx.markerScale || 1))) : 1;
     if (rec.lamp) rec.lamp.scale.setScalar(lampScale);
-    if (rec.modelLamp) rec.modelLamp.scale.setScalar(lampScale);
     if (!twin) { if (rec.kind === 'conveyor') rec.model.setFlow(0, ctx.dt); continue; }
     const name = (twin.attributes && twin.attributes.name) || id.split(':')[1];
     const state = fv(twin, 'state', '');
@@ -167,8 +184,9 @@ export function update(ctx, twins) {
         if (q) text += ' · очередь: ' + q;
       }
     } else if (rec.kind === 'plant') {
-      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' / ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
-        ' т/ч · план ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
+      // текущий темп (т/ч против плана т/ч) и отдельно — выполнение плана за смену (сменный факт ÷ сменный план)
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' т/ч (план ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
+        ') · за смену ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
       const grid = twins[NS + ':power-grid'];
       if (id.endsWith(':plant-sulphide') && grid) {                     // мельничный корпус — мощность мельниц
         text += ' · мельницы ' + fmtNum(fv(grid, 'mills', 0), 1) + ' МВт · ' + fmtNum(fv(twin, 'specific_energy', 0), 1) + ' кВт·ч/т';

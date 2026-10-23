@@ -787,9 +787,11 @@ const roadMats = {
   shoulder: new THREE.MeshLambertMaterial({ color: 0xbfae86 }),   // обочина
   closed: new THREE.MeshLambertMaterial({ color: colors.roadClosed }),
 };
-// сдвиг к камере ступенями: лента съезда (diorama-scene.js: −1/−4) < обочина < полотно — издали и на откосах полотно
-// всегда поверх обочины, обочина — поверх ленты (без «пилы» и штриховки)
-const roadOffset = (k) => ({ polygonOffset: true, polygonOffsetFactor: k === 'shoulder' ? -1.5 : -2, polygonOffsetUnits: k === 'shoulder' ? -6 : -8 });
+// сдвиг к камере ступенями: лента съезда (diorama-scene.js: −1/−4) < обочина < полотно дорог < полотно съездов —
+// издали и на откосах полотно всегда поверх обочины, обочина — поверх ленты; где полотно съезда ложится на дорогу дна
+// или бровки, наверху — съезд (без «пилы» и белой штриховки)
+const ROAD_OFFSET = { shoulder: [-1.5, -6], ramp: [-2.5, -10], closed: [-2.5, -10] };
+const roadOffset = (k) => { const [f, u] = ROAD_OFFSET[k] || [-2, -8]; return { polygonOffset: true, polygonOffsetFactor: f, polygonOffsetUnits: u }; };
 function buildRoads() {
   // полотно — лента по единой поверхности (diorama-scene.js roadRibbons): нигде не уходит под землю
   for (const [k, m] of Object.entries(roadMats)) Object.assign(m, roadOffset(k));
@@ -903,6 +905,12 @@ function updateCamera(dt) {
   }
   wheelZoomStep(dt);
   (camera === perspCam ? controls : topControls).update();
+  if (camera === perspCam) {
+    // ближняя плоскость — от расстояния до точки обзора: вблизи 0,5, как раньше, издали больше — точность глубины на
+    // дальнем плане выше, полотно, обочина и земля (в десятых долях единицы друг над другом) не мерцают полосами
+    const near = Math.max(0.5, Math.min(30, perspCam.position.distanceTo(controls.target) * 0.02));
+    if (Math.abs(near - perspCam.near) > near * 0.05) { perspCam.near = near; perspCam.updateProjectionMatrix(); }
+  }
   if (weatherBlizzard && scene.fog) {
     // метель: густая дымка от места, куда смотрит камера (видимость 300 м ≈ 150 единиц карты), — вблизи плотная,
     // на общем виде рудник виден сквозь пелену, а не пропадает целиком
@@ -1511,7 +1519,10 @@ function lineUpQueues() {
     for (let i = slots.length - 1; i >= 0; i--) if (!ids.has(slots[i])) slots.splice(i, 1);
     for (const o of list) if (!slots.includes(o.userData.thingId)) slots.push(o.userData.thingId);
     list.sort((a, b) => slots.indexOf(a.userData.thingId) - slots.indexOf(b.userData.thingId));
-    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 1.2 : k + 1) * QUEUE_STEP));   // у заправки — не вплотную к будке
+    // у заправки — не вплотную к будке; у экскаватора — первый в очереди не впритык к грузящемуся, шаг просторнее
+    // (подъезд к забою с поворотом: при прежнем шаге машины сходились углами в кучу)
+    const face = /^face-/.test(node), first = node === 'fuel-station' ? 1.2 : face ? 1.5 : 1, step = face ? QUEUE_STEP * 1.2 : QUEUE_STEP;
+    const pts = list.map((o, k) => lanePoint(lane, (k + first) * step));
     const side = queueSide(pts);
     list.forEach((o, k) => {
       const q = pts[k];
@@ -1611,6 +1622,7 @@ function adjustMachines(dt) {
     separateDrills();
     trucksOffSlopes();       // уже по показанному месту: без переходов, когда машина съехала бы на откос
     separateTrucks(3, 8);    // переставленные на полосу не налезают на соседей
+    separateDrills();        // и последним — никто не стоит в экскаваторе (разводка выше могла подвинуть к нему)
     groundMachines(dt);
   }
   updateMarkers();
@@ -1777,10 +1789,9 @@ function groundMachines(dt) {
     const hf = near(H(x + fx * L, z + fz * L)), hb = near(H(x - fx * L, z - fz * L));
     const hl = near(H(x + lx * W, z + lz * W)), hr = near(H(x - lx * W, z - lz * W));
     const onRoad = ud.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0;
-    // высота — по поверхности; скачок больше 1,5 единицы (машину переставили, край уступа) — плавно, до 40 единиц/с
-    const target = h0 + onRoad;
-    if (ud.dispY === undefined || Math.abs(target - ud.dispY) <= 1.5) ud.dispY = target;
-    else { const cap = Math.max(0.8, 40 * dt); ud.dispY += Math.max(-cap, Math.min(cap, target - ud.dispY)); }
+    // высота — по поверхности сразу: машину переставили (очередь, полоса) или она быстро идёт по съезду — она не
+    // «догоняет» поверхность (прежний плавный подъём до 40 единиц/с при редких кадрах давал провал или подскок)
+    ud.dispY = h0 + onRoad;
     o.position.y = ud.dispY;
     const pitch = -Math.atan2(hf - hb, 2 * L), roll = Math.atan2(hl - hr, 2 * W);
     if (o.rotation.order !== 'YXZ') o.rotation.order = 'YXZ';
