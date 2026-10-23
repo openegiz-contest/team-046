@@ -172,6 +172,18 @@ function defaultImportance(obj) {
   return 2;
 }
 const MAX_LABELS = 30;
+const IN_CYCLE = new Set(['queued_load', 'loading', 'hauling', 'queued_dump', 'dumping', 'returning']);   // самосвал в работе
+// Окна поверх сцены (сверка, фото местности, путеводитель): Esc закрывает верхнее открытое, по одному за нажатие
+const openWindows = [];
+function windowShown(close, on) {
+  const i = openWindows.indexOf(close); if (i >= 0) openWindows.splice(i, 1);
+  if (on) openWindows.push(close);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !openWindows.length) return;
+  openWindows[openWindows.length - 1]();
+  e.stopImmediatePropagation(); e.preventDefault();
+}, true);
 // закрыта ли точка поверхностью (земля, карьер) или зданием (дробилка, корпуса) с места камеры: луч от камеры к точке
 const _occRay = new THREE.Raycaster(), _occDir = new THREE.Vector3();
 function occludedByGround(from, to) {
@@ -332,13 +344,38 @@ function renderCard() {
   if (t && t.features) {
     for (const [f, feat] of Object.entries(t.features)) {
       const p = feat.properties || {};
-      rows.push('<tr><td>' + esc(f) + '</td><td class="val">' + esc(fmt(p.value)) + '</td><td>' + esc(p.unit || '') + '</td></tr>');
+      const ru = FEATURE_RU[f];
+      const name = ru ? esc(ru) + '<div class="tech">' + esc(f) + '</div>' : esc(f);
+      rows.push('<tr><td>' + name + '</td><td class="val">' + esc(fmt(p.value)) + '</td><td>' + esc(p.unit || '') + '</td></tr>');
     }
   }
   cardBody.innerHTML = rows.join('') || '<tr><td colspan="3">нет данных</td></tr>';
 }
 setInterval(() => { if (openedThing && !card.hidden) renderCard(); }, 1000);
 
+// Русские названия признаков двойников в карточке (техническое имя — рядом мелко)
+const FEATURE_RU = {
+  state: 'состояние', payload: 'груз', load: 'груз', load_type: 'тип груза', cargo: 'груз', speed: 'скорость',
+  fuel: 'топливо', fuel_pct: 'топливо', fuel_l: 'топливо', x: 'место: x', y: 'место: y', z: 'высота', heading: 'курс',
+  destination: 'куда едет', source: 'откуда', assigned_excavator: 'закреплён за экскаватором', trips: 'рейсы',
+  trips_total: 'рейсы всего', odometer_km: 'пробег', engine_hours: 'моточасы', accepting: 'принимает руду',
+  throughput: 'производительность', bunker_t: 'бункер', bunker: 'бункер', stop_reason: 'причина остановки',
+  trucks_queued: 'самосвалов в очереди', queue_crusher: 'очередь у дробилки', queue_clay: 'очередь у склада глины',
+  feed_rate: 'подача', plan_rate: 'план', plan_fulfilment: 'выполнение плана', feed_cu: 'медь в питании',
+  feed_clay: 'глина в питании', feed_hardness: 'крепость питания', feed_p80: 'крупность питания P80', recovery: 'извлечение',
+  cu_concentrate_shift: 'медь в концентрате за смену', ore_shift_t: 'руда за смену', cu_year_pace: 'медь, темп года',
+  specific_energy: 'удельная электроэнергия', power: 'мощность', load_level: 'нагрузка сети', stock: 'запас', stock_t: 'запас',
+  capacity_t: 'вместимость', hours_left: 'хватит на', inflow: 'поступление', outflow: 'отгрузка', stop_forecast: 'фабрика встанет в',
+  ore_type: 'тип руды', clay_pct: 'доля глины', cu_grade: 'содержание меди', p80: 'крупность P80', hardness: 'крепость',
+  loading_factor: 'скорость погрузки', remaining: 'остаток', recommended_destination: 'куда везти', blasted: 'взорван',
+  blasted_ahead_h: 'взорванный запас', bench: 'уступ', open: 'открыта', closed_reason: 'причина закрытия', length_m: 'длина',
+  mode: 'режим', avg_wait_excavator: 'ожидание у экскаватора', avg_wait_dump: 'ожидание на разгрузке',
+  trucks_hauling: 'самосвалов в рейсе', trucks_needed: 'нужно самосвалов', trucks_reserve: 'в резерве',
+  delivered_crusher_t: 'привезено на дробилку', delivered_clay_t: 'привезено на склад глины', delivered_dump_t: 'вывезено в отвал',
+  sim_time: 'модельное время', shift: 'смена', shift_hour: 'час смены', temperature: 'температура', wind: 'ветер',
+  visibility: 'видимость', speed_limit: 'ограничение скорости', active_scenarios: 'включённые сценарии', advice: 'советы',
+  drilled_m: 'пробурено', penetration_rate: 'скорость бурения', utilization: 'загрузка', value: 'значение',
+};
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmt(v, digits) {
   if (v === undefined || v === null) return '—';
@@ -389,15 +426,14 @@ function renderDispatcher() {
     const s = val(id, 'state', '');
     if (s === 'down') down++;
     else if (s === 'queued_load' || s === 'queued_dump') queued++;
-    if (s && s !== 'down') hauling++;
+    if (IN_CYCLE.has(s)) hauling++;   // «в работе» — в цикле (очередь, погрузка, рейс, разгрузка), как у советника
   }
-  const th = val(disp, 'trucks_hauling', null);
   const wait = val(disp, 'avg_wait_excavator', null);
   const wUnit = (twins[disp] && twins[disp].features.avg_wait_excavator && twins[disp].features.avg_wait_excavator.properties.unit) || 'мин';
   const rows = [
     ['Режим', MODE_NAMES[val(disp, 'mode', '')] || val(disp, 'mode', '—')],
     ['Ожидание у экскаватора', wait === null ? '—' : fmt(wait, 1) + ' ' + wUnit],
-    ['Самосвалы в работе / в очереди / авария', (th !== null ? fmt(th, 0) : hauling) + ' / ' + queued + ' / ' + down + (total ? ' из ' + total : '')],
+    ['Самосвалы в работе (в цикле) / из них в очереди / авария', hauling + ' / ' + queued + ' / ' + down + (total ? ' из ' + total : '')],
     ['Очередь у дробилки', fmt(val(disp, 'queue_crusher', val(NS + ':crusher-01', 'trucks_queued', 0)), 0)],
     ['Очередь у склада глины', fmt(val(disp, 'queue_clay', val(NS + ':stockpile-clay', 'trucks_queued', 0)), 0)],
   ];
@@ -673,7 +709,8 @@ function renderReality() {
 function initReality() {
   const box = document.getElementById('reality'), btn = document.getElementById('btn-reality');
   if (!box || !btn) return;
-  const show = (on) => { box.hidden = !on; btn.classList.toggle('active', on); lastRealityRaw = null; renderReality(); };
+  const close = () => show(false);
+  const show = (on) => { box.hidden = !on; btn.classList.toggle('active', on); lastRealityRaw = null; renderReality(); windowShown(close, on); };
   btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
   document.getElementById('reality-close').addEventListener('click', () => show(false));
 }
@@ -1929,13 +1966,13 @@ function initPhoto() {
     attr.textContent = src.image.attribution + ' (' + src.image.name + ', ' + terrainApi.meta.texture.date + ', 10 м/пиксель). ' +
       'Рельеф для высот модели: ' + src.dem.name + ', ' + src.dem.attribution + '.';
   }
+  const close = () => show(false);
   const show = (on) => {
-    box.hidden = !on; btn.classList.toggle('active', on);
+    box.hidden = !on; btn.classList.toggle('active', on); windowShown(close, on);
     if (on && !img.src) img.src = './terrain/' + ((terrainApi && terrainApi.meta && terrainApi.meta.texture.file) || 'texture.jpg');
   };
   btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
   document.getElementById('photo-close').addEventListener('click', () => show(false));
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) show(false); });
   box.addEventListener('click', (e) => { if (e.target === box) show(false); });
 }
 
@@ -1944,7 +1981,8 @@ function initPhoto() {
 function initGuide() {
   const box = document.getElementById('guide'), open = document.getElementById('guide-open');
   if (!box) return;
-  const show = (on) => { box.hidden = !on; };
+  const close = () => show(false);
+  const show = (on) => { box.hidden = !on; windowShown(close, on); };
   document.getElementById('guide-close').addEventListener('click', () => show(false));
   document.getElementById('guide-ok').addEventListener('click', () => show(false));
   if (open) open.addEventListener('click', () => show(box.hidden));

@@ -85,7 +85,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .scenario { padding: 7px 0; border-bottom: 1px solid var(--line); }
 .scenario:last-child { border-bottom: none; }
 .scenario .row { display: flex; align-items: center; gap: 6px; }
-.scenario .row .title { flex: 1; min-width: 0; font-weight: 600; }
+.scenario .row .title { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; hyphens: auto; }
 .scenario .row button { flex-shrink: 0; }
 .scenario .hint { color: var(--muted); font-size: 11px; margin-top: 3px; line-height: 1.35; }
 .scenario .params { color: var(--muted); font-size: 10.5px; margin-top: 2px; opacity: .8; }
@@ -224,3 +224,5 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
   font-size: 12px; font-weight: 600; padding: 2px 7px; border-radius: 10px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
 .photo-mark::after { content: ''; position: absolute; left: 50%; top: 100%; width: 2px; height: 8px; background: rgba(255,255,255,0.9); transform: translateX(-50%); }
 #photo p { margin: 6px 0 0; }
+/* карточка двойника: русское название признака, под ним техническое имя мелко */
+#card td .tech { font-size: 10px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; opacity: .85; }

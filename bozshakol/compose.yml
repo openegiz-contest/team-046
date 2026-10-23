@@ -18,8 +18,7 @@ services:
     volumes:
       # Свой провайдер дашбордов (папка «Бозшаколь», все *.json из bozshakol/grafana/).
       # Папка provisioning платформы смонтирована только для чтения, поэтому поверх её
-      # подпапки dashboards/ кладётся наша (bozshakol.yaml + место под openegiz.yaml),
-      # а файл платформы openegiz.yaml монтируется обратно — дашборды OpenEgiz остаются.
+      # подпапки dashboards/ кладётся наша: bozshakol.yaml и openegiz.yaml (дашборды платформы — папка OpenEgiz;
+      # пустая папка «OpenEgiz Examples» для примеров не создаётся).
       - ../../bozshakol/grafana/provisioning:/etc/grafana/provisioning/dashboards:ro
-      - ./grafana/provisioning/dashboards/openegiz.yaml:/etc/grafana/provisioning/dashboards/openegiz.yaml:ro
       - ../../bozshakol/grafana:/var/lib/grafana/bozshakol-dashboards:ro
