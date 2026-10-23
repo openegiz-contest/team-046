@@ -7,7 +7,7 @@
  ],
  "timezone": "browser",
  "schemaVersion": 39,
- "version": 4,
+ "version": 12,
  "editable": true,
  "graphTooltip": 1,
  "refresh": "5s",
@@ -71,7 +71,7 @@
          "index": 0
         },
         "idle": {
-         "text": "простой",
+         "text": "ожидание руды",
          "color": "yellow",
          "index": 1
         },
@@ -87,7 +87,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -96,7 +97,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "background",
@@ -160,7 +161,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -169,7 +171,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "background",
@@ -224,7 +226,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -292,7 +295,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -350,7 +354,8 @@
        }
       ]
      },
-     "mappings": []
+     "mappings": [],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -359,7 +364,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "none",
@@ -434,7 +439,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -443,7 +449,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "background",
@@ -860,7 +866,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1055,7 +1062,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1064,7 +1072,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "background",
@@ -1123,7 +1131,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1191,7 +1200,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1251,7 +1261,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1310,7 +1321,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1369,7 +1381,8 @@
       ]
      },
      "mappings": [],
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1444,7 +1457,8 @@
        }
       }
      ],
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1804,15 +1818,26 @@
      },
      "mappings": [
       {
-       "type": "value",
+       "type": "special",
        "options": {
-        "": {
+        "match": "empty",
+        "result": {
          "text": "нет — холостого хода сверх нормы нет",
          "index": 0
         }
        }
+      },
+      {
+       "type": "value",
+       "options": {
+        "": {
+         "text": "нет — холостого хода сверх нормы нет",
+         "index": 1
+        }
+       }
       }
-     ]
+     ],
+     "noValue": "нет — холостого хода сверх нормы нет"
     },
     "overrides": []
    },
@@ -1821,7 +1846,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "none",
@@ -1869,7 +1894,8 @@
        }
       ]
      },
-     "mappings": []
+     "mappings": [],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1878,7 +1904,7 @@
      "calcs": [
       "lastNotNull"
      ],
-     "fields": "",
+     "fields": "/^Value$/",
      "values": false
     },
     "colorMode": "none",
