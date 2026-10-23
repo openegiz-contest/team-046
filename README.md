@@ -55,6 +55,9 @@ make up
 | Grafana → приложение **OpenEgiz** → **Twins** — иерархия двойников `kz.bozshakol` | там же | там же |
 | Ditto API: все двойники | http://localhost:8080/api/2/search/things?namespaces=kz.bozshakol | `ditto` / `DITTO_PASSWORD` из `deploy/compose/.env` |
 
+В Grafana рядом с папкой «Бозшаколь» может быть пустая папка шаблона платформы «OpenEgiz Examples» (её создаёт первый
+запуск платформы для примеров; рудник в ней ничего не хранит).
+
 Порты задаются в `deploy/compose/.env` (`GRAFANA_PORT`, `DITTO_PORT`, `BOZSHAKOL_WEB_PORT` и другие);
 в таблице — значения по умолчанию.
 
