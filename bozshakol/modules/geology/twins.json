@@ -70,7 +70,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
@@ -203,7 +203,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
@@ -336,7 +336,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
@@ -469,7 +469,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
@@ -602,7 +602,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
@@ -735,7 +735,7 @@
    "block_preview": {
     "properties": {
      "value": "[]",
-     "unit": "м, м, % Cu"
+     "unit": "м, %"
     }
    },
    "bench": {
