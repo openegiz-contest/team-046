@@ -172,11 +172,24 @@ function defaultImportance(obj) {
   return 2;
 }
 const MAX_LABELS = 30;
+const adviceTitles = {};   // id совета → его заголовок по-русски (для журнала «Совет снят»)
+const IN_CYCLE = new Set(['queued_load', 'loading', 'hauling', 'queued_dump', 'dumping', 'returning']);   // самосвал в работе
+// Окна поверх сцены (сверка, фото местности, путеводитель): Esc закрывает верхнее открытое, по одному за нажатие
+const openWindows = [];
+function windowShown(close, on) {
+  const i = openWindows.indexOf(close); if (i >= 0) openWindows.splice(i, 1);
+  if (on) openWindows.push(close);
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !openWindows.length) return;
+  openWindows[openWindows.length - 1]();
+  e.stopImmediatePropagation(); e.preventDefault();
+}, true);
 // закрыта ли точка поверхностью (земля, карьер) или зданием (дробилка, корпуса) с места камеры: луч от камеры к точке
 const _occRay = new THREE.Raycaster(), _occDir = new THREE.Vector3();
 function occludedByGround(from, to) {
   const surf = [];
-  terrain.traverse((m) => { if (m.isMesh && m.visible && /^diorama-(ground|pit)$/.test(m.name)) surf.push(m); });
+  terrain.traverse((m) => { if (m.isMesh && m.visible && /^diorama-(ground|pit|ramp)$/.test(m.name)) surf.push(m); });
   const proc = scene.getObjectByName('layer-processing');
   if (proc) proc.traverse((m) => { if (m.isMesh && m.visible && !(m.material && m.material.transparent)) surf.push(m); });
   _occDir.subVectors(to, from); const len = _occDir.length(); _occDir.normalize();
@@ -332,13 +345,38 @@ function renderCard() {
   if (t && t.features) {
     for (const [f, feat] of Object.entries(t.features)) {
       const p = feat.properties || {};
-      rows.push('<tr><td>' + esc(f) + '</td><td class="val">' + esc(fmt(p.value)) + '</td><td>' + esc(p.unit || '') + '</td></tr>');
+      const ru = FEATURE_RU[f];
+      const name = ru ? esc(ru) + '<div class="tech">' + esc(f) + '</div>' : esc(f);
+      rows.push('<tr><td>' + name + '</td><td class="val">' + esc(fmt(p.value)) + '</td><td>' + esc(p.unit || '') + '</td></tr>');
     }
   }
   cardBody.innerHTML = rows.join('') || '<tr><td colspan="3">нет данных</td></tr>';
 }
 setInterval(() => { if (openedThing && !card.hidden) renderCard(); }, 1000);
 
+// Русские названия признаков двойников в карточке (техническое имя — рядом мелко)
+const FEATURE_RU = {
+  state: 'состояние', payload: 'груз', load: 'груз', load_type: 'тип груза', cargo: 'груз', speed: 'скорость',
+  fuel: 'топливо', fuel_pct: 'топливо', fuel_l: 'топливо', x: 'место: x', y: 'место: y', z: 'высота', heading: 'курс',
+  destination: 'куда едет', source: 'откуда', assigned_excavator: 'закреплён за экскаватором', trips: 'рейсы',
+  trips_total: 'рейсы всего', odometer_km: 'пробег', engine_hours: 'моточасы', accepting: 'принимает руду',
+  throughput: 'производительность', bunker_t: 'бункер', bunker: 'бункер', stop_reason: 'причина остановки',
+  trucks_queued: 'самосвалов в очереди', trucks_on_road: 'самосвалов на дороге', queue_crusher: 'очередь у дробилки', queue_clay: 'очередь у склада глины',
+  feed_rate: 'подача', plan_rate: 'план', plan_fulfilment: 'выполнение плана', feed_cu: 'медь в питании',
+  feed_clay: 'глина в питании', feed_hardness: 'крепость питания', feed_p80: 'крупность питания P80', recovery: 'извлечение',
+  cu_concentrate_shift: 'медь в концентрате за смену', ore_shift_t: 'руда за смену', cu_year_pace: 'медь, темп года',
+  specific_energy: 'удельная электроэнергия', power: 'мощность', load_level: 'нагрузка сети', stock: 'запас', stock_t: 'запас',
+  capacity_t: 'вместимость', hours_left: 'хватит на', inflow: 'поступление', outflow: 'отгрузка', stop_forecast: 'фабрика встанет в',
+  ore_type: 'тип руды', clay_pct: 'доля глины', cu_grade: 'содержание меди', au_grade: 'содержание золота', p80: 'крупность P80', hardness: 'крепость',
+  loading_factor: 'скорость погрузки', remaining: 'остаток', recommended_destination: 'куда везти', blasted: 'взорван',
+  blasted_ahead_h: 'взорванный запас', bench: 'уступ', open: 'открыта', closed_reason: 'причина закрытия', length_m: 'длина',
+  mode: 'режим', avg_wait_excavator: 'ожидание у экскаватора', avg_wait_dump: 'ожидание на разгрузке',
+  trucks_hauling: 'самосвалов в рейсе', trucks_needed: 'нужно самосвалов', trucks_reserve: 'в резерве',
+  delivered_crusher_t: 'привезено на дробилку', delivered_clay_t: 'привезено на склад глины', delivered_dump_t: 'вывезено в отвал',
+  sim_time: 'модельное время', shift: 'смена', shift_hour: 'час смены', temperature: 'температура', wind: 'ветер',
+  visibility: 'видимость', speed_limit: 'ограничение скорости', active_scenarios: 'включённые сценарии', advice: 'советы',
+  drilled_m: 'пробурено', penetration_rate: 'скорость бурения', utilization: 'загрузка', value: 'значение',
+};
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmt(v, digits) {
   if (v === undefined || v === null) return '—';
@@ -389,15 +427,14 @@ function renderDispatcher() {
     const s = val(id, 'state', '');
     if (s === 'down') down++;
     else if (s === 'queued_load' || s === 'queued_dump') queued++;
-    if (s && s !== 'down') hauling++;
+    if (IN_CYCLE.has(s)) hauling++;   // «в работе» — в цикле (очередь, погрузка, рейс, разгрузка), как у советника
   }
-  const th = val(disp, 'trucks_hauling', null);
   const wait = val(disp, 'avg_wait_excavator', null);
   const wUnit = (twins[disp] && twins[disp].features.avg_wait_excavator && twins[disp].features.avg_wait_excavator.properties.unit) || 'мин';
   const rows = [
     ['Режим', MODE_NAMES[val(disp, 'mode', '')] || val(disp, 'mode', '—')],
     ['Ожидание у экскаватора', wait === null ? '—' : fmt(wait, 1) + ' ' + wUnit],
-    ['Самосвалы в работе / в очереди / авария', (th !== null ? fmt(th, 0) : hauling) + ' / ' + queued + ' / ' + down + (total ? ' из ' + total : '')],
+    ['Самосвалы в работе (в цикле) / из них в очереди / авария', hauling + ' / ' + queued + ' / ' + down + (total ? ' из ' + total : '')],
     ['Очередь у дробилки', fmt(val(disp, 'queue_crusher', val(NS + ':crusher-01', 'trucks_queued', 0)), 0)],
     ['Очередь у склада глины', fmt(val(disp, 'queue_clay', val(NS + ':stockpile-clay', 'trucks_queued', 0)), 0)],
   ];
@@ -573,13 +610,13 @@ function renderAdvice() {
   for (const [id, b] of Object.entries(adviceBadges)) if (!ids.has(id)) b.enabled = false;
   // журнал: новые, снятые советы и смена приоритета
   const pri = {};
-  for (const a of list) pri[a.id] = a.priority;
+  for (const a of list) { pri[a.id] = a.priority; adviceTitles[a.id] = a.title || adviceTitles[a.id]; }
   if (prevAdvicePri !== null) {
     for (const a of list) {
       if (!(a.id in prevAdvicePri)) logEvent('Совет (' + (ADVICE_PRI[a.priority] || a.priority) + '): ' + a.text);
       else if (prevAdvicePri[a.id] !== a.priority) logEvent('Совет теперь «' + (ADVICE_PRI[a.priority] || a.priority) + '»: ' + (a.title || a.id));
     }
-    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + id);
+    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + (adviceTitles[id] || 'совет'));
   }
   prevAdvicePri = pri;
 }
@@ -673,7 +710,8 @@ function renderReality() {
 function initReality() {
   const box = document.getElementById('reality'), btn = document.getElementById('btn-reality');
   if (!box || !btn) return;
-  const show = (on) => { box.hidden = !on; btn.classList.toggle('active', on); lastRealityRaw = null; renderReality(); };
+  const close = () => show(false);
+  const show = (on) => { box.hidden = !on; btn.classList.toggle('active', on); lastRealityRaw = null; renderReality(); windowShown(close, on); };
   btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
   document.getElementById('reality-close').addEventListener('click', () => show(false));
 }
@@ -763,8 +801,8 @@ function buildRoads() {
   for (const e of dio.edges) if (/^road-ramp/.test(e.road)) (ramps[e.road] || (ramps[e.road] = [])).push(e);
   for (const [rid, list] of Object.entries(ramps)) {
     const e = list[Math.floor(list.length / 2)];
-    const xs = (e.sa[0] + e.sb[0]) / 2, ys = (e.sa[1] + e.sb[1]) / 2;
-    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(xs, ys, dio.surfaceAt(xs, ys) + 2)); terrain.add(anchor);
+    const [xs, ys, zs] = dio.edgeAt(e, 0.5);   // середина ребра по трассе съезда
+    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(xs, ys, zs + 2)); terrain.add(anchor);
     for (const m of roadMeshes[rid] || []) m.userData.thingId = NS + ':' + rid;   // клик по полотну — карточка дороги
     register(anchor, NS + ':' + rid, { hitRadius: 0 });
     clickable.push(...(roadMeshes[rid] || []));
@@ -937,11 +975,33 @@ async function loadLayers(suffix = '') {
     try {
       const mod = await import('./layers/' + name + '.js' + suffix);
       if (typeof mod.init === 'function') await mod.init(ctx);
+      if (name === 'haulage') rerouteRoadLines(group);
       layers.push({ name, mod, ctx, errors: 0 });
     } catch (e) {
       console.error('Слой ' + name + ': ошибка загрузки', e);
     }
   }
+}
+
+// Слой транспорта рисует линии закрытых дорог прямыми между узлами, а в схеме съезды — спирали вдоль борта:
+// отрезок, совпадающий с ребром съезда, заменяем точками его трассы (только картинка; данные слоя те же)
+function rerouteRoadLines(group) {
+  group.traverse((o) => {
+    if (!o.isLineSegments || !o.geometry || !o.geometry.attributes.position) return;
+    const a = o.geometry.attributes.position.array, out = [];
+    let changed = false;
+    for (let i = 0; i + 5 < a.length; i += 6) {
+      const e = dio && dio.edges.find((q) => q.path && Math.hypot(q.sa[0] - a[i], q.sa[1] + a[i + 2]) < 4 && Math.hypot(q.sb[0] - a[i + 3], q.sb[1] + a[i + 5]) < 4);
+      if (!e) { for (let k = 0; k < 6; k++) out.push(a[i + k]); continue; }
+      changed = true;
+      const lift = a[i + 1] - e.sa[2];   // подъём линии слоя над полотном
+      for (let k = 0; k < e.path.length - 1; k++) {
+        const p = e.path[k], q = e.path[k + 1];
+        out.push(p[0], p[2] + lift, -p[1], q[0], q[2] + lift, -q[1]);
+      }
+    }
+    if (changed) o.geometry.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  });
 }
 
 // ---------------------------------------------------------------- клавиатура (controls.js)
@@ -1380,7 +1440,15 @@ function queueLane(node) {
   if (queueLanes[node] !== undefined) return queueLanes[node];
   const from = node === 'crusher' ? 'floor-c' : 'crusher';
   const path = geometry.nodes[from] ? shortestPath(node, from) : null;
-  return (queueLanes[node] = path && path.length > 1 ? path.map((n) => dio.D.nodes[n]) : null);
+  if (!path || path.length < 2) return (queueLanes[node] = null);
+  // ломаная по узлам; ребро съезда — по его трассе (спираль вдоль борта), а не напрямую
+  const lane = [dio.D.nodes[path[0]]];
+  for (let i = 0; i < path.length - 1; i++) {
+    const e = dio.edges.find((q) => (q.from === path[i] && q.to === path[i + 1]) || (q.to === path[i] && q.from === path[i + 1]));
+    if (e && e.path) lane.push(...(e.from === path[i] ? e.path.slice(1) : e.path.slice(0, -1).reverse()));
+    else lane.push(dio.D.nodes[path[i + 1]]);
+  }
+  return (queueLanes[node] = lane);
 }
 function lanePoint(lane, dist) {   // точка на ломаной на расстоянии dist от начала + направление к началу
   for (let i = 0; i < lane.length - 1; i++) {
@@ -1440,7 +1508,7 @@ function lineUpQueues() {
     for (let i = slots.length - 1; i >= 0; i--) if (!ids.has(slots[i])) slots.splice(i, 1);
     for (const o of list) if (!slots.includes(o.userData.thingId)) slots.push(o.userData.thingId);
     list.sort((a, b) => slots.indexOf(a.userData.thingId) - slots.indexOf(b.userData.thingId));
-    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP));
+    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 1.2 : k + 1) * QUEUE_STEP));   // у заправки — не вплотную к будке
     const side = queueSide(pts);
     list.forEach((o, k) => {
       const q = pts[k];
@@ -1479,8 +1547,24 @@ function separateDrills() {
       // самосвал в самой точке экскаватора (забой на заезде): отводим назад по его ходу — он стоит носом к экскаватору
       const ux = d > 0.01 ? dx / d : -Math.sin(o.rotation.y), uz = d > 0.01 ? dz / d : -Math.cos(o.rotation.y);
       o.position.x = e.position.x + ux * R; o.position.z = e.position.z + uz * R;
+      // корпус самосвала не касается экскаватора (поворотная платформа с поручнями шире гусениц): отводим дальше
+      for (let k = 0; k < 12 && obbOverlap(o, TRUCK_L / 2, TRUCK_W / 2, e, EXC_HALF[0], EXC_HALF[1]); k++) {
+        o.position.x += ux * 2; o.position.z += uz * 2;
+      }
     }
   }
+}
+// Пересечение двух прямоугольников в плане (центр, курс rotation.y, полуразмеры): разделяющая ось
+const EXC_HALF = [24 / 2, 16 / 2];   // единиц: экскаватор ×1,4 с поворотной платформой и поручнями (с запасом)
+function obbOverlap(a, ahl, ahw, b, bhl, bhw) {
+  const ax = Math.sin(a.rotation.y), az = Math.cos(a.rotation.y), bx = Math.sin(b.rotation.y), bz = Math.cos(b.rotation.y);
+  const dx = b.position.x - a.position.x, dz = b.position.z - a.position.z;
+  for (const [nx, nz] of [[ax, az], [-az, ax], [bx, bz], [-bz, bx]]) {
+    const ra = ahl * Math.abs(ax * nx + az * nz) + ahw * Math.abs(-az * nx + ax * nz);
+    const rb = bhl * Math.abs(bx * nx + bz * nz) + bhw * Math.abs(-bz * nx + bx * nz);
+    if (Math.abs(dx * nx + dz * nz) >= ra + rb) return false;
+  }
+  return true;
 }
 // Зоны забоев слоя геологии нарисованы в метрах (плоскость или группа плиток ≈ 120 × 60 м), слой каждый кадр ставит им
 // масштаб ctx.markerScale — в схеме после обновления слоя ставим 1 : 2, как у карьера
@@ -1509,6 +1593,7 @@ function adjustMachines(dt) {
     shrinkFaceZones();
     for (const o of machineList) if (/:drill-/.test(o.userData.thingId)) o.scale.setScalar(markerScale);   // как остальная техника
     schemaDetail();
+    orientDumping();
     laneOffsets();
     lineUpQueues();
     separateDrills();
@@ -1518,9 +1603,42 @@ function adjustMachines(dt) {
     smoothShifts(dt);
     separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
     separateDrills();
+    trucksOffSlopes();       // уже по показанному месту: без переходов, когда машина съехала бы на откос
+    separateTrucks(3, 8);    // переставленные на полосу не налезают на соседей
     groundMachines(dt);
   }
   updateMarkers();
+}
+// Самосвал на разгрузке у дробилки стоит задом к бункеру (носом от центра дробилки)
+function orientDumping() {
+  const cr = byThing(NS + ':crusher-01');
+  if (!cr) return;
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':truck-') < 0 || val(id, 'state', '') !== 'dumping') continue;
+    const dx = o.position.x - cr.position.x, dz = o.position.z - cr.position.z;
+    if (Math.hypot(dx, dz) < 40) o.rotation.y = Math.atan2(dx, dz);
+  }
+}
+// Самосвал в карьере не стоит на откосе: если под корпусом крутой склон (не полотно и не площадка забоя), ставим его
+// на ближайшую дорогу карьера — не дальше своей полосы от оси (место слоя, rawPos, не меняется)
+function trucksOffSlopes() {
+  const pitEdges = dio.edges.filter((e) => e.pit);
+  for (const o of machineList) {
+    if (o.userData.thingId.indexOf(':truck-') < 0) continue;
+    const xs = o.position.x, ys = -o.position.z;
+    if (dio.schemaInset(xs, ys) < 0) continue;
+    const h0 = dio.surfaceAt(xs, ys);
+    let steep = false;
+    for (const [dx, dy] of [[9, 0], [-9, 0], [0, 9], [0, -9]]) if (Math.abs(dio.surfaceAt(xs + dx, ys + dy) - h0) > 2.5) { steep = true; break; }
+    if (!steep) continue;
+    let best = null;
+    for (const e of pitEdges) { const n = dio.edgeNearest(e, xs, ys, 80); if (!best || n.d < best.n.d) best = { e, n }; }
+    if (!best || best.n.d > 80) continue;
+    const q = dio.edgeAt(best.e, best.n.t), lat = -q[4] * (xs - q[0]) + q[3] * (ys - q[1]);
+    const l = Math.max(-LANE, Math.min(LANE, lat));
+    o.position.x = q[0] - q[4] * l; o.position.z = -(q[1] + q[3] * l);
+  }
 }
 // Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,
 // не на врезке съезда и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
@@ -1748,7 +1866,7 @@ window.__groundCheck = () => {
   // поверхность, как она нарисована: видимые сетки земли, карьера и полотна дорог (не формула)
   const surf = [];
   const roadSet = new Set(Object.values(roadMats));
-  terrain.traverse((m) => { if (m.isMesh && (/^diorama-(ground|far|pit)$/.test(m.name) || roadSet.has(m.material))) {
+  terrain.traverse((m) => { if (m.isMesh && (/^diorama-(ground|far|pit|ramp)$/.test(m.name) || roadSet.has(m.material))) {
     let p = m, vis = true; while (p) { if (!p.visible) vis = false; p = p.parent; } if (vis) surf.push(m); } });
   const drawnY = (x, z) => { _ray.set(new THREE.Vector3(x, 2000, z), _down); const h = _ray.intersectObjects(surf, false)[0]; return h ? h.point.y : NaN; };
   const machines = [];
@@ -1871,13 +1989,13 @@ function initPhoto() {
     attr.textContent = src.image.attribution + ' (' + src.image.name + ', ' + terrainApi.meta.texture.date + ', 10 м/пиксель). ' +
       'Рельеф для высот модели: ' + src.dem.name + ', ' + src.dem.attribution + '.';
   }
+  const close = () => show(false);
   const show = (on) => {
-    box.hidden = !on; btn.classList.toggle('active', on);
+    box.hidden = !on; btn.classList.toggle('active', on); windowShown(close, on);
     if (on && !img.src) img.src = './terrain/' + ((terrainApi && terrainApi.meta && terrainApi.meta.texture.file) || 'texture.jpg');
   };
   btn.addEventListener('click', () => { show(box.hidden); btn.blur(); });
   document.getElementById('photo-close').addEventListener('click', () => show(false));
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !box.hidden) show(false); });
   box.addEventListener('click', (e) => { if (e.target === box) show(false); });
 }
 
@@ -1886,7 +2004,8 @@ function initPhoto() {
 function initGuide() {
   const box = document.getElementById('guide'), open = document.getElementById('guide-open');
   if (!box) return;
-  const show = (on) => { box.hidden = !on; };
+  const close = () => show(false);
+  const show = (on) => { box.hidden = !on; windowShown(close, on); };
   document.getElementById('guide-close').addEventListener('click', () => show(false));
   document.getElementById('guide-ok').addEventListener('click', () => show(false));
   if (open) open.addEventListener('click', () => show(box.hidden));

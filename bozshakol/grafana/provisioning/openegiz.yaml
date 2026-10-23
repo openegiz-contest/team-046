@@ -1,2 +1,11 @@
-# Место для файла платформы deploy/compose/grafana/provisioning/dashboards/openegiz.yaml:
-# bozshakol/compose.yml монтирует его поверх этого файла, чтобы дашборды OpenEgiz остались.
+# Дашборды платформы OpenEgiz (папка OpenEgiz) — как в deploy/compose/grafana/provisioning/dashboards/openegiz.yaml,
+# но без провайдера «OpenEgiz Examples»: он нужен только примерам examples/*, у рудника эта папка была бы пустой.
+apiVersion: 1
+providers:
+  - name: openegiz
+    folder: OpenEgiz
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true

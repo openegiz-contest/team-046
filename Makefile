@@ -154,13 +154,29 @@ BZ_COMPOSE := bozshakol/compose.yml
 # so `make down` / `make up` stop and start the mine with the platform.
 COMPOSE += $(if $(wildcard $(BZ_MARKER)), -f $(BZ_COMPOSE))
 
-.PHONY: bozshakol bozshakol-check bozshakol-stop bozshakol-logs
-## Start the platform and the Bozshakol mine (twins, services, 3D scene, dashboards)
-bozshakol: up
+.PHONY: bozshakol bozshakol-pull bozshakol-check bozshakol-stop bozshakol-logs
+## Start the platform and the Bozshakol mine (twins, services, 3D scene, dashboards).
+## Если начальная настройка платформы (init) оборвалась — один повтор подъёма через 30 с.
+bozshakol:
+	@$(MAKE) --no-print-directory up || { \
+	  code="$$($(COMPOSE) ps -a --format '{{.ExitCode}}' init 2>/dev/null | head -n 1)"; \
+	  if [ -n "$$code" ] && [ "$$code" != 0 ]; then \
+	    echo; echo "Начальная настройка платформы (init) оборвалась: Ditto ещё не успел ответить (так бывает при первом"; \
+	    echo "запуске, пока машина занята загрузкой и сборкой образов). Повторяю подъём платформы через 30 секунд."; \
+	    sleep 30; \
+	    $(MAKE) --no-print-directory up || { echo; echo "Повтор тоже не удался. Проверьте, что Docker работает, и запустите make bozshakol ещё раз."; exit 1; }; \
+	  else exit 1; fi; }
 	@grep -q '^BOZSHAKOL_WEB_PORT=' deploy/compose/.env || echo 'BOZSHAKOL_WEB_PORT=8095' >> deploy/compose/.env
 	$(COMPOSE_BASE) -f $(BZ_COMPOSE) up -d --build --wait --wait-timeout 600
 	@touch $(BZ_MARKER)
 	@bash bozshakol/urls.sh
+
+## Скачать и собрать образы платформы и рудника заранее (на чистой машине — до ≈ 25 мин), затем make bozshakol
+bozshakol-pull:
+	@bash scripts/compose-env.sh
+	$(COMPOSE_BASE) -f $(BZ_COMPOSE) pull --ignore-buildable
+	$(COMPOSE_BASE) -f $(BZ_COMPOSE) build
+	@echo "Образы скачаны и собраны. Дальше: make bozshakol"
 
 ## Check the running Bozshakol stand (twins, telemetry, scenarios, 3D page, InfluxDB)
 bozshakol-check:

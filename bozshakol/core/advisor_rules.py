@@ -20,6 +20,7 @@ RECOVERY_PER_CLAY = 0.4
 PLAN_LIMIT_PCT = 95.0        # выполнение плана за последний модельный час, ниже — совет в)
 PLAN_WINDOW_S = 3600         # окно «последний модельный час»
 PLAN_MIN_SPAN_S = 3300       # минимум данных в окне «последний час» (55 мин), иначе совет не даётся
+WARMUP_ADVICE_S = 1200       # совет «рудник разгоняется» — первые 20 модельных минут после старта
 WARMUP_S = 3600              # первый модельный час после старта — «рудник разгоняется», правила привоза молчат
 RECOVER_WINDOW_S = 900       # последние 15 мин: если привоз уже в норме, совет по привозу снимается
 WAIT_LIMIT_MIN = 2.0         # ожидание у экскаватора в «авто», выше — совет г)
@@ -80,7 +81,7 @@ def rule_crusher(snap):
         text = (f"Дробилка временно не принимает: бункер полон ({bunker:.0f} т). "
                 f"{k} {_trucks(k)} разгрузки — новых к дробилке пока не направлять, бункер освободится за несколько минут.")
         return _advice("crusher", "info", "Бункер дробилки полон", text,
-                       f"crusher-01.accepting = false при state = running и пустом stop_reason; бункер {bunker:.0f} т"
+                       f"дробилка работает, но руду не принимает (причина не указана); бункер {bunker:.0f} т"
                        + (f" при производительности {cap:.0f} т/ч" if cap else "") + f"; очередь у дробилки {k}",
                        "очередь рассосётся без вмешательства; совет снимется, когда дробилка снова примет",
                        "crusher-01", {"crusher-01.accepting": False, "crusher-01.state": state, "crusher-01.bunker": bunker,
@@ -97,7 +98,7 @@ def rule_crusher(snap):
     text = head + " " + trucks + "разгрузку руды возобновить, когда дробилка примет."
     priority = "critical" if hours < STOCK_CRIT_H else "important"
     return _advice("crusher", priority, "Дробилка не принимает руду", text,
-                   f"crusher-01.accepting = false ({why}); склад крупнодроблёной руды {stock:.0f} т, хватит на {hours:.1f} ч; "
+                   f"дробилка не принимает руду ({why}); склад крупнодроблёной руды {stock:.0f} т, хватит на {hours:.1f} ч; "
                    f"очередь у дробилки {k}",
                    "очередь у дробилки не растёт, самосвалы заняты вскрышей; фабрика работает со склада, пока он не кончится",
                    "crusher-01", {"crusher-01.accepting": False, "crusher-01.stop_reason": why, "stockpile-coarse.hours_left": hours,
@@ -157,7 +158,7 @@ def rule_clay(snap):
         trucks = []
         text = (f"Глина в питании сульфидной фабрики {clay:.1f} % — выше порога {CLAY_LIMIT_PCT:.0f} %; "
                 f"глинистый забой по двойникам не определён: проверить забои и рекомендованные пункты разгрузки.")
-        reason = f"plant-sulphide.feed_clay = {clay:.1f} %; у сульфидных забоев clay_pct ≤ {CLAY_LIMIT_PCT:.0f} %"
+        reason = f"глина в питании сульфидной фабрики {clay:.1f} %; у сульфидных забоев доля глины ≤ {CLAY_LIMIT_PCT:.0f} %"
         target = "plant-sulphide"
         priority = "important"
     return _advice("clay", priority, "Глина в питании фабрики", text, reason,
@@ -288,7 +289,7 @@ def rule_plan(snap, history):
     text = (f"Сульфидная фабрика за последний час — {pct:.0f} % плана ({feed:.0f} из {plan:.0f} т/ч). "
             f"Узкое место: {causes[0]}.")
     return _advice("plan", "critical" if pct < 80 else "important", "План фабрики ниже 95 %", text,
-                   "среднее plant-sulphide.feed_rate за последний модельный час против plan_rate; " +
+                   "средняя подача на сульфидную фабрику за последний модельный час против её плана; " +
                    "; ".join(causes),
                    f"устранение узкого места возвращает подачу к плану {plan:.0f} т/ч",
                    target, {"plan_pct_hour": round(pct, 1), "feed_avg": round(feed, 1), "plan_rate": round(plan, 1), "causes": causes})
@@ -321,7 +322,7 @@ def rule_inflow(snap, history):
             f"фабрика идёт со склада, его хватит на {hours:.1f} ч. Узкое место: {causes[0]}.")
     # фабрика при этом идёт со склада на план — «к сведению» (с запасом в часах); критично при запасе < 2 ч
     return _advice("inflow", "critical" if hours < STOCK_CRIT_H else "info", "Привоз руды ниже плана", text,
-                   "среднее stockpile-coarse.inflow за последний модельный час против plant-sulphide.plan_rate; " +
+                   "средний привоз на склад крупнодроблёной руды за последний модельный час против плана фабрики; " +
                    "; ".join(causes),
                    f"привоз вернётся к плану {plan:.0f} т/ч, склад перестанет таять",
                    target, {"inflow_pct_hour": round(pct, 1), "inflow_avg": round(inflow, 1), "plan_rate": round(plan, 1),
@@ -353,17 +354,17 @@ def rule_fleet(snap):
         k = int(round(in_cycle - needed))
         if k < 1:
             return None                 # модуль транспорта уже держит в работе столько, сколько нужно
-        how = (f"модуль транспорта: в работе (в цикле) {in_cycle}, нужно ≈ {needed:.1f} (dispatch.trucks_needed), "
-               f"в резерве уже {reserve} (dispatch.trucks_reserve)")
+        how = (f"модуль транспорта: в работе (в цикле) {in_cycle}, нужно ≈ {needed:.1f}, "
+               f"в резерве уже {reserve}")
     else:
         k = max(1, queued - working)
         how = f"в очередях у экскаваторов стоит {queued} самосвалов при {working} работающих экскаваторах (по одному грузится)"
     text = (f"Ожидание у экскаватора {wait:.1f} мин при ориентире {WAIT_TARGET_MIN:.1f} мин. "
-            f"Лишних самосвалов ≈ {k} — поставить в резерв (state = reserve, стоянка у заправки).")
+            f"Лишних самосвалов ≈ {k} — поставить в резерв (стоянка у заправки).")
     return _advice("fleet", "important", "Лишние самосвалы", text,
-                   f"dispatch.avg_wait_excavator = {wait:.1f} мин > {WAIT_LIMIT_MIN:.0f} мин в режиме auto; {how}" +
+                   f"среднее ожидание у экскаватора {wait:.1f} мин — больше {WAIT_LIMIT_MIN:.0f} мин в режиме «авто»; {how}" +
                    (f"; экскаваторы в аварии: {', '.join(downs)}" if downs else ""),
-                   f"ожидание у экскаватора снизится к {WAIT_TARGET_MIN:.1f} мин, расход топлива и износ — меньше на ≈ {k} машин",
+                   f"ожидание у экскаватора снизится к {WAIT_TARGET_MIN:.1f} мин, расход топлива и износ — меньше на ≈ {k} {_machines(k)}",
                    _busiest_excavator(snap), {"dispatch.avg_wait_excavator": wait, "dispatch.trucks_hauling": hauling,
                                 "excavator_queue_total": queued, "excavators_working": working, "reserve_estimate": k})
 
@@ -448,10 +449,10 @@ def rule_blizzard(snap, ctx=None):
                  + (" — диспетчер держит руду за счёт вскрыши." if fact["ore_pct"] > fact["waste_pct"] + 5 else "."))
     text += f" Держать запас склада крупнодроблёной руды не меньше {BLIZZARD_RESERVE_H:.0f} ч (сейчас {hours:.1f} ч)."
     priority = "critical" if hours < BLIZZARD_RESERVE_H else "important"
-    reason = (f"mine.scenario_blizzard = 1, mine.speed_limit = {limit:.0f} км/ч, видимость {_f(mine, 'visibility'):.0f} м; "
+    reason = (f"метель, ограничение скорости {limit:.0f} км/ч, видимость {_f(mine, 'visibility'):.0f} м; "
               f"оценка {source}: время хода растёт, когда скорость выше ограничения; вывоз = 1 / ((1 − доля хода) + доля хода × рост времени хода)")
     if fact:
-        reason += (f"; факт по dispatch.delivered_*: руда {fact['ore_before']:.0f} → {fact['ore_during']:.0f} т/ч, "
+        reason += (f"; факт по доставкам: руда {fact['ore_before']:.0f} → {fact['ore_during']:.0f} т/ч, "
                    f"вскрыша {fact['waste_before']:.0f} → {fact['waste_during']:.0f} т/ч")
     data = {"mine.speed_limit": limit, "haul_drop_pct": round(drop, 1), "travel_share": round(share, 2),
             "speed_loaded_before": round(v_loaded, 1), "speed_empty_before": round(v_empty, 1),
@@ -463,12 +464,22 @@ def rule_blizzard(snap, ctx=None):
                    "stockpile-coarse", data)
 
 
+def _machines(k):
+    """«машина / машины / машин» по числу."""
+    k = int(k)
+    if k % 10 == 1 and k % 100 != 11:
+        return "машина"
+    if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14:
+        return "машины"
+    return "машин"
+
+
 def rule_warmup(snap, history):
     """Первый модельный час после старта: правила привоза ещё не работают — так и сказать."""
     if not history:
         return None
     t0, t1 = history[0][0], history[-1][0]
-    if t1 - t0 >= WARMUP_S:
+    if t1 - t0 >= WARMUP_ADVICE_S:
         return None
     ready = t0 + WARMUP_S
     hhmm = _t.strftime("%H:%M", _t.localtime(ready))

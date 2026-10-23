@@ -59,9 +59,13 @@ class DioramaTest(unittest.TestCase):
     def test_compression_about_2(self):
         # расстояния между узлами и объектами сжаты примерно в 2 раза: не больше 2,1 (крупные объекты в реальном
         # размере стоят от соседей своего комплекса на реальном расстоянии — это чуть меняет сжатие до других)
-        pts = {n: (x, y, self.d["nodes"][n][0], self.d["nodes"][n][1]) for n, (x, y, _) in self.g["nodes"].items()}
+        # съезды в схеме — спирали вдоль борта (не зигзаг реального карьера): их узлы, забои на уступах у площадок
+        # съездов и экскаваторы этих забоев стоят по трассе, а не по сжатию — их проверяет test_ramp_paths
+        spiral = {n for e in self.g["edges"] if e.get("road", "").startswith("road-ramp") for n in (e["from"], e["to"])}
+        spiral |= {"face-05", "face-06", "excavator-05", "excavator-06"}
+        pts = {n: (x, y, self.d["nodes"][n][0], self.d["nodes"][n][1]) for n, (x, y, _) in self.g["nodes"].items() if n not in spiral}
         for o in self.g["objects"]:
-            if "position" in o:
+            if "position" in o and o["id"] not in spiral:
                 pts[o["id"]] = (o["position"][0], o["position"][1]) + tuple(self.d["objects"][o["id"]]["position"])
         keys = sorted(pts)
         for i, k1 in enumerate(keys):
@@ -86,6 +90,24 @@ class DioramaTest(unittest.TestCase):
         self.assertEqual(self.d["scale"], 2.0)
         for oid in ("plant-sulphide", "stockpile-coarse", "dump-waste-1", "crusher-01"):
             self.assertEqual(o[oid]["scale"], 1.0, oid)
+
+    def test_ramp_paths(self):
+        # трасса каждого ребра съезда: от узла до узла, без отрезков нулевой длины, уклон не круче 11 %,
+        # точки трассы внутри карьера (кроме подхода к верхнему узлу за бортом)
+        P = self.d["pit"]; a, b = P["semi_axes"]; cx, cy = P["center"]
+        for e in self.g["edges"]:
+            if not e.get("road", "").startswith("road-ramp"):
+                continue
+            pl = self.d["paths"][e["from"] + ">" + e["to"]]
+            self.assertEqual(pl[0][:2], self.d["nodes"][e["from"]][:2], e)
+            self.assertEqual(pl[-1][:2], self.d["nodes"][e["to"]][:2], e)
+            for p, q in zip(pl, pl[1:]):
+                L = ((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2) ** 0.5
+                self.assertGreater(L, 0.5, e)
+                self.assertLessEqual(abs(q[2] - p[2]) / L, 0.11, (e, p, q))
+            inside = [((p[0] - cx) / a) ** 2 + ((p[1] - cy) / b) ** 2 < 1.0 for p in pl]
+            self.assertGreaterEqual(sum(inside), len(pl) - 2, e)
+
 
 if __name__ == "__main__":
     unittest.main()
