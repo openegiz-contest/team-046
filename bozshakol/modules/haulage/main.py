@@ -1512,18 +1512,35 @@ class Haulage:
             return length
         hold = length - JUNCTION_STOP_M - 1.0
         if through is not None and through.dumping is not None:
-            return hold   # у пункта разгружаются — проезд через него ждёт
+            return hold   # у пункта разгружаются — проезд через него ждёт (следующий разгружаться не начнёт, пока проезжает)
         mine = self._right_of_way(truck, remaining)
         for o in self.trucks:
             if o is truck or not o.path or o.travel_pending or o.state not in ("hauling", "returning"):
                 continue
             if o.node == nxt and o.seg_pos < JUNCTION_BOX_M and o.path[0] != truck.node:
                 return hold   # только что проехал узел — ещё в нём
-            if o.path[0] == nxt and o.node != truck.node:
+            if o.path[0] == nxt and o.node != truck.node and self._front_at(o, nxt):
                 o_rem = self.roads.edge(o.node, nxt)[0] - o.seg_pos
                 if o_rem < JUNCTION_LOOK_M and self._right_of_way(o, o_rem) > mine:
                     return hold
         return length
+
+    def _front_at(self, t, nxt):
+        """t — передний на своём подъезде к узлу nxt (за передним он всё равно не проедет раньше)."""
+        return not any(o is not t and o.path and o.node == t.node and o.path[0] == nxt and o.seg_pos > t.seg_pos
+                       and o.state in ("hauling", "returning") and not o.travel_pending for o in self.trucks)
+
+    def _through_coming(self, dump):
+        """Кто-то едет через пункт разгрузки насквозь и уже подошёл (или только что проехал): разгрузку не начинать."""
+        for o in self.trucks:
+            if not o.path or o.travel_pending or o.state not in ("hauling", "returning"):
+                continue
+            if o.node == dump.node and o.seg_pos < JUNCTION_BOX_M:
+                return True
+            if o.path[0] == dump.node and len(o.path) > 1:
+                if self.roads.edge(o.node, dump.node)[0] - o.seg_pos < JUNCTION_LOOK_M:
+                    return True
+        return False
 
     def _queue_tail_m(self, truck):
         """Хвост очереди у пункта, куда едет самосвал (м пути до пункта), или None — пункт свободен / едет не туда."""
@@ -1761,7 +1778,7 @@ class Haulage:
             self._depart(truck)
 
     def _dump_point(self, dump):
-        if dump.dumping is None and dump.queue and dump.accepting:
+        if dump.dumping is None and dump.queue and dump.accepting and not self._through_coming(dump):
             truck = dump.queue.pop(0)
             dump.dumping = truck
             truck.state = "dumping"
