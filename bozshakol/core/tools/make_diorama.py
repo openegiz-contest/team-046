@@ -8,9 +8,16 @@
 Перенос реальных координат в схему делает сцена (web/diorama.js): деление на K плюс плавные поправки по опорным
 точкам (anchors) — у сдвинутых объектов окрестность сдвигается вместе с ними.
 
+Съезды в схеме — не зигзаг реального карьера, а одна непрерывная спираль вдоль борта: от верхнего узла на борту
+вниз с постоянным уклоном GRADE (≈ 6–7 % реального уклона при вертикали ×1,5), с ровной площадкой ±LAND у развилки
+к забою на уступе (узлы *-mid2 и face-05/06); отступ от борта растёт вместе с глубиной (полотно идёт по среднему
+профилю уступов). Узлы съезда стоят на спирали на своей глубине; точки трассы каждого ребра — в "paths"
+(ключ «откуда>куда», как в geometry.edges), сцена ведёт по ним полотно и технику.
+
 Запуск: python3 bozshakol/core/tools/make_diorama.py  (пишет bozshakol/core/diorama.json)
 """
 import json
+import math
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,11 +31,32 @@ TAILINGS = {"center_s": [-2750, 330], "radii": [1000, 700]}
 CLUSTERS = [
     {"anchor": ("obj", "plant-sulphide"), "shift": [-120, 0],   # комплекс — западнее: склад не тянется к карьеру
      "objects": ["sag-mill-01", "flotation-01", "power-grid"], "extra": {"stockpile-coarse": [20, 0]}},
-    {"anchor": ("node", "crusher"), "shift": [0, -30], "objects": ["crusher-01"]},
     {"anchor": ("node", "fuel-station"), "shift": [0, 0], "objects": ["fuel-station"]},
     {"anchor": ("node", "stockpile-clay"), "shift": [0, 0], "objects": ["stockpile-clay"]},
     {"anchor": ("node", "dump-waste-1"), "shift": [0, 0], "objects": ["dump-waste-1"]},
 ]
+# Съезды: узлы сверху вниз, направление обхода борта (−1 — по часовой стрелке, на запад), забой на уступе у *-mid2
+# Дробилка врезана в землю: площадка разгрузки вровень с землёй, бункер в центре; самосвал встаёт с запада задом
+# к бункеру (узел crusher — точка разгрузки), лента выходит из портала подземной галереи к юго-западу
+CRUSHER_S = [-108.0, -305.0]
+DUMP_FROM_CRUSHER = [-19.0, 0.0]
+PORTAL_FROM_CRUSHER = [-65.0, -35.0]
+DUMP_TOE_GAP = 15.0     # единицы: точка разгрузки на отвале — за подошвой отвала (отвал в реальном размере)
+RAMPS = {"road-ramp-1": (["r1-top", "r1-mid2", "r1-mid1", "r1-bottom"], -1, ("face-05", "excavator-05")),
+         "road-ramp-2": (["r2-top", "r2-mid2", "r2-mid1", "r2-bottom"], +1, ("face-06", "excavator-06"))}
+GRADE = 0.10            # уклон съезда в схеме
+LAND = 20.0             # единицы: полудлина ровной площадки на съезде у развилки к забою на уступе
+LAND_BOTTOM = 130.0     # единицы: внизу съезд выходит на уровень дна раньше узла (стык с дорогой дна — ровный)
+LAND_TOP = 60.0         # единицы: наверху съезд сначала идёт ровно на уровне борта, уходя от кромки внутрь
+FACE_OFF = -30.0        # единицы: центр площадки забоя на уступе — от оси съезда к борту (врезана в стенку, экскаватор работает в забой)
+EXC_TO_ROAD = 0.4       # доля пути от забоя к оси съезда, где стоит экскаватор забоя на уступе
+LAND_BUMP, LAND_BUMP_LEN = 22.0, 160.0   # у развилки съезд уходит на 22 единицы глубже в карьер (место для площадки забоя)
+PATH_STEP = 4.0         # единицы: шаг точек трассы
+ENTRY_INS, ENTRY_LEN = 28.0, 140.0   # у борта: ось съезда на отступе ≥ 28 (полуширина 16 + 12 на откос), плавно за 140 единиц
+
+
+def smooth01(v):
+    v = max(0.0, min(1.0, v)); return v * v * (3 - 2 * v)
 SHIFT_OBJ = {"plant-clay": [0, -35]}      # глинистая фабрика — чуть южнее, от дороги к складу глины
 SHIFT_NODE = {"rim-ne": [0, -30]}         # узел у дробилки — вслед за ней
 
@@ -72,13 +100,21 @@ def main():
         for oid, (ex, ey) in members.items():
             rp = real[oid]["position"]
             objects[oid]["position"] = [round(sa[0] + rp[0] - ra[0] + ex, 2), round(sa[1] + rp[1] - ra[1] + ey, 2)]
-    # конвейер: от дробилки (на реальном расстоянии от неё) до склада у фабрики
+    # дробилка и точка разгрузки (см. CRUSHER_S); конвейер — от портала галереи до склада у фабрики
+    objects["crusher-01"]["position"] = CRUSHER_S[:]
+    nodes["crusher"][0], nodes["crusher"][1] = CRUSHER_S[0] + DUMP_FROM_CRUSHER[0], CRUSHER_S[1] + DUMP_FROM_CRUSHER[1]
     conv = real["conveyor-01"]["path"]
-    cr, sp = real["crusher-01"]["position"], real["stockpile-coarse"]["position"]
-    p0 = objects["crusher-01"]["position"]; pe = objects["stockpile-coarse"]["position"]
-    objects["conveyor-01"]["path"] = [[round(p0[0] + conv[0][0] - cr[0], 2), round(p0[1] + conv[0][1] - cr[1], 2)],
+    sp = real["stockpile-coarse"]["position"]
+    pe = objects["stockpile-coarse"]["position"]
+    objects["conveyor-01"]["path"] = [[CRUSHER_S[0] + PORTAL_FROM_CRUSHER[0], CRUSHER_S[1] + PORTAL_FROM_CRUSHER[1]],
                                       [s(conv[1][0]), s(conv[1][1])],
                                       [round(pe[0] + conv[-1][0] - sp[0], 2), round(pe[1] + conv[-1][1] - sp[1], 2)]]
+    # отвал: точка разгрузки — у подошвы (в том же направлении от неё, что и в жизни), а не под телом отвала
+    dn, do_, rr = nodes["dump-waste-1"], objects["dump-waste-1"]["position"], real["dump-waste-1"].get("radius", 200)
+    vx, vy = do_[0] - dn[0], do_[1] - dn[1]; vl = math.hypot(vx, vy) or 1.0
+    objects["dump-waste-1"]["position"] = [round(dn[0] + vx / vl * (rr + DUMP_TOE_GAP), 2), round(dn[1] + vy / vl * (rr + DUMP_TOE_GAP), 2)]
+    # съезды — спирали вдоль борта (точки трасс рёбер — в paths), забои на уступах — у площадки на съезде
+    paths = ramps_on_wall(g, pit, nodes, objects)
     # опорные точки переноса: углы области (сжатие ×1/K) и места объектов (их сдвиг тянет окрестность)
     anchors = [[x, y, s(x), s(y)] for x in (-9000, -4000, 0, 4000, 8000) for y in (-6000, -2500, 2000, 5000)]
     for o in g["objects"]:
@@ -97,6 +133,7 @@ def main():
         "pit": dict(pit, z_scale=round(kz, 5)),
         "nodes": nodes,
         "objects": objects,
+        "paths": paths,
         "extra": {"tailings": {"center": TAILINGS["center_s"], "radii": TAILINGS["radii"]}},
         "anchors": anchors,
     }
@@ -105,6 +142,72 @@ def main():
         json.dump(out, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
     print("записано", path, len(nodes), "узлов,", len(objects), "объектов")
+
+
+def ramps_on_wall(g, pit, nodes, objects):
+    """Спираль съезда: от угла верхнего узла по борту вниз, отступ от борта = глубина × Ds / глубину карьера."""
+    cx, cy = pit["center"]; a, b = pit["semi_axes"]
+    Ds = pit["benches"] * pit["inset"]; depth = pit["benches"] * pit["bench_height"]
+    ring = lambda ins, t: (cx + (a - ins) * math.cos(t), cy + (b - ins) * math.sin(t))
+    paths = {}
+    for road, (names, sgn, (face, exc)) in RAMPS.items():
+        top, mid2, mid1, bot = names
+        z2, z1 = nodes[mid2][2], nodes[mid1][2]
+        s_l0 = LAND_TOP - z2 / GRADE; s2 = s_l0 + LAND; s_l1 = s_l0 + 2 * LAND
+        s1 = s_l1 + (z2 - z1) / GRADE; s_end = s1 + (z1 + depth) / GRADE + LAND_BOTTOM   # внизу — ровный выход на дно
+
+        def z_at(sv):
+            if sv <= s_l0: return -GRADE * max(0.0, sv - LAND_TOP)
+            if sv <= s_l1: return z2
+            return max(-depth, z2 - GRADE * (sv - s_l1))
+        # у борта полотно сразу уходит внутрь на ENTRY_INS (внешний край не ближе 12 к кромке), дальше — по профилю
+        def ins_at(sv):   # гладкий максимум (без изломов трассы в плане); у развилки к забою — глубже в карьер
+            avg, ent = -z_at(sv) * Ds / depth, ENTRY_INS * smooth01(sv / ENTRY_LEN)
+            bump = LAND_BUMP * (1 - smooth01(abs(sv - s2) / LAND_BUMP_LEN))
+            return min(Ds, (avg + ent + math.hypot(avg - ent, 8.0)) / 2 + bump)
+        tx, ty = nodes[top][0], nodes[top][1]
+        t = math.atan2((ty - cy) / b, (tx - cx) / a)
+        pts, sv, h, nxt = [], 0.0, 0.25, 0.0
+        marks = {s2: mid2, s1: mid1, s_end: bot}
+        while True:
+            ins = ins_at(sv)
+            if sv >= nxt - 1e-9 or any(abs(sv - m) < h / 2 for m in marks):
+                x, y = ring(ins, t)
+                if pts and abs(sv - pts[-1][3]) < 1.0:
+                    pts.pop()   # точка узла рядом с обычной — оставляем одну (без отрезков нулевой длины)
+                pts.append([round(x, 2), round(y, 2), round(z_at(sv), 2), round(sv, 2)])
+                nxt = sv + PATH_STEP
+            if sv >= s_end - 1e-9: break
+            speed = math.hypot((a - ins) * math.sin(t), (b - ins) * math.cos(t)) or 1.0
+            t += sgn * h / speed; sv = min(s_end, sv + h)
+        # узлы съезда — на спирали; узел верха остаётся на борту (к нему — прямой подход от спирали)
+        def at(sm):
+            q = min(pts, key=lambda p: abs(p[3] - sm)); return [q[0], q[1], q[2]]
+        for sm, n in marks.items():
+            nodes[n] = at(sm)
+        # забой на уступе — у площадки, к центру карьера; экскаватор — на том же месте относительно забоя
+        q = min(pts, key=lambda p: abs(p[3] - s2))
+        ins = ins_at(s2); t2 = math.atan2((q[1] - cy) / (b - ins), (q[0] - cx) / (a - ins))
+        p0, p1 = ring(ins, t2), ring(ins + 1.0, t2)
+        nx, ny = p1[0] - p0[0], p1[1] - p0[1]; ln = math.hypot(nx, ny) or 1.0
+        fx, fy = round(q[0] + nx / ln * FACE_OFF, 2), round(q[1] + ny / ln * FACE_OFF, 2)
+        ex, ey = objects[exc]["position"][0] - objects[face]["position"][0], objects[exc]["position"][1] - objects[face]["position"][1]
+        nodes[face] = [fx, fy, z2]
+        objects[face]["position"] = [fx, fy]
+        # экскаватор — между развалом у стенки и полотном съезда (корпус на площадке, не в стенке)
+        objects[exc]["position"] = [round(fx + ex - nx / ln * FACE_OFF * EXC_TO_ROAD, 2), round(fy + ey - ny / ln * FACE_OFF * EXC_TO_ROAD, 2)]
+        # трассы рёбер (в направлении geometry.edges)
+        seg = lambda s_a, s_b: [p[:3] for p in pts if min(s_a, s_b) - 0.01 <= p[3] <= max(s_a, s_b) + 0.01]
+        for e in g["edges"]:
+            if e.get("road") != road: continue
+            sa_ = {top: 0.0, mid2: s2, mid1: s1, bot: s_end}[e["from"]]
+            sb_ = {top: 0.0, mid2: s2, mid1: s1, bot: s_end}[e["to"]]
+            pl = seg(sa_, sb_)
+            if sa_ > sb_: pl = pl[::-1]
+            if e["from"] == top: pl = [nodes[top][:3]] + pl
+            if e["to"] == top: pl = pl + [nodes[top][:3]]
+            paths[e["from"] + ">" + e["to"]] = pl
+    return paths
 
 
 if __name__ == "__main__":

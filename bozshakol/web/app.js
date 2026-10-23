@@ -176,7 +176,7 @@ const MAX_LABELS = 30;
 const _occRay = new THREE.Raycaster(), _occDir = new THREE.Vector3();
 function occludedByGround(from, to) {
   const surf = [];
-  terrain.traverse((m) => { if (m.isMesh && m.visible && /^diorama-(ground|pit)$/.test(m.name)) surf.push(m); });
+  terrain.traverse((m) => { if (m.isMesh && m.visible && /^diorama-(ground|pit|ramp)$/.test(m.name)) surf.push(m); });
   const proc = scene.getObjectByName('layer-processing');
   if (proc) proc.traverse((m) => { if (m.isMesh && m.visible && !(m.material && m.material.transparent)) surf.push(m); });
   _occDir.subVectors(to, from); const len = _occDir.length(); _occDir.normalize();
@@ -763,8 +763,8 @@ function buildRoads() {
   for (const e of dio.edges) if (/^road-ramp/.test(e.road)) (ramps[e.road] || (ramps[e.road] = [])).push(e);
   for (const [rid, list] of Object.entries(ramps)) {
     const e = list[Math.floor(list.length / 2)];
-    const xs = (e.sa[0] + e.sb[0]) / 2, ys = (e.sa[1] + e.sb[1]) / 2;
-    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(xs, ys, dio.surfaceAt(xs, ys) + 2)); terrain.add(anchor);
+    const [xs, ys, zs] = dio.edgeAt(e, 0.5);   // середина ребра по трассе съезда
+    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(xs, ys, zs + 2)); terrain.add(anchor);
     for (const m of roadMeshes[rid] || []) m.userData.thingId = NS + ':' + rid;   // клик по полотну — карточка дороги
     register(anchor, NS + ':' + rid, { hitRadius: 0 });
     clickable.push(...(roadMeshes[rid] || []));
@@ -937,11 +937,33 @@ async function loadLayers(suffix = '') {
     try {
       const mod = await import('./layers/' + name + '.js' + suffix);
       if (typeof mod.init === 'function') await mod.init(ctx);
+      if (name === 'haulage') rerouteRoadLines(group);
       layers.push({ name, mod, ctx, errors: 0 });
     } catch (e) {
       console.error('Слой ' + name + ': ошибка загрузки', e);
     }
   }
+}
+
+// Слой транспорта рисует линии закрытых дорог прямыми между узлами, а в схеме съезды — спирали вдоль борта:
+// отрезок, совпадающий с ребром съезда, заменяем точками его трассы (только картинка; данные слоя те же)
+function rerouteRoadLines(group) {
+  group.traverse((o) => {
+    if (!o.isLineSegments || !o.geometry || !o.geometry.attributes.position) return;
+    const a = o.geometry.attributes.position.array, out = [];
+    let changed = false;
+    for (let i = 0; i + 5 < a.length; i += 6) {
+      const e = dio && dio.edges.find((q) => q.path && Math.hypot(q.sa[0] - a[i], q.sa[1] + a[i + 2]) < 4 && Math.hypot(q.sb[0] - a[i + 3], q.sb[1] + a[i + 5]) < 4);
+      if (!e) { for (let k = 0; k < 6; k++) out.push(a[i + k]); continue; }
+      changed = true;
+      const lift = a[i + 1] - e.sa[2];   // подъём линии слоя над полотном
+      for (let k = 0; k < e.path.length - 1; k++) {
+        const p = e.path[k], q = e.path[k + 1];
+        out.push(p[0], p[2] + lift, -p[1], q[0], q[2] + lift, -q[1]);
+      }
+    }
+    if (changed) o.geometry.setAttribute('position', new THREE.Float32BufferAttribute(out, 3));
+  });
 }
 
 // ---------------------------------------------------------------- клавиатура (controls.js)
@@ -1380,7 +1402,15 @@ function queueLane(node) {
   if (queueLanes[node] !== undefined) return queueLanes[node];
   const from = node === 'crusher' ? 'floor-c' : 'crusher';
   const path = geometry.nodes[from] ? shortestPath(node, from) : null;
-  return (queueLanes[node] = path && path.length > 1 ? path.map((n) => dio.D.nodes[n]) : null);
+  if (!path || path.length < 2) return (queueLanes[node] = null);
+  // ломаная по узлам; ребро съезда — по его трассе (спираль вдоль борта), а не напрямую
+  const lane = [dio.D.nodes[path[0]]];
+  for (let i = 0; i < path.length - 1; i++) {
+    const e = dio.edges.find((q) => (q.from === path[i] && q.to === path[i + 1]) || (q.to === path[i] && q.from === path[i + 1]));
+    if (e && e.path) lane.push(...(e.from === path[i] ? e.path.slice(1) : e.path.slice(0, -1).reverse()));
+    else lane.push(dio.D.nodes[path[i + 1]]);
+  }
+  return (queueLanes[node] = lane);
 }
 function lanePoint(lane, dist) {   // точка на ломаной на расстоянии dist от начала + направление к началу
   for (let i = 0; i < lane.length - 1; i++) {
@@ -1440,7 +1470,7 @@ function lineUpQueues() {
     for (let i = slots.length - 1; i >= 0; i--) if (!ids.has(slots[i])) slots.splice(i, 1);
     for (const o of list) if (!slots.includes(o.userData.thingId)) slots.push(o.userData.thingId);
     list.sort((a, b) => slots.indexOf(a.userData.thingId) - slots.indexOf(b.userData.thingId));
-    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 0.5 : k + 1) * QUEUE_STEP));
+    const pts = list.map((o, k) => lanePoint(lane, (node === 'fuel-station' ? k + 1.2 : k + 1) * QUEUE_STEP));   // у заправки — не вплотную к будке
     const side = queueSide(pts);
     list.forEach((o, k) => {
       const q = pts[k];
@@ -1479,8 +1509,24 @@ function separateDrills() {
       // самосвал в самой точке экскаватора (забой на заезде): отводим назад по его ходу — он стоит носом к экскаватору
       const ux = d > 0.01 ? dx / d : -Math.sin(o.rotation.y), uz = d > 0.01 ? dz / d : -Math.cos(o.rotation.y);
       o.position.x = e.position.x + ux * R; o.position.z = e.position.z + uz * R;
+      // корпус самосвала не касается экскаватора (поворотная платформа с поручнями шире гусениц): отводим дальше
+      for (let k = 0; k < 12 && obbOverlap(o, TRUCK_L / 2, TRUCK_W / 2, e, EXC_HALF[0], EXC_HALF[1]); k++) {
+        o.position.x += ux * 2; o.position.z += uz * 2;
+      }
     }
   }
+}
+// Пересечение двух прямоугольников в плане (центр, курс rotation.y, полуразмеры): разделяющая ось
+const EXC_HALF = [24 / 2, 16 / 2];   // единиц: экскаватор ×1,4 с поворотной платформой и поручнями (с запасом)
+function obbOverlap(a, ahl, ahw, b, bhl, bhw) {
+  const ax = Math.sin(a.rotation.y), az = Math.cos(a.rotation.y), bx = Math.sin(b.rotation.y), bz = Math.cos(b.rotation.y);
+  const dx = b.position.x - a.position.x, dz = b.position.z - a.position.z;
+  for (const [nx, nz] of [[ax, az], [-az, ax], [bx, bz], [-bz, bx]]) {
+    const ra = ahl * Math.abs(ax * nx + az * nz) + ahw * Math.abs(-az * nx + ax * nz);
+    const rb = bhl * Math.abs(bx * nx + bz * nz) + bhw * Math.abs(-bz * nx + bx * nz);
+    if (Math.abs(dx * nx + dz * nz) >= ra + rb) return false;
+  }
+  return true;
 }
 // Зоны забоев слоя геологии нарисованы в метрах (плоскость или группа плиток ≈ 120 × 60 м), слой каждый кадр ставит им
 // масштаб ctx.markerScale — в схеме после обновления слоя ставим 1 : 2, как у карьера
@@ -1509,6 +1555,7 @@ function adjustMachines(dt) {
     shrinkFaceZones();
     for (const o of machineList) if (/:drill-/.test(o.userData.thingId)) o.scale.setScalar(markerScale);   // как остальная техника
     schemaDetail();
+    orientDumping();
     laneOffsets();
     lineUpQueues();
     separateDrills();
@@ -1521,6 +1568,17 @@ function adjustMachines(dt) {
     groundMachines(dt);
   }
   updateMarkers();
+}
+// Самосвал на разгрузке у дробилки стоит задом к бункеру (носом от центра дробилки)
+function orientDumping() {
+  const cr = byThing(NS + ':crusher-01');
+  if (!cr) return;
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':truck-') < 0 || val(id, 'state', '') !== 'dumping') continue;
+    const dx = o.position.x - cr.position.x, dz = o.position.z - cr.position.z;
+    if (Math.hypot(dx, dz) < 40) o.rotation.y = Math.atan2(dx, dz);
+  }
 }
 // Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,
 // не на врезке съезда и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
@@ -1748,7 +1806,7 @@ window.__groundCheck = () => {
   // поверхность, как она нарисована: видимые сетки земли, карьера и полотна дорог (не формула)
   const surf = [];
   const roadSet = new Set(Object.values(roadMats));
-  terrain.traverse((m) => { if (m.isMesh && (/^diorama-(ground|far|pit)$/.test(m.name) || roadSet.has(m.material))) {
+  terrain.traverse((m) => { if (m.isMesh && (/^diorama-(ground|far|pit|ramp)$/.test(m.name) || roadSet.has(m.material))) {
     let p = m, vis = true; while (p) { if (!p.visible) vis = false; p = p.parent; } if (vis) surf.push(m); } });
   const drawnY = (x, z) => { _ray.set(new THREE.Vector3(x, 2000, z), _down); const h = _ray.intersectObjects(surf, false)[0]; return h ? h.point.y : NaN; };
   const machines = [];
