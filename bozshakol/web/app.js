@@ -1740,7 +1740,7 @@ function truckStation(id, st) {
     const e0 = ex.userData.rawPos || ex.position, Ex = e0.x, Ey = -e0.z;
     let ux = nd[0] - Ex, uy = nd[1] - Ey; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
     const nx = -uy, ny = ux, s = nx * (dio.pit.cx - Ex) + ny * (dio.pit.cy - Ey) >= 0 ? 1 : -1;   // сбоку — со стороны середины карьера
-    return { key: 'load:' + exId, S: [Ex + ux * MAN.ahead + nx * s * MAN.side, Ey + uy * MAN.ahead + ny * s * MAN.side], u: [ux, uy], s, ex: exId };
+    return { key: 'load:' + exId, S: [Ex + ux * MAN.ahead + nx * s * MAN.side, Ey + uy * MAN.ahead + ny * s * MAN.side], u: [ux, uy], s, ex: exId, E: [Ex, Ey] };
   }
   if (st === 'dumping') {
     const d = DUMP_AT[val(id, 'destination', '')], nd = d && dio.D.nodes[d[0]], ob = d && dio.D.objects[d[1]] && dio.D.objects[d[1]].position;
@@ -1781,7 +1781,7 @@ function buildManeuver(f, st) {
     add(C2x + r * (-nx * s * c + ux * sn), C2y + r * (-ny * s * c + uy * sn), nx * s * sn + ux * c, ny * s * sn + uy * c, true);
   }
   for (let i = 1; i <= 6; i++) add(Tx - ux * MAN.rev * i / 6, Ty - uy * MAN.rev * i / 6, ux, uy, true);
-  return { key: st.key, pts, i: 0, s: 0, S: [Sx, Sy], T: [Tx, Ty], P1: [P1x, P1y], u: [ux, uy], yaw: planYaw(ux, uy), done: false, at: 0, ex: st.ex, n0: Math.max(0, n0 - 2) };
+  return { key: st.key, pts, i: 0, s: 0, S: [Sx, Sy], T: [Tx, Ty], P1: [P1x, P1y], u: [ux, uy], yaw: planYaw(ux, uy), done: false, at: 0, ex: st.ex, E: st.E, n0: Math.max(0, n0 - 2) };
 }
 // место у пункта погрузки/разгрузки занято: другой самосвал (не из очереди) ещё у места или у начала разворота
 function stationBusy(self, m) {
@@ -1793,6 +1793,21 @@ function stationBusy(self, m) {
     for (const p of [m.S, m.T, m.P1]) if (Math.hypot(x - p[0], y - p[1]) < 22) return true;
   }
   return false;
+}
+// ребро модели, по которому едет самосвал: в пределах 25 м, вдоль курса (на развилке ближайшее ребро может быть
+// соседним — тогда полоса перескочила бы на другую сторону)
+function edgeAlong(x, y, h) {
+  const hx = Math.sin(h), hy = Math.cos(h);
+  let best = null;
+  for (const e of dio.edges) {
+    const dx = e.rb[0] - e.ra[0], dy = e.rb[1] - e.ra[1], L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - e.ra[0]) * dx + (y - e.ra[1]) * dy) / L2));
+    const d = Math.hypot(x - e.ra[0] - dx * t, y - e.ra[1] - dy * t);
+    if (d > 25) continue;
+    const score = d - 15 * Math.abs((dx * hx + dy * hy) / Math.sqrt(L2));
+    if (!best || score < best.score) best = { e, t, d, score };
+  }
+  return best;
 }
 // место в очереди у забоя на уступе (есть площадка в diorama.json extra.face_pads): номер — по близости места слоя к узлу
 function benchQueueSlot(o, id) {
@@ -1827,7 +1842,7 @@ function truckTargets() {
       if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
       continue;
     }
-    if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw }; ud.man = null; }
+    if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw, E: ud.man.E }; ud.man = null; }
     // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, за местом погрузки
     // (дальше от экскаватора), бортом к полотну (не на полосе съезда)
     if (st === 'queued_load') {
@@ -1835,9 +1850,9 @@ function truckTargets() {
       if (slot) { o.position.x = slot[0]; o.position.z = -slot[1]; o.rotation.y = slot[2]; continue; }
     }
     // на дороге: место слоя и направление хода по ребру схемы (знак — по курсу модели)
-    const x = Number(val(id, 'x', 0)), y = Number(val(id, 'y', 0)), ne = dio.nearestEdge(x, y);
+    const x = Number(val(id, 'x', 0)), y = Number(val(id, 'y', 0)), ne = edgeAlong(x, y, Number(val(id, 'heading', 0)) * Math.PI / 180);
     let tx = 0, ty = 0;
-    if (ne && ne.d < 25) {
+    if (ne) {
       // у своего забоя (на подъезде к нему, ближе 40) — без полосы: рядом экскаватор; проезжающие мимо — по своей полосе
       const face = 'face-' + String(val(id, 'excavator', '')).slice(-2), fp = dio.D.nodes[face];
       const atFace = fp && (ne.e.from === face || ne.e.to === face) && Math.hypot(o.position.x - fp[0], -o.position.z - fp[1]) < 40;
@@ -1869,8 +1884,9 @@ function truckTargets() {
     const dp = ud.depart;
     if (dp) {
       const along = (o.position.x - dp.S[0]) * dp.u[0] + (-o.position.z - dp.S[1]) * dp.u[1];
-      if (along < DEPART && Math.hypot(o.position.x - dp.S[0], -o.position.z - dp.S[1]) < DEPART) {
-        const a = Math.max(0, along);
+      const nearExc = dp.E && Math.hypot(o.position.x - dp.E[0], -o.position.z - dp.E[1]) < 32;   // место модели ещё у кормы экскаватора
+      if (nearExc || (along < DEPART && Math.hypot(o.position.x - dp.S[0], -o.position.z - dp.S[1]) < DEPART)) {
+        const a = Math.max(0, Math.min(DEPART, along));
         o.position.x = dp.S[0] + dp.u[0] * a; o.position.z = -(dp.S[1] + dp.u[1] * a); o.rotation.y = dp.yaw;
       } else ud.depart = null;
     }
