@@ -619,7 +619,7 @@
    },
    "powder_factor": {
     "properties": {
-     "value": 0.6,
+     "value": 0.53,
      "unit": "кг/м³"
     }
    },
@@ -752,7 +752,7 @@
    },
    "powder_factor": {
     "properties": {
-     "value": 0.6,
+     "value": 0.53,
      "unit": "кг/м³"
     }
    },

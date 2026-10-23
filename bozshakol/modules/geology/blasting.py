@@ -15,7 +15,7 @@ BLOCK_XY = 25.0          # сторона блока в плане, м
 # Два проекта: руда бурится чаще и мельче (mine-to-mill), вскрыша — реже и крупнее (в отвал).
 DESIGNS = {
     "ore": {"d_mm": 165.0, "burden": 4.5, "spacing": 5.5, "subdrill": 1.5, "stemming": 3.5},
-    "waste": {"d_mm": 251.0, "burden": 7.0, "spacing": 8.0, "subdrill": 2.0, "stemming": 5.0},
+    "waste": {"d_mm": 251.0, "burden": 7.5, "spacing": 8.5, "subdrill": 2.0, "stemming": 5.0},
 }
 
 # --- индекс взрываемости Лилли: A = 0,06 · (RMD + JPS + JPA + RDI + HF) ----------------------

@@ -16,13 +16,12 @@ face-01…06 своя панель — цепочка соседних блок�
 """
 import json
 import math
-import random
 import time
 
 import blasting as bl
 import blockmodel as bm
 from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging, value
-from drilling import Drill
+from drilling import Drill, stream
 
 log = setup_logging("bz-geology")
 PUBLISH_S = 10.0         # реальных секунд между публикациями
@@ -374,7 +373,6 @@ def main():
         geometry = json.load(f)
     with open("twins.json", encoding="utf-8") as f:
         twins = json.load(f)
-    rng = random.Random(3)
     t0 = time.time()
     model = bm.BlockModel(geometry)
     st = model.stats()
@@ -389,7 +387,7 @@ def main():
     prev = read_prev_state(twins)
     claimed = set()
     tracker = FeedTracker()
-    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
+    faces = [Face(t, b, geometry, model, claimed, stream(t), prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
     drills = []
     geo_ids = {o["id"] for o in geometry["objects"]}
     drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
@@ -397,7 +395,7 @@ def main():
         if thing.split(":")[1] not in geo_ids:      # места для станка в core/geometry.json нет — пропускаем, не падаем
             log.warning("буровой %s: нет места в core/geometry.json — станок пропущен", thing)
             continue
-        drill = Drill(thing, geometry, model, rng, len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
+        drill = Drill(thing, geometry, model, stream(thing), len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
         old = prev.get(thing, {})
         drill.meters = max(0.0, num(old.get("meters_total"), 0.0))      # накопительные метры и скважины продолжаются
         drill.holes = max(0, int(num(old.get("holes_total"), 0.0)))
