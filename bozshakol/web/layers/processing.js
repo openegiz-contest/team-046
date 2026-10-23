@@ -1,7 +1,9 @@
 // Слой «переработка»: дробилка, конвейер, склады, фабрики, подстанция, отвал.
 // Модели — из общей библиотеки ctx.models (web/models.js); положение и размеры — только из
 // ctx.geometry (core/geometry.json); состояние — из двойников модуля processing.
-// Цвет фонаря над объектом: зелёный — работает, жёлтый — простой, красный — остановка / авария / ремонт.
+// Сигнальная лампа на корпусе (маленький цилиндр ≈ 2,4 м на краю крыши, у склада, у головы конвейера):
+// зелёный — работает, жёлтый — простой / ожидание руды, красный — остановка / авария / ремонт.
+// В виде сверху лампы чуть увеличиваются (иначе их не видно), в 3D — в натуральную величину.
 const NS = 'kz.bozshakol';
 const FAR_M = 2500;          // дальше — упрощённые модели (setDetail('far'))
 const BULK_DENSITY = 1.6;    // т/м³ — как в main.py: тонны склада → объём штабеля
@@ -27,14 +29,14 @@ const STATE_RU = { running: '', idle: ' · простой', stopped: ' · сто
 
 export function init(ctx) {
   const THREE = ctx.THREE, M = ctx.models;
-  const lam = (col) => new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.9 });
+  const lam = (col) => new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.6 });
   lampMats = { green: lam(0x43b36a), amber: lam(0xf2c94c), red: lam(ctx.colors.down || 0xd32f2f) };
-  lampGeo = new THREE.SphereGeometry(3, 12, 8);
+  lampGeo = new THREE.CylinderGeometry(1.2, 1.2, 1.6, 12);   // сигнальная лампа: Ø 2,4 м, высота 1,6 м
   // высота объекта: своя из geometry.json, иначе — земля сцены
   const zOf = (o) => (o.position.length > 2 && typeof o.position[2] === 'number' ? o.position[2] : ctx.groundAt(o.position[0], o.position[1]));
   const place = (g, o) => g.position.copy(ctx.toScene(o.position[0], o.position[1], zOf(o)));
-  const addLamp = (parent, y) => {
-    const m = new THREE.Mesh(lampGeo, lampMats.green); m.position.y = y; parent.add(m); return m;
+  const addLamp = (parent, y, x = 0, z = 0) => {
+    const m = new THREE.Mesh(lampGeo, lampMats.green); m.position.set(x, y + 0.8, z); parent.add(m); return m;
   };
   const add = (id, rec, labelText, importance, dy) => {
     ctx.group.add(rec.g);
@@ -49,7 +51,8 @@ export function init(ctx) {
     if (o.kind === 'crusher') {
       const g = M.crusher();
       place(g, o); g.rotation.y = -(o.yaw_deg || 0) * Math.PI / 180;
-      add(id, { kind: o.kind, g, model: g, lamp: null }, o.id, 3, 36);
+      // у дробилки — штатная сигнальная лампа модели (на корпусе, цвет меняет setState)
+      add(id, { kind: o.kind, g, model: g, lamp: null, modelLamp: g.userData.parts && g.userData.parts.lamp }, o.id, 3, 36);
     } else if (o.kind === 'conveyor' && o.path && o.path.length >= 2) {
       // трасса из geometry.json, уплотнённая через CONVEYOR_STEP_M: высота — по точкам трассы,
       // но не ниже земли сцены (иначе лента уходит под рельеф между опорными точками)
@@ -67,13 +70,14 @@ export function init(ctx) {
       const g = M.conveyor(pts, { height: 3 });
       const anchor = new THREE.Object3D(); anchor.position.copy(pts[Math.floor(pts.length / 2)]); g.add(anchor);
       const head = new THREE.Object3D(); head.position.copy(pts[0]); g.add(head);
-      add(id, { kind: o.kind, g, model: g, anchor, hit: 40, lamp: addLamp(head, 12) }, o.id, 3, 12);
+      add(id, { kind: o.kind, g, model: g, anchor, hit: 40, lamp: addLamp(head, 4) }, o.id, 3, 12);
     } else if (o.kind === 'stockpile') {
       const isClay = o.id.includes('clay');
       const g = new THREE.Group(); place(g, o);
       const pile = M.stockpile(0, { color: isClay ? ctx.colors.stockpileClay : ctx.colors.stockpileOre });
       g.add(pile);
-      add(id, { kind: o.kind, g, model: pile, lamp: addLamp(g, 2), radius: o.radius || 50, hit: o.radius || 50 }, o.id, 3, 8);
+      // лампа — у края площадки склада, не на штабеле (штабель растёт и закрывал бы её)
+      add(id, { kind: o.kind, g, model: pile, lamp: addLamp(g, 1.5, (o.radius || 50) * 0.85, 0), radius: o.radius || 50, hit: o.radius || 50 }, o.id, 3, 8);
     } else if (o.kind === 'plant' || o.kind === 'substation') {
       const size = o.size || [100, 60, 20];
       const g = M.building(o.kind === 'plant' ? 'main' : 'substation', { size });
@@ -81,13 +85,17 @@ export function init(ctx) {
       const h = size[2] * (o.kind === 'plant' ? 1.3 : 1);   // у главного корпуса мельничный пролёт выше крыши
       // подпись корпуса — над западным торцом, чтобы не закрывать подписи складов у восточного края
       const anchor = new THREE.Object3D(); anchor.position.x = o.kind === 'plant' ? -size[0] * 0.3 : 0; g.add(anchor);
-      add(id, { kind: o.kind, g, model: g, anchor, lamp: addLamp(g, h + 6), hit: Math.max(size[0], size[1]) / 2 },
+      // лампа — на краю крыши корпуса (у угла), а не шаром над серединой
+      const lamp = addLamp(g, size[2] + 1, size[0] / 2 - 4, size[1] / 2 - 4);
+      add(id, { kind: o.kind, g, model: g, anchor, lamp, hit: Math.max(size[0], size[1]) / 2 },
         o.id, 3, h + (o.kind === 'plant' ? 70 : 14));
     } else if (o.kind === 'mill' || o.kind === 'flotation') {
       // мельница и флотация стоят внутри главного корпуса: отдельной модели нет, только точка
-      // (клик, подпись, значок сценария) и фонарь состояния над крышей
+      // (клик, подпись, значок сценария) и сигнальная лампа на крыше над ними
+      // (мельница — на крыше мельничного пролёта ≈ 1,3 × высоты корпуса, флотация — на основной крыше)
       const g = new THREE.Group(); place(g, o);
-      add(id, { kind: o.kind, g, lamp: addLamp(g, 48), hit: 30 }, o.id, 2, 56);
+      const plantH = ((ctx.geometry.objects || []).find((x) => x.id === 'plant-sulphide') || {}).size?.[2] || 30;
+      add(id, { kind: o.kind, g, lamp: addLamp(g, o.kind === 'mill' ? plantH * 1.3 + 0.6 : plantH + 1), hit: 30 }, o.id, 2, 56);
     } else if (o.kind === 'dump') {
       const g = M.dump(o.radius || 200, DUMP_HEIGHT_M, { tiers: 3 });
       place(g, o);
@@ -105,7 +113,10 @@ export function update(ctx, twins) {
       const far = obj.getWorldPosition(rec._p || (rec._p = new ctx.THREE.Vector3())).distanceTo(cam) > FAR_M;
       if (rec.far !== far) { rec.model.setDetail(far ? 'far' : 'full'); rec.far = far; }
     }
-    if (rec.lamp) rec.lamp.scale.setScalar(Math.min(3, ctx.markerScale || 1));
+    // лампы в натуральную величину; только в виде сверху (ортокамера) — крупнее, чтобы были видны
+    const lampScale = ctx.camera && ctx.camera.isOrthographicCamera ? Math.min(6, Math.max(3, 1.5 * (ctx.markerScale || 1))) : 1;
+    if (rec.lamp) rec.lamp.scale.setScalar(lampScale);
+    if (rec.modelLamp) rec.modelLamp.scale.setScalar(lampScale);
     if (!twin) { if (rec.kind === 'conveyor') rec.model.setFlow(0, ctx.dt); continue; }
     const name = (twin.attributes && twin.attributes.name) || id.split(':')[1];
     const state = fv(twin, 'state', '');
@@ -114,7 +125,8 @@ export function update(ctx, twins) {
     if (rec.kind === 'crusher') {
       const accepting = fv(twin, 'accepting', true) !== false;
       rec.model.setState(state);                                     // красный корпус и фонарь — стоит
-      text += (STATE_RU[state] ?? '') + (accepting ? '' : ' · не принимает') + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) +
+      text += (state === 'idle' ? ' · ожидание руды' : (STATE_RU[state] ?? '')) + (accepting ? '' : ' · не принимает') + ' · ' +
+        fmtNum(state === 'running' ? fv(twin, 'throughput', 0) : 0, 0) +
         ' т/ч · бункер ' + fmtNum(fv(twin, 'bunker', 0), 0) + ' т · очередь: ' + fv(twin, 'trucks_queued', 0);
       const why = fv(twin, 'stop_reason', '');
       if (state === 'stopped' && why) text += ' · ' + why;
@@ -130,7 +142,6 @@ export function update(ctx, twins) {
     } else if (rec.kind === 'stockpile') {
       const stock = Number(fv(twin, 'stock', 0)) || 0;
       rec.model.setVolume(Number(fv(twin, 'volume', stock / BULK_DENSITY)));
-      rec.lamp.position.y = (rec.model.userData.height || 0) + 6;
       const hours = fv(twin, 'hours_left', null);
       text += ' · ' + fmtNum(stock / 1000, 1) + ' тыс. т';
       if (id.endsWith(':stockpile-coarse')) {
