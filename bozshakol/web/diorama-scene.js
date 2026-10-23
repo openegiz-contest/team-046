@@ -249,7 +249,7 @@ function pitColorer(THREE, dio, colors, u) {
   };
 }
 const smooth01 = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
-const BAND = 30;                  // единицы: лента съезда — полотно ±16 и откос до 28 (вся полоса, где поверхность врезана)
+const BAND = 42;                  // единицы: лента съезда — полотно ±16, откос до 28 и плавный переход к уступам до 42
 const SINK_IN = 10, SINK_OUT = 14; // сетка карьера под полотном (ближе 10 от оси) опущена на 3, до 14 — плавно к поверхности
 
 // Карьер: кольца точно по кромкам уступов (начало бермы, середина бермы, низ стенки), высоты — dio.surfaceAt;
@@ -318,7 +318,7 @@ function buildPitMesh(THREE, dio, colorAt, ts) {
 // (полотно ±16 ровное, откосы до 28, дальше — уступы как есть), высоты — dio.surfaceAt. На крутом повороте у торца
 // карьера внутренний край ленты короче (не ближе 8 единиц к центру поворота) — без вырожденных треугольников.
 // Сетка карьера под лентой опущена (buildPitMesh), а сама лента чуть сдвинута к камере (polygonOffset)
-const BAND_OFFS = [-30, -26, -22, -19, -15.5, -8, 0, 8, 15.5, 19, 22, 26, 30];   // ±15,5 — край ровного полотна
+const BAND_OFFS = [-42, -36, -31, -27, -23, -19, -15.5, -8, 0, 8, 15.5, 19, 23, 27, 31, 36, 42];   // ±15,5 — край ровного полотна
 const BAND_LIFT = 0.15;           // лента чуть выше сетки карьера (вместе с polygonOffset — без ряби там, где они совпадают)
 function rampBands(THREE, dio, colorAt) {
   const pos = [], col = [], idx = [], tmp = new THREE.Color();
@@ -328,17 +328,25 @@ function rampBands(THREE, dio, colorAt) {
     // только внутри карьера: подход к верхнему узлу за бортом — обычная лента дороги
     const pl = e.path.filter((p) => dio.schemaInset(p[0], p[1]) > 0.5), n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
     if (n < 2) continue;
+    // радиус поворота трассы в каждой точке и сторона центра поворота (+1 — слева); берём наименьший радиус
+    // в окне ±3 точки — сжатие внутреннего края меняется плавно, без перекошенных треугольников
+    const Rr = [], Sr = [];
     for (let i = 0; i < n; i++) {
-      const p = pl[Math.max(0, i - 1)], q = pl[Math.min(n - 1, i + 1)];
-      let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
-      // радиус поворота трассы в этой точке и сторона центра поворота (+1 — слева)
       let R = Infinity, side = 0;
       if (i > 0 && i < n - 1) {
+        const p = pl[i - 1], q = pl[i + 1];
         const ax = pl[i][0] - p[0], ay = pl[i][1] - p[1], bx = q[0] - pl[i][0], by = q[1] - pl[i][1];
         const cr = ax * by - ay * bx, la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
         const ang = Math.asin(Math.max(-1, Math.min(1, cr / ((la * lb) || 1))));
         if (Math.abs(ang) > 1e-4) { R = (la + lb) / 2 / Math.abs(ang); side = Math.sign(cr); }
       }
+      Rr.push(R); Sr.push(side);
+    }
+    for (let i = 0; i < n; i++) {
+      const p = pl[Math.max(0, i - 1)], q = pl[Math.min(n - 1, i + 1)];
+      let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+      let R = Infinity, side = 0;
+      for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) if (Rr[j] < R) { R = Rr[j]; side = Sr[j]; }
       for (const o of BAND_OFFS) {
         let off = o;
         if (side && Math.sign(o) === side && Math.abs(o) > HW && R - 8 < BAND) {   // откос сжат, точки не сливаются
@@ -404,7 +412,8 @@ export function roadRibbons(THREE, dio) {
         const lx = cxp + nx * half, ly = cyp + ny * half, rx = cxp - nx * half, ry = cyp - ny * half;
         // край полотна — на поверхности под ним; дорога в карьере (дно, подъезд к забою) — ровно на своей высоте
         const zc = e.pit && mat !== 'shoulder' ? e.zAt(Math.max(0, Math.min(1, s / L))) : null;
-        const cur = [lx, (zc ?? dio.surfaceAt(lx, ly)) + lift, -ly, rx, (zc ?? dio.surfaceAt(rx, ry)) + lift, -ry];
+        const sl = dio.surfaceAt(lx, ly), sr = dio.surfaceAt(rx, ry);   // и не ниже поверхности под краем
+        const cur = [lx, (zc === null ? sl : Math.max(zc, sl)) + lift, -ly, rx, (zc === null ? sr : Math.max(zc, sr)) + lift, -ry];
         if (prev) tri.push(...prev.slice(0, 3), ...prev.slice(3), ...cur.slice(0, 3), ...cur.slice(0, 3), ...prev.slice(3), ...cur.slice(3));
         prev = cur;
       }
@@ -433,7 +442,9 @@ export function roadRibbons(THREE, dio) {
         const p = pts[Math.max(0, i - 1)], q = pts[Math.min(pts.length - 1, i + 1)];
         let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
         const lx = pts[i][0] - ty * half, ly = pts[i][1] + tx * half, rx = pts[i][0] + ty * half, ry = pts[i][1] - tx * half;
-        const zl = flat ? pts[i][2] : dio.surfaceAt(lx, ly), zr = flat ? pts[i][2] : dio.surfaceAt(rx, ry);
+        // полотно ровное на высоте трассы, но не ниже поверхности под краем (у дуги и на продлении за узел)
+        const sl = dio.surfaceAt(lx, ly), sr = dio.surfaceAt(rx, ry);
+        const zl = flat ? Math.max(pts[i][2], sl) : sl, zr = flat ? Math.max(pts[i][2], sr) : sr;
         const cur = [lx, zl + lift, -ly, rx, zr + lift, -ry];
         if (prev) tri.push(...prev.slice(0, 3), ...prev.slice(3), ...cur.slice(0, 3), ...cur.slice(0, 3), ...prev.slice(3), ...cur.slice(3));
         prev = cur;
