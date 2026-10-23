@@ -29,7 +29,7 @@ const ROAD_NEAR = 20, ROAD_BLEND = 35, SIDE_K = 0.4;   // м, м, множите
 export const ROAD_W = 28;                                // единицы: две полосы самосвала (ширина ≈ 10) + зазоры
 const CORRIDOR = ROAD_W / 2 + 4, CORRIDOR_BLEND = 10;    // единицы
 const FACE_PAD = 30;                                     // единицы: радиус рабочей площадки у забоя (сверх CORRIDOR)
-const RAMP_SMOOTH = 14;                                  // единицы: за откосом съезда уступы проступают плавно, не ступенькой
+const RAMP_GAP = 6, RAMP_SMOOTH = 16;                    // единицы: за откосом съезда — ровный склон борта, дальше уступы проступают плавно
 const FACE_PAD_BENCH = 16;                               // единицы: то же у забоя на уступе (врезана в борт у площадки съезда)
 
 export async function loadDiorama(THREE, geometry, terrainApi) {
@@ -234,14 +234,14 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     const span = CORRIDOR + CORRIDOR_BLEND - HW;
     let aRamp = Infinity;   // расстояние от края полотна съезда
     for (const e of pitEdges) {
-      const n = edgeNearest(e, xs, ys, HW + Math.max(NEAR2, span + RAMP_SMOOTH));
+      const n = edgeNearest(e, xs, ys, HW + Math.max(NEAR2, span + RAMP_GAP + RAMP_SMOOTH));
       take(n.d - HW, n.z);
       if (e.path) aRamp = Math.min(aRamp, n.d - HW);
     }
-    // уступы; у съезда (откос и ещё RAMP_SMOOTH за ним) — плавный переход к среднему профилю борта: откос съезда
-    // встречает ровный склон, а не ступеньки берм и стенок
+    // уступы; у съезда за откосом — ровный средний склон борта (ещё RAMP_GAP), дальше уступы проступают плавно
+    // (RAMP_SMOOTH): откос встречает ровный склон, а уступы растут вдоль своих кромок — без ступенек и зубцов
     const zStep = benchProfile(ds), zAvg = -depthS * Math.min(1, ds / Ds);
-    const z = aRamp >= span + RAMP_SMOOTH ? zStep : zAvg + (zStep - zAvg) * smooth((aRamp - span) / RAMP_SMOOTH);
+    const z = zAvg + (zStep - zAvg) * smooth((aRamp - span - RAMP_GAP) / RAMP_SMOOTH);
     // рабочие площадки у забоев: ровный круг на уровне забоя (там стоят экскаватор и самосвал под погрузкой);
     // забой на уступе — у площадки на съезде, круг меньше (уступ узкий)
     for (const [fx, fy, fz] of facePads) take(Math.hypot(xs - fx, ys - fy) - (fz > -depthS + 1 ? FACE_PAD_BENCH : FACE_PAD), fz);
@@ -251,6 +251,14 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     const zr = z + (num / den - z) * rim;
     if (amin <= 0) return num / den;   // на полотне и площадке — их высота (у борта тоже: съезд врезан в борт)
     return amin < span ? zr + (z - zr) * smooth(amin / span) : z;
+  }
+
+  // доля уступов у съезда (0 — ровный средний склон борта, 1 — уступы как есть), как в surfaceAt: для цвета карьера
+  function stepBlend(xs, ys) {
+    const span = CORRIDOR + CORRIDOR_BLEND - HW;
+    let a = Infinity;
+    for (const e of pitEdges) if (e.path) a = Math.min(a, edgeNearest(e, xs, ys, HW + span + RAMP_GAP + RAMP_SMOOTH).d - HW);
+    return smooth((a - span - RAMP_GAP) / RAMP_SMOOTH);
   }
 
   // --- полный перенос точки: место в схеме, высота дороги/поверхности, «земля» в реальных координатах
@@ -304,7 +312,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   return {
     faceOre: Object.fromEntries((geometry.objects || []).filter((o) => o.kind === 'face').map((o) => [o.id, o.ore_type])),
     D, toScene, groundAt, mapXY, surfaceAt, schemaInset, benchProfile, pitMap, nearestEdge, edges, edgeAt, edgeNearest,
-    roadW: ROAD_W, roadHalf: HW, corridor: CORRIDOR + CORRIDOR_BLEND,
+    roadW: ROAD_W, roadHalf: HW, corridor: CORRIDOR + CORRIDOR_BLEND, stepBlend,
     // точка на кольце карьера: отступ от борта ds (единицы), угол t эллипса
     ringPoint: (ds, t) => [cx + (a - ds) * Math.cos(t), cy + (b - ds) * Math.sin(t)],
     pit: { cx, cy, a, b, Ds, depth: depthS, inset: P.inset, berm: P.berm, benchHeight: P.bench_height, benches: P.benches },
