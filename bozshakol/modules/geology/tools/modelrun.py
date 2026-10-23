@@ -5,7 +5,6 @@
 """
 import json
 import os
-import random
 import sys
 import types
 
@@ -24,7 +23,7 @@ sys.modules.setdefault("bzlib", stub)
 
 import blockmodel as bm  # noqa: E402
 import main as G  # noqa: E402
-from drilling import Drill  # noqa: E402
+from drilling import Drill, stream  # noqa: E402
 
 DT = 100.0                  # шаг расчёта, модельных секунд
 RATE_CLAY, RATE_WASTE = 700.0, 2000.0       # скорость отгрузки глинистого и вскрышных экскаваторов, т/ч
@@ -43,13 +42,12 @@ def build(n_drills, blend):
         twins = json.load(f)
     model = bm.BlockModel(geometry)
     model.drop_fields()
-    rng = random.Random(3)
     claimed = set()
     tracker = G.FeedTracker() if blend else None
-    faces = [G.Face(t, b, geometry, model, claimed, rng, None, tracker) for t, b in twins.items() if ":face-" in t]
+    faces = [G.Face(t, b, geometry, model, claimed, stream(t), None, tracker) for t, b in twins.items() if ":face-" in t]
     places = {o["id"] for o in geometry["objects"]}
     ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit() and k.split(":")[1] in places)
-    drills = [Drill(t, geometry, model, rng, i) for i, t in enumerate(ids[:n_drills])]
+    drills = [Drill(t, geometry, model, stream(t), i) for i, t in enumerate(ids[:n_drills])]
     for d in drills:
         d.faces = list(faces)
     return model, tracker, faces, drills

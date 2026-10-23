@@ -16,18 +16,18 @@ face-01…06 своя панель — цепочка соседних блок�
 """
 import json
 import math
-import random
 import time
 
 import blasting as bl
 import blockmodel as bm
 from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging, value
-from drilling import Drill
+from drilling import Drill, stream
 
 log = setup_logging("bz-geology")
 PUBLISH_S = 10.0         # реальных секунд между публикациями
 PREVIEW_BLOCKS = 30      # блоков вокруг забоя в block_preview
-INITIAL_BLASTED = 1      # блоков панели, взорванных до начала моделирования (запас перед экскаватором): станки начинают работать сразу
+INITIAL_AHEAD_H = 25.0   # взорванный запас перед экскаватором на старте, часов его номинальной работы (получается 20–30) (на реальных рудниках — недели; здесь столько, чтобы станки не отставали с первых часов)
+NOMINAL_RATE_TPH = {"sulphide": 1000.0, "clay": 700.0, "waste": 2000.0}   # номинальная скорость отгрузки по роли забоя, т/ч: по ней считается начальный запас
 RATE_MAX_TPH = 3000.0     # верхняя граница оценки скорости отгрузки экскаватора, т/ч
 BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
 
@@ -156,9 +156,8 @@ class Face:
             rem = num(prev.get("remaining"))
             if rem is not None and 0.0 <= rem <= self.panel.total * 1.02:
                 self.extracted = max(0.0, self.panel.total - rem)
-        i = self.cur_index()
-        if self.extracted > 0 and i < len(self.panel.blocks) and not self.panel.blasted[i]:    # после перезапуска запас снова один блок: текущий
-            self.blast(self.panel, i, self.model.hard[self.panel.blocks[i]] * (1.0 + self.rng.gauss(0.0, 0.03)))
+        if self.extracted > 0:
+            self._ensure_stock()                     # после перезапуска запас снова INITIAL_AHEAD_H от текущего блока; уже взорванные блоки учитываются, поэтому запас не удваивается
         if self.extracted > 0 or self.panel_no > 1:
             log.info("%s: продолжаем с панели %d, отработано %.0f т, остаток %.0f т (из Ditto)", self.id, self.panel_no, self.extracted,
                      max(0.0, self.panel.total - self.extracted))
@@ -184,10 +183,20 @@ class Face:
         p.blasted = bytearray(n)
         p.p80 = [0.0] * n
         p.hard_b = [0.0] * n
-        if n:
-            self._blend_frontier(0)                  # усреднение: первый блок панели — из ближайших по содержанию Cu к нужному
-        for j in range(min(INITIAL_BLASTED, n)):   # взорванный запас на старте: крепость с небольшим разбросом
-            self.blast(p, j, m.hard[p.blocks[j]] * (1.0 + self.rng.gauss(0.0, 0.03)))
+        self._ensure_stock()                         # взорванный запас на старте панели
+
+    def _ensure_stock(self):
+        """Взорванный запас перед экскаватором около INITIAL_AHEAD_H часов (не меньше 80 % от них) его номинальной работы: от текущего блока взрываются подряд блоки,
+        пока их тоннаж не наберёт нужное (блоки, взорванные раньше, считаются). Усреднение выбирает, какой блок взорвать следующим."""
+        p, m = self.panel, self.model
+        need = 0.8 * INITIAL_AHEAD_H * NOMINAL_RATE_TPH.get(self.role, 1000.0)       # блоки берутся целиком, пока тоннаж не достиг 80 % от INITIAL_AHEAD_H, поэтому реальный запас бывает больше
+        k, tonnes = self.cur_index(), 0.0
+        while k < len(p.blocks) and tonnes < need:
+            if not p.blasted[k]:
+                self._blend_frontier(k)
+                self.blast(p, k, m.hard[p.blocks[k]] * (1.0 + self.rng.gauss(0.0, 0.03)))
+            tonnes += m.tonnes(p.blocks[k]) - (self.extracted - p.cum[k] if k == self.cur_index() else 0.0)
+            k += 1
 
     def blast(self, panel, j, f):
         """Блок взорван: ему присваиваются крепость (измеренная MWD) и P80 по модели Кузнецова–Рамлера."""
@@ -374,7 +383,6 @@ def main():
         geometry = json.load(f)
     with open("twins.json", encoding="utf-8") as f:
         twins = json.load(f)
-    rng = random.Random(3)
     t0 = time.time()
     model = bm.BlockModel(geometry)
     st = model.stats()
@@ -389,7 +397,7 @@ def main():
     prev = read_prev_state(twins)
     claimed = set()
     tracker = FeedTracker()
-    faces = [Face(t, b, geometry, model, claimed, rng, prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
+    faces = [Face(t, b, geometry, model, claimed, stream(t), prev.get(t), tracker) for t, b in twins.items() if ":face-" in t]
     drills = []
     geo_ids = {o["id"] for o in geometry["objects"]}
     drill_ids = sorted(k for k in twins if k.split(":")[1].startswith("drill-") and k.split(":")[1][6:].isdigit())
@@ -397,7 +405,7 @@ def main():
         if thing.split(":")[1] not in geo_ids:      # места для станка в core/geometry.json нет — пропускаем, не падаем
             log.warning("буровой %s: нет места в core/geometry.json — станок пропущен", thing)
             continue
-        drill = Drill(thing, geometry, model, rng, len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
+        drill = Drill(thing, geometry, model, stream(thing), len(drills))     # индекс — по созданным станкам (пропущенные не считаются)
         old = prev.get(thing, {})
         drill.meters = max(0.0, num(old.get("meters_total"), 0.0))      # накопительные метры и скважины продолжаются
         drill.holes = max(0, int(num(old.get("holes_total"), 0.0)))
