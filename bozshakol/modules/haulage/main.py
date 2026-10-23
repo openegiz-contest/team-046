@@ -265,6 +265,17 @@ class Roads:
                     heapq.heappush(heap, (nd, m))
         return None
 
+    def on_closed_segment(self, node):
+        """Узел лежит на (сейчас формально) закрытом участке — у него есть хотя бы одно
+        закрытое прилегающее звено. Используется, чтобы отличить самосвал, который
+        действительно заперт на закрытом участке (ему нужна эвакуация, `escape_path`), от
+        любого другого, для которого обычного объезда к конкретной цели просто нет —
+        закрытые звенья ему, как и всем остальным, недоступны (задача «road_closed-2»,
+        цель 1: раньше `_route_from` звал `escape_path` для ЛЮБОГО провала `path()`, из-за
+        чего самосвал, стоящий на совершенно открытом узле, мог получить маршрут через
+        закрытую дорогу — настоящий баг, найденный диагностикой)."""
+        return any(road in self.closed for _, _, _, road in self.adj.get(node, []))
+
     def edge(self, a, b):
         for m, length, grade, road in self.adj[a]:
             if m == b:
@@ -847,6 +858,24 @@ class Haulage:
         bunker_wait_s = (fill_frac ** 3) * buffer_t / (throughput / 3600.0) if throughput > 0 else 0.0
         return t_free + bunker_wait_s
 
+    def _assigned_trucks(self, ex):
+        """Сколько самосвалов уже «идут» к этому экскаватору прямо сейчас — грузится, стоит в
+        очереди, едет сюда порожним (включая тех, кто ждёт из-за `travel_pending`). Аналог
+        `_committed_tons`, но в штуках самосвалов, а не в тоннах — для предела на НОВОЕ
+        назначение в `_best_candidate` (задача «road_closed-2», цель 2: план-долг отрезанного
+        экскаватора не копится (`_excavator_cut_off`), но, пока закрыта дорога, у него могут
+        стать недоступны конкуренты по группе (руда/вскрыша) — их план уходит в 0, и вся доля
+        группы перетекает на этого одного, из-за чего по открытии дороги на него разом едет
+        куда больше машин, чем он успевает переварить. Без отдельного предела по штукам
+        симметричный предел план-долга (`PLAN_DEFICIT_CAP_T`) это не решает — он ограничивает
+        НАКОПЛЕННОЕ отставание, а не то, сколько самосвалов УЖЕ едет сюда прямо сейчас)."""
+        n = 1 if ex.loading else 0
+        n += len(ex.queue)
+        n += sum(1 for t in self.trucks
+                 if t.excavator == ex.id and t is not ex.loading and t not in ex.queue
+                 and (t.state == "returning" or (t.travel_pending and t.travel_kind == "return")))
+        return n
+
     def _best_candidate(self, truck, ores, near_clay_limit):
         """Экскаватор, который сильнее всего отстаёт от своего план-задания к моменту прибытия
         самосвала, среди ВСЕХ пунктов руды, которые сейчас в принципе доступны (`ores` — набор
@@ -860,6 +889,10 @@ class Haulage:
         план — вся оставшаяся возможная производительность, см. `_update_plan`) сами забирают
         излишек, когда рудным/глинистым экскаваторам по плану уже достаточно самосвалов — без
         отдельной надбавки «руда важнее вскрыши» (та была нечестной: решала по HOME, не по плану).
+        Кандидат, у которого уже «идёт» (`_assigned_trucks`) `trucks_needed(ex) + 1` самосвалов
+        или больше, пропускается — предел НА НОВОЕ назначение, отдельный от предела план-долга
+        (задача «road_closed-2», цель 2: без него после открытия дороги на один отрезанный ранее
+        экскаватор может разом хлынуть вся накопленная доля группы).
         Возвращает id экскаватора или None, если подходящих кандидатов не нашлось вовсе."""
         crusher_wait = self._crusher_wait_s() if "sulphide" in ores else 0.0
         candidates = []
@@ -870,6 +903,8 @@ class Haulage:
             if info["ore"] not in ores:
                 continue
             if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
+                continue
+            if self._assigned_trucks(ex) >= self._trucks_needed(ex) + 1.0:
                 continue
             my_eta = self._eta_s(truck, ex.node)
             if my_eta is None:
@@ -1095,12 +1130,23 @@ class Haulage:
         считаются проезжими (иначе `_move()` каждый шаг заново «натыкался» бы на ту же
         закрытую дорогу и пересчитывал тот же путь — настоящий бесконечный цикл, найденный
         при проверке: 100%+ CPU, ни одной строки в журнале). None — недостижимо даже так
-        (честно, без выдумывания пути, см. README)."""
+        (честно, без выдумывания пути, см. README).
+
+        Эвакуация (`escape_path`) — ТОЛЬКО если самосвал прямо сейчас стоит на закрытом
+        участке (`Roads.on_closed_segment`); если обычного пути нет просто потому, что для
+        этой ЦЕЛИ сейчас в принципе нет объезда (единственный маршрут шёл через закрытую
+        дорогу, а сам самосвал стоит на открытом узле) — закрытые звенья ему, как и всем
+        остальным, недоступны, честно возвращаем None (задача «road_closed-2», цель 1:
+        раньше `escape_path` звался при ЛЮБОМ провале `path()`, из-за чего самосвал с
+        совершенно открытого узла мог получить маршрут через закрытую дорогу — настоящий
+        баг, найденный диагностикой на стенде)."""
         start = truck.node
         path = self.roads.path(start, goal)
         if path is not None:
             truck.evac_until = None
             return path
+        if not self.roads.on_closed_segment(start):
+            return None
         escape = self.roads.escape_path(start, goal)
         if escape is None:
             return None
@@ -1721,10 +1767,14 @@ def restore_counters(model, prev):
     """Применить прежние значения счётчиков (см. `read_prev_state`) к только что созданной модели,
     ДО первого такта. Восстанавливаются ровно те признаки, что только растут и принадлежат нам
     (договор §4 + свои, не упомянутые в таблице явно, но накопительные): у `dispatch` —
-    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total; у каждого
-    excavator-NN — loaded_total, passes_total; у каждого truck-NN — trips_total; у dump-waste-1 —
-    received_total. Остальные признаки (состояния, очереди, координаты) не накопительные —
-    пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно по договору."""
+    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total,
+    fuel_used_l, refuels_total; у каждого excavator-NN — loaded_total, passes_total; у каждого
+    truck-NN — trips_total; у dump-waste-1 — received_total. `fuel_used_l`/`refuels_total`
+    раньше в списке не было (настоящий недочёт, найденный проверкой restart — после перезапуска
+    сбрасывались в 0, хотя растут всю смену так же, как остальные счётчики, задача
+    «road_closed-2», цель 3). Остальные признаки (состояния, очереди, координаты) не
+    накопительные — пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно
+    по договору."""
     restored = []
     d = prev.get("dispatch")
     if d:
@@ -1738,6 +1788,12 @@ def restore_counters(model, prev):
         if "trips_total" in d:
             model.trips = int(d["trips_total"])
             restored.append("dispatch.trips_total")
+        if "fuel_used_l" in d:
+            model.fuel_used_l_total = float(d["fuel_used_l"])
+            restored.append("dispatch.fuel_used_l")
+        if "refuels_total" in d:
+            model.refuels_total = int(d["refuels_total"])
+            restored.append("dispatch.refuels_total")
     dw = prev.get("dump-waste-1")
     if dw and "received_total" in dw:
         model.dumps["dump-waste-1"].received = float(dw["received_total"])
