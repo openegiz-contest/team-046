@@ -15,7 +15,7 @@
 | Содержание золота 2025 | 0,19 г/т | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Извлечение меди 2025 | 73,4 % | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Медь в концентрате, темп 2025 (сверка с реальностью) | ≈ 102 тыс. т/год | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | расчёт по отчёту: 35,7 млн т × 0,39 % × 73,4 % ≈ 102 тыс. т |
-| Удельная электроэнергия обогатительной фабрики (сверка с реальностью) | 26,9–36,3 кВт·ч/т | Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101) — диапазон приведён модулем переработки (№4, ветка processing/energy) | реальные (отраслевой диапазон), координатором не перепроверены |
+| Удельная электроэнергия обогатительной фабрики (сверка с реальностью) | 26,85–36,33 кВт·ч/т | Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101), табл. 1.4 «Потребление электрической энергии на предприятиях Казахстана», п. 4.6: ТОО «KAZ Minerals», Бозшакольская ОФ (годовой расход 786 700 МВт·ч) | реальные (диапазон по предприятию; сверено координатором с первоисточником 23.10) |
 | Мощность фабрик | сульфидная 25 млн т/год, глинистой руды 5 млн т/год | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
 | Дробилка | гирационная | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |
 | Мельница полусамоизмельчения | диаметр 12,2 м, 28 МВт | [mining-technology.com](https://www.mining-technology.com/projects/bozshakol-copper-project/) | реальные |

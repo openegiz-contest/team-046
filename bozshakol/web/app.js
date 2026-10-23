@@ -163,6 +163,7 @@ resize();
 // Текст меняется через obj.userData.label. Подписи, перекрывающие более важную, скрываются; лимит ~30.
 const labelRoot = document.getElementById('labels');
 const panelEl = document.getElementById('panel'), topbarEl = document.getElementById('topbar'), bannerEl = document.getElementById('scenario-banner');
+const notesEl = document.getElementById('scene-notes'), helpHintEl = document.getElementById('help-hint'), guideOpenEl = document.getElementById('guide-open');
 // Важность по умолчанию (если слой её не передал) — по виду двойника: крупные объекты 3, самосвалы 1, остальное 2
 function defaultImportance(obj) {
   const id = thingOf(obj) || '';
@@ -233,12 +234,16 @@ function updateLabels() {
   }
   cand.sort((a, b) => (b.imp - a.imp) || (a.dist - b.dist));
   placed.length = 0;
-  // панель слева и кнопки сверху — занятые области: подписи под ними прячем
+  // панель слева, кнопки сверху, сноска и кнопки внизу — занятые области: подписи под ними прячем
   const cr = canvas.getBoundingClientRect();   // координаты подписей — относительно холста
-  for (const el of [panelEl, topbarEl, bannerEl]) {
+  const ui = [];
+  for (const el of [panelEl, topbarEl, bannerEl, notesEl, helpHintEl, guideOpenEl]) {
+    if (!el) continue;
     const r = el.getBoundingClientRect();
-    if (r.width) placed.push({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height });
+    if (r.width) ui.push({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height });
   }
+  const underUi = (r) => r.x < 0 || r.y < 0 || r.x + r.w > w || r.y + r.h > h ||
+    ui.some((q) => r.x < q.x + q.w && r.x + r.w > q.x && r.y < q.y + q.h && r.y + r.h > q.y);
   let shown = 0;
   for (const L of cand) {
     const t = L.warn || L.obj.userData.label === undefined ? L.text : L.obj.userData.label;
@@ -246,7 +251,7 @@ function updateLabels() {
     const cw = L.small ? 5.6 : 6.3, ch = L.small ? 15 : 18;
     const bw = txt.length * cw + 14;
     const r = { x: L.sx - bw / 2, y: L.sy - ch, w: bw, h: ch };
-    if (shown >= MAX_LABELS || (L.imp < 4 && overlaps(r))) continue;
+    if (shown >= MAX_LABELS || underUi(r) || (L.imp < 4 && overlaps(r))) continue;
     placed.push(r); shown++;
     L.show = true;
     L.el.style.left = L.sx.toFixed(0) + 'px';
@@ -344,7 +349,9 @@ function fmt(v, digits) {
   }
   if (Array.isArray(v)) return v.length > 6 ? 'список из ' + v.length + ' значений' : JSON.stringify(v);
   if (typeof v === 'object') { const j = JSON.stringify(v); return j.length > 80 ? j.slice(0, 77) + '…' : j; }
-  return String(v);
+  const t = String(v);   // длинная строка (например, JSON-массив строкой) — коротко, карточка не длиннее экрана
+  if (t.length > 120) return /^\s*[\[{]/.test(t) ? 'данные (' + t.length + ' знаков)' : t.slice(0, 117) + '…';
+  return t;
 }
 const simClock = () => { const s = val(NS + ':mine', 'sim_time', ''); return typeof s === 'string' && s.length >= 16 ? s.slice(11, 16) : '—:—'; };
 
@@ -1515,22 +1522,52 @@ function adjustMachines(dt) {
   }
   updateMarkers();
 }
-// Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке
+// Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,
+// не на врезке съезда и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
+// единиц до экскаватора), сначала на своём уступе, потом на соседних; место запоминается, пока станок слоя не переехал
 function drillsToBerms() {
   const P = dio.pit;
+  const ex = machineList.filter((e) => e.userData.thingId.indexOf(':excavator-') >= 0);
   for (const o of machineList) {
     if (o.userData.thingId.indexOf(':drill-') < 0) continue;
     const xs = o.position.x, ys = -o.position.z;
     const ds = dio.schemaInset(xs, ys);
     if (ds < 0 || ds >= P.Ds) continue;
-    const k = Math.floor(ds / P.inset);
-    const t = Math.atan2((ys - P.cy) / (P.b - ds), (xs - P.cx) / (P.a - ds));
-    const [bx, by] = dio.ringPoint(k * P.inset + P.berm / 2, t);
-    o.position.x = bx; o.position.z = -by;
-    // вдоль бермы: касательная к эллипсу в этой точке
-    const tx = -(P.a - ds) * Math.sin(t), ty = (P.b - ds) * Math.cos(t);
-    o.rotation.y = Math.atan2(tx, -ty);
+    const ud = o.userData, key = Math.round(xs / 4) + ',' + Math.round(ys / 4);
+    if (!ud.berm || ud.berm.key !== key || performance.now() - ud.berm.at > 3000) ud.berm = { key, at: performance.now(), spot: bermSpot(xs, ys, ds, ex) };
+    const sp = ud.berm.spot;
+    o.position.x = sp.x; o.position.z = -sp.y; o.rotation.y = sp.yaw;
   }
+}
+function bermSpot(xs, ys, ds, ex) {
+  const P = dio.pit, k0 = Math.min(P.benches - 1, Math.floor(ds / P.inset));
+  const t0 = Math.atan2((ys - P.cy) / (P.b - ds), (xs - P.cx) / (P.a - ds));
+  const at = (k, t) => {
+    const d = k * P.inset + P.berm / 2, [bx, by] = dio.ringPoint(d, t);
+    let tx = -(P.a - d) * Math.sin(t), ty = (P.b - d) * Math.cos(t);
+    const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    return { x: bx, y: by, d, t, tx, ty, yaw: Math.atan2(tx, -ty) };
+  };
+  const flat = (c) => {
+    const h = dio.benchProfile(c.d);
+    for (const u of [0, 7, -7]) if (Math.abs(dio.surfaceAt(c.x + c.tx * u, c.y + c.ty * u) - h) > 0.6) return false;
+    for (const v of [2.2, -2.2]) {   // поперёк — по отступу от борта (у концов эллипса берма уже 6 единиц)
+      const [qx, qy] = dio.ringPoint(c.d + v, c.t);
+      if (Math.abs(dio.surfaceAt(qx, qy) - h) > 0.6) return false;
+    }
+    return ex.every((e) => Math.hypot(e.position.x - c.x, -e.position.z - c.y) >= 26);
+  };
+  for (const k of [k0, k0 - 1, k0 + 1]) {
+    if (k < 0 || k >= P.benches) continue;
+    const d = k * P.inset + P.berm / 2, rad = Math.hypot((P.a - d) * Math.sin(t0), (P.b - d) * Math.cos(t0)) || 1;
+    for (let i = 0; i <= 40; i++) {   // до 160 единиц в каждую сторону
+      for (const sg of i ? [1, -1] : [1]) {
+        const c = at(k, t0 + sg * i * 4 / rad);
+        if (flat(c)) return c;
+      }
+    }
+  }
+  return at(k0, t0);   // ровного места рядом нет — как раньше: середина своей бермы
 }
 // Без телепортов: сдвиг отображения (полоса, место в очереди, разведение) — поправка к месту слоя; она меняется
 // плавно (≈ 0,6 с), курс — тоже. Место слоя (rawPos) по-прежнему его собственное
@@ -1546,7 +1583,10 @@ function smoothShifts(dt) {
     // слой мог переставить машину скачком (смена состояния: встала в очередь) — показываем переезд за ≈ 0,5 с
     if (!ud.disp) ud.disp = { x: o.position.x, z: o.position.z };
     const jx = o.position.x - ud.disp.x, jz = o.position.z - ud.disp.z, j = Math.hypot(jx, jz);
-    if (j > 6 && j < 600) { const k = 1 - Math.exp(-dt / 0.18); ud.disp.x += jx * k; ud.disp.z += jz * k; o.position.x = ud.disp.x; o.position.z = ud.disp.z; }
+    if (j > Math.max(6, 70 * dt) && j < 600) {
+      const step = Math.min(j * (1 - Math.exp(-dt / 0.18)), Math.max(1.5, 100 * dt)) / j;
+      ud.disp.x += jx * step; ud.disp.z += jz * step; o.position.x = ud.disp.x; o.position.z = ud.disp.z;
+    }
     else { ud.disp.x = o.position.x; ud.disp.z = o.position.z; }
     const yaw = o.rotation.y;
     if (ud.dispYaw === undefined) ud.dispYaw = yaw;
@@ -1576,7 +1616,11 @@ function groundMachines(dt) {
     const hf = near(H(x + fx * L, z + fz * L)), hb = near(H(x - fx * L, z - fz * L));
     const hl = near(H(x + lx * W, z + lz * W)), hr = near(H(x - lx * W, z - lz * W));
     const onRoad = ud.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0;
-    o.position.y = h0 + onRoad;
+    // высота — по поверхности; скачок больше 1,5 единицы (машину переставили, край уступа) — плавно, до 40 единиц/с
+    const target = h0 + onRoad;
+    if (ud.dispY === undefined || Math.abs(target - ud.dispY) <= 1.5) ud.dispY = target;
+    else { const cap = Math.max(0.8, 40 * dt); ud.dispY += Math.max(-cap, Math.min(cap, target - ud.dispY)); }
+    o.position.y = ud.dispY;
     const pitch = -Math.atan2(hf - hb, 2 * L), roll = Math.atan2(hl - hr, 2 * W);
     if (o.rotation.order !== 'YXZ') o.rotation.order = 'YXZ';
     ud.tilt = ud.tilt || { p: pitch, r: roll };
