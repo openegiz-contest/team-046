@@ -122,8 +122,9 @@ class Rules(unittest.TestCase):
         self.assertIn("мельница на ремонте", a2[0]["text"])
         self.assertEqual(a2[0]["target"], "kz.bozshakol:sag-mill-01")
         # первый модельный час (30 мин данных) — «рудник разгоняется», правила привоза молчат
-        a = R.advise(s, history(2900.0, minutes=30))
+        a = R.advise(s, history(2900.0, minutes=15))
         self.assertEqual([x["id"] for x in a], ["warmup"])
+        self.assertEqual(R.advise(s, history(2900.0, minutes=30)), [])   # после 20 модельных минут — без совета
         self.assertEqual(a[0]["priority"], "info")
         self.assertIn("рудник разгоняется", a[0]["text"])
         # план выполняется — совета нет

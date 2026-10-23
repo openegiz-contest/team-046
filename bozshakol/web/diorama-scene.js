@@ -21,7 +21,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const K = D.scale || 2;             // м местности на единицу карты
   const u = (m) => m / K;             // расстояние по карте: метры → единицы
   const glows = [];
-  const ts = pitParams(dio, PIT_SEG), tsLow = pitParams(dio, PIT_SEG / 2);
+  const ts = pitParams(dio, PIT_SEG, 3), tsLow = pitParams(dio, PIT_SEG / 2, 10);
 
   // --- степь до горизонта: внешнее поле одного цвета, внутри области рудника — текстура с пятнами и площадками
   const x0 = B.minX, x1 = B.maxX, y0 = B.minY, y1 = B.maxY;
@@ -40,7 +40,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const shape = new THREE.Shape();
   shape.moveTo(x0, y0); shape.lineTo(x1, y0); shape.lineTo(x1, y1); shape.lineTo(x0, y1); shape.closePath();
   const hole = new THREE.Path();
-  for (let i = PIT_SEG - 1; i >= 0; i--) { const [hx, hy] = dio.ringPoint(0, ts[i]); if (i === PIT_SEG - 1) hole.moveTo(hx, hy); else hole.lineTo(hx, hy); }
+  for (let i = ts.length - 1; i >= 0; i--) { const [hx, hy] = dio.ringPoint(0, ts[i]); if (i === ts.length - 1) hole.moveTo(hx, hy); else hole.lineTo(hx, hy); }
   hole.closePath();
   shape.holes.push(hole);
   const groundGeo = new THREE.ShapeGeometry(shape);
@@ -56,12 +56,15 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   // --- россыпь камней по степи и у борта карьера (один InstancedMesh): не на дорогах и не на площадках
   group.add(rocks(THREE, dio, [x0, y0, x1, y1], u));
 
-  // --- карьер: кольца по отступу от борта, высоты — dio.surfaceAt (уступы и врезанные съезды)
-  const pitMesh = buildPitMesh(THREE, dio, colors, u, ts);
-  const pitLow = buildPitMesh(THREE, dio, colors, u, tsLow);   // «Обычное»: вдвое меньше точек на кольцо
+  // --- карьер: кольца по отступу от борта, высоты — dio.surfaceAt (уступы и врезанные съезды); съезды — отдельная
+  //     точная лента (полотно и откосы) по трассе, сетка карьера под лентой чуть опущена (не проступает сквозь неё)
+  const colorAt = pitColorer(THREE, dio, colors, u);
+  const pitMesh = buildPitMesh(THREE, dio, colorAt, ts);
+  const pitLow = buildPitMesh(THREE, dio, colorAt, tsLow);   // «Обычное»: вдвое меньше точек на кольцо
   pitLow.material = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xf0f0f0 });
   pitLow.visible = false;
-  group.add(pitMesh, pitLow);
+  const ramp = rampBands(THREE, dio, colorAt);
+  group.add(pitMesh, pitLow, ramp);
 
   // --- хвостохранилище (реальный размер): светлый пляж, гладкая вода с бликом, насыпная дамба
   const tl = D.extra && D.extra.tailings;
@@ -90,6 +93,26 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   if (plant) {
     const [px, py] = plant, hx = 230, hyS = 220, hyN = 150;
     group.add(fence(THREE, S, [[px - hx, py - hyS], [px + hx, py - hyS], [px + hx, py + hyN], [px - hx, py + hyN]]));
+  }
+
+  // --- дробилка: подземная галерея под конвейер (на поверхности — бетонная полоса вровень с землёй) и портал,
+  //     из которого лента выходит наверх — начало конвейера (модель дробилки — слой переработки, models.crusher:
+  //     площадка разгрузки на уровне земли, бункер в центре, корпус к востоку)
+  const crp = D.objects['crusher-01'] && D.objects['crusher-01'].position, cvp = D.objects['conveyor-01'] && D.objects['conveyor-01'].path;
+  if (crp && cvp && cvp.length > 1) {
+    const concrete = new THREE.MeshLambertMaterial({ color: 0xbdb7aa }), dark = new THREE.MeshLambertMaterial({ color: 0x2f3236 });
+    const along = (ax, ay, bx, by, w, h, y0, mat) => {
+      const L = Math.hypot(bx - ax, by - ay), m = new THREE.Mesh(new THREE.BoxGeometry(w, h, L), mat);
+      m.position.copy(S((ax + bx) / 2, (ay + by) / 2, y0 + h / 2)); m.rotation.y = Math.atan2(bx - ax, -(by - ay));
+      return m;
+    };
+    const [p0, p1] = cvp, L01 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+    const dx = (p1[0] - p0[0]) / L01, dy = (p1[1] - p0[1]) / L01;
+    const gal = new THREE.Group(); gal.name = 'crusher-gallery';
+    gal.add(along(crp[0], crp[1], p0[0], p0[1], 4, 0.3, 0, concrete));                                // крыша галереи
+    gal.add(along(p0[0] - dx * 7, p0[1] - dy * 7, p0[0], p0[1], 6.5, 4.6, 0, concrete));              // портал
+    gal.add(along(p0[0] - dx * 0.2, p0[1] - dy * 0.2, p0[0] + dx * 0.05, p0[1] + dy * 0.05, 3.2, 2.4, 1.6, dark));   // проём под ленту
+    group.add(gal);
   }
 
   // --- сгустители у фабрик (круглые резервуары с мостом, ≈ 60 м) — окружение схемы, не двойники
@@ -139,13 +162,14 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   // Земля в «Обычном» — без расчёта освещения (ровная степь освещена одинаково): заметно быстрее без видеокарты.
   // Цвет подобран под освещённую днём землю; ночью — тёмный; в «Высоком» — обычный материал (тени от солнца)
   // карьер в «Обычном» — цвета вершин уже с освещением от солнца (стенки на теневой стороне темнее), без расчёта света
-  const litMats = new Map([[ground, ground.material], [far, far.material], [pitMesh, pitMesh.material]]);
+  const litMats = new Map([[ground, ground.material], [far, far.material], [pitMesh, pitMesh.material], [ramp, ramp.material]]);
   const flatMats = new Map([[ground, new THREE.MeshBasicMaterial({ map: groundTex })], [far, new THREE.MeshBasicMaterial({ color: GROUND })],
-    [pitMesh, new THREE.MeshBasicMaterial({ vertexColors: true })]]);
+    [pitMesh, new THREE.MeshBasicMaterial({ vertexColors: true })],
+    [ramp, new THREE.MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 })]]);
   function setLook({ cheap = false, night = false } = {}) {
     for (const [mesh, lit] of litMats) {
       const flat = flatMats.get(mesh);
-      flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : mesh === pitMesh ? 0xf0f0f0 : 0xffffff));
+      flat.color.setHex(night ? 0x46506a : (mesh === far ? 0xf2e2ac : mesh === pitMesh || mesh === ramp ? 0xf0f0f0 : 0xffffff));
       mesh.material = cheap ? flat : lit;
     }
     pitMesh.visible = !cheap; pitLow.visible = cheap;
@@ -158,29 +182,87 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   };
 }
 
-// Углы точек на кольцах карьера: равный шаг по длине верхнего борта (у длинных боков эллипса точек больше)
-function pitParams(dio, SEG) {
-  const { a, b } = dio.pit, N = 8192, cum = [0];
+// Углы точек на кольцах карьера: равный шаг по длине верхнего борта (у длинных боков эллипса точек больше);
+// там, где по борту идёт съезд, — мелкий шаг fine (откосы у полотна ровные, без зубцов)
+function pitParams(dio, SEG, fine) {
+  const { a, b, cx, cy } = dio.pit, N = 8192, cum = [0];
   for (let i = 1; i <= N; i++) {
     const t0 = (i - 1) / N * Math.PI * 2, t1 = i / N * Math.PI * 2;
     cum.push(cum[i - 1] + Math.hypot(a * (Math.cos(t1) - Math.cos(t0)), b * (Math.sin(t1) - Math.sin(t0))));
   }
+  const total = cum[N], step = total / SEG;
+  const arcAt = (x, y) => {
+    const ds = Math.max(0, Math.min(dio.pit.Ds - 1, dio.schemaInset(x, y)));
+    let t = Math.atan2((y - cy) / (b - ds), (x - cx) / (a - ds)); if (t < 0) t += Math.PI * 2;
+    return cum[Math.min(N, Math.round(t / (Math.PI * 2) * N))];
+  };
+  const marks = [];
+  for (const e of dio.edges) if (e.path) for (const p of e.path) marks.push(arcAt(p[0], p[1]));
+  marks.sort((u, v) => u - v);
+  const near = (L) => {   // точка трассы съезда в пределах 60 единиц по длине борта
+    let lo = 0, hi = marks.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (marks[m] < L) lo = m + 1; else hi = m; }
+    for (const k of [lo - 1, lo]) if (k >= 0 && k < marks.length) { const d = Math.abs(marks[k] - L); if (Math.min(d, total - d) < 60) return true; }
+    return marks.length && (Math.min(Math.abs(marks[0] - L + total), Math.abs(marks[marks.length - 1] - L - total)) < 60);
+  };
   const ts = [];
   let j = 0;
-  for (let k = 0; k < SEG; k++) {
-    const L = k / SEG * cum[N];
+  for (let L = 0; L < total - 0.5;) {
     while (cum[j + 1] < L) j++;
     ts.push((j + (L - cum[j]) / ((cum[j + 1] - cum[j]) || 1)) / N * Math.PI * 2);
+    L += fine && near(L) ? fine : step;
   }
   return ts;
 }
 
-// Карьер: кольца точно по кромкам уступов (начало бермы, середина бермы, низ стенки), высоты — dio.surfaceAt.
-// Берма — светлая, стенка — темнее (на теневой стороне ещё темнее), съезды и площадки забоев — светлые,
-// дно с приглушёнными пятнами руды у забоев
-function buildPitMesh(THREE, dio, colors, u, ts) {
+// Цвет точки карьера: берма — светлая, стенка — темнее (на теневой стороне ещё темнее), полотно — светлое,
+// откосы выемки и насыпи у дорог и площадок — землистые, дно с приглушёнными пятнами руды у забоев
+function pitColorer(THREE, dio, colors, u) {
   const { pit, D } = dio;
+  const berm = new THREE.Color(0xe4d6b6), road = new THREE.Color(0xddd0b2), floor = new THREE.Color(0xb3a78f);
+  const cut = new THREE.Color(0xb39572), fill = new THREE.Color(0xcdb894);
+  const rust = new THREE.Color(0x9b6a47), grey = new THREE.Color(0x6f6862);
+  const sun = [-0.85, -0.53];   // солнце с юго-запада (в плане)
+  const ore = { sulphide: new THREE.Color(colors.sulphide), clay: new THREE.Color(colors.clay), waste: new THREE.Color(colors.waste) };
+  const faces = Object.entries(D.objects).filter(([id, o]) => id.startsWith('face-') && o.position);
+  // ins — отступ от борта (< 0 или ≥ Ds — дно), onRoad — точка на полотне
+  return (xs, ys, z, ins, out, onRoad = false) => {
+    if (onRoad) return out.copy(road);
+    if (ins < 0 || ins >= pit.Ds) {
+      out.copy(floor);
+      for (const [id, o] of faces) {
+        const d = Math.hypot(xs - o.position[0], ys - o.position[1]);
+        const c = ore[(dio.faceOre && dio.faceOre[id]) || 'sulphide'];
+        const R = u(160);   // зона руды ≈ 160 м вокруг забоя
+        if (d < R && c) out.lerp(c, 0.32 * (1 - d / R));
+      }
+      return out;
+    }
+    const prof = dio.benchProfile(ins);
+    if (Math.abs(z - prof) > 0.8) return out.copy(z < prof ? cut : fill);
+    const k = Math.floor(ins / pit.inset), uu = ins - k * pit.inset;
+    if (uu < pit.berm - 0.01) return out.copy(berm);
+    const t = Math.atan2((ys - pit.cy) / (pit.b - ins), (xs - pit.cx) / (pit.a - ins));
+    const nx = -Math.cos(t) / pit.a, ny = -Math.sin(t) / pit.b, n = Math.hypot(nx, ny) || 1;
+    const lit = Math.max(0, (nx / n) * sun[0] + (ny / n) * sun[1]);
+    return out.copy(rust).lerp(grey, k / Math.max(1, pit.benches - 1)).multiplyScalar(0.62 + 0.5 * lit);
+  };
+}
+const smooth01 = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
+const BAND = 30;                  // единицы: лента съезда — полотно ±16 и откос до 28 (вся полоса, где поверхность врезана)
+const SINK_IN = 10, SINK_OUT = 14; // сетка карьера под полотном (ближе 10 от оси) опущена на 3, до 14 — плавно к поверхности
+
+// Карьер: кольца точно по кромкам уступов (начало бермы, середина бермы, низ стенки), высоты — dio.surfaceAt;
+// под лентой съезда (rampBands) сетка опущена, чтобы её крупные треугольники не проступали сквозь ленту
+function buildPitMesh(THREE, dio, colorAt, ts) {
+  const { pit } = dio;
   const SEG = ts.length;
+  const rampEdges = dio.edges.filter((e) => e.path);
+  const sink = (xs, ys) => {
+    let d = Infinity;
+    for (const e of rampEdges) d = Math.min(d, dio.edgeNearest(e, xs, ys, SINK_OUT).d);
+    return d >= SINK_OUT ? 0 : 3 * (1 - smooth01((d - SINK_IN) / (SINK_OUT - SINK_IN)));
+  };
   const insets = [];
   const wall = pit.inset - pit.berm;
   for (let k = 0; k < pit.benches; k++) {
@@ -193,11 +275,7 @@ function buildPitMesh(THREE, dio, colors, u, ts) {
     if (ins >= 0) return dio.ringPoint(ins, t);
     const f = -ins; return [pit.cx + (pit.a - pit.Ds) * f * Math.cos(t), pit.cy + (pit.b - pit.Ds) * f * Math.sin(t)];
   };
-  const berm = new THREE.Color(0xe4d6b6), road = new THREE.Color(0xddd0b2), floor = new THREE.Color(0xb3a78f);
-  const rust = new THREE.Color(0x9b6a47), grey = new THREE.Color(0x6f6862), tmp = new THREE.Color();
-  const sun = [-0.85, -0.53];   // солнце с юго-запада (в плане)
-  const ore = { sulphide: new THREE.Color(colors.sulphide), clay: new THREE.Color(colors.clay), waste: new THREE.Color(colors.waste) };
-  const faces = Object.entries(D.objects).filter(([id, o]) => id.startsWith('face-') && o.position);
+  const tmp = new THREE.Color(), floorColor = new THREE.Color(0xb3a78f);
   const pos = [], col = [], idx = [];
   for (let r = 0; r < insets.length; r++) {
     const ins = insets[r];
@@ -205,27 +283,8 @@ function buildPitMesh(THREE, dio, colors, u, ts) {
       const t = ts[i];
       const [xs, ys] = ringPt(ins, t);
       const z = dio.surfaceAt(xs, ys);
-      pos.push(xs, z, -ys);
-      const prof = dio.benchProfile(Math.max(0, ins >= 0 ? ins : pit.Ds));
-      const carved = Math.abs(z - prof) > 0.8;
-      if (ins < 0 || ins >= pit.Ds) {
-        tmp.copy(floor);
-        for (const [id, o] of faces) {
-          const d = Math.hypot(xs - o.position[0], ys - o.position[1]);
-          const c = ore[(dio.faceOre && dio.faceOre[id]) || 'sulphide'];
-          const R = u(160);   // зона руды ≈ 160 м вокруг забоя
-          if (d < R && c) tmp.lerp(c, 0.32 * (1 - d / R));
-        }
-      } else if (carved) tmp.copy(road);
-      else {
-        const k = Math.floor(ins / pit.inset), uu = ins - k * pit.inset;
-        if (uu < pit.berm - 0.01) tmp.copy(berm);
-        else {
-          const nx = -Math.cos(t) / pit.a, ny = -Math.sin(t) / pit.b, n = Math.hypot(nx, ny) || 1;
-          const lit = Math.max(0, (nx / n) * sun[0] + (ny / n) * sun[1]);
-          tmp.copy(rust).lerp(grey, k / Math.max(1, pit.benches - 1)).multiplyScalar(0.62 + 0.5 * lit);
-        }
-      }
+      pos.push(xs, z - sink(xs, ys), -ys);
+      colorAt(xs, ys, z, ins >= 0 && ins < pit.Ds ? ins : -1, tmp);
       col.push(tmp.r, tmp.g, tmp.b);
     }
   }
@@ -240,7 +299,7 @@ function buildPitMesh(THREE, dio, colors, u, ts) {
   }
   // центр дна
   const c0 = pos.length / 3;
-  pos.push(pit.cx, dio.surfaceAt(pit.cx, pit.cy), -pit.cy); col.push(floor.r, floor.g, floor.b);
+  pos.push(pit.cx, dio.surfaceAt(pit.cx, pit.cy), -pit.cy); col.push(floorColor.r, floorColor.g, floorColor.b);
   const lastRing = (insets.length - 1) * SEG;
   for (let i = 0; i < SEG; i++) idx.push(lastRing + i, c0, lastRing + (i + 1) % SEG);
   for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }   // лицевая сторона — вверх
@@ -255,6 +314,71 @@ function buildPitMesh(THREE, dio, colors, u, ts) {
   return m;
 }
 
+// Лента съезда: поперечины в каждой точке трассы (через ≈ 4 единицы), на каждой 13 точек от −BAND до +BAND
+// (полотно ±16 ровное, откосы до 28, дальше — уступы как есть), высоты — dio.surfaceAt. На крутом повороте у торца
+// карьера внутренний край ленты короче (не ближе 8 единиц к центру поворота) — без вырожденных треугольников.
+// Сетка карьера под лентой опущена (buildPitMesh), а сама лента чуть сдвинута к камере (polygonOffset)
+const BAND_OFFS = [-30, -26, -22, -19, -15.5, -8, 0, 8, 15.5, 19, 22, 26, 30];   // ±15,5 — край ровного полотна
+const BAND_LIFT = 0.15;           // лента чуть выше сетки карьера (вместе с polygonOffset — без ряби там, где они совпадают)
+function rampBands(THREE, dio, colorAt) {
+  const pos = [], col = [], idx = [], tmp = new THREE.Color();
+  const HW = dio.roadHalf;
+  for (const e of dio.edges) {
+    if (!e.path) continue;
+    // только внутри карьера: подход к верхнему узлу за бортом — обычная лента дороги
+    const pl = e.path.filter((p) => dio.schemaInset(p[0], p[1]) > 0.5), n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
+    if (n < 2) continue;
+    for (let i = 0; i < n; i++) {
+      const p = pl[Math.max(0, i - 1)], q = pl[Math.min(n - 1, i + 1)];
+      let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+      // радиус поворота трассы в этой точке и сторона центра поворота (+1 — слева)
+      let R = Infinity, side = 0;
+      if (i > 0 && i < n - 1) {
+        const ax = pl[i][0] - p[0], ay = pl[i][1] - p[1], bx = q[0] - pl[i][0], by = q[1] - pl[i][1];
+        const cr = ax * by - ay * bx, la = Math.hypot(ax, ay), lb = Math.hypot(bx, by);
+        const ang = Math.asin(Math.max(-1, Math.min(1, cr / ((la * lb) || 1))));
+        if (Math.abs(ang) > 1e-4) { R = (la + lb) / 2 / Math.abs(ang); side = Math.sign(cr); }
+      }
+      for (const o of BAND_OFFS) {
+        let off = o;
+        if (side && Math.sign(o) === side && Math.abs(o) > HW && R - 8 < BAND) {   // откос сжат, точки не сливаются
+          const k = Math.max(0.15, Math.min(1, (R - 8 - HW) / (BAND - HW)));
+          off = Math.sign(o) * (HW + (Math.abs(o) - HW) * k);
+        }
+        const xs = pl[i][0] - ty * off, ys = pl[i][1] + tx * off;   // слева от хода — положительный сдвиг
+        const z = Math.abs(o) <= HW ? pl[i][2] : dio.surfaceAt(xs, ys);
+        pos.push(xs, z + BAND_LIFT, -ys);
+        const ins = dio.schemaInset(xs, ys);
+        if (ins < 0 && Math.abs(o) > HW) tmp.setHex(0xd6c896);   // за бортом — степь
+        else colorAt(xs, ys, z, ins >= dio.pit.Ds ? -1 : ins, tmp, Math.abs(o) <= HW);
+        col.push(tmp.r, tmp.g, tmp.b);
+      }
+      if (i === 0) continue;
+      for (let k = 0; k < K - 1; k++) {
+        const a0 = base + (i - 1) * K + k, a1 = a0 + 1, b0 = base + i * K + k, b1 = b0 + 1;
+        idx.push(a0, b0, b1, a0, b1, a1);
+      }
+    }
+  }
+  // лицевая сторона каждого треугольника — вверх
+  const P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+  for (let i = 0; i < idx.length; i += 3) {
+    const [a, b, c] = [P(idx[i]), P(idx[i + 1]), P(idx[i + 2])];
+    const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    if (ny < 0) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }));
+  m.receiveShadow = true;
+  m.name = 'diorama-ramp';
+  return m;
+}
+
 // Полотно дорог — лента по поверхности: точки через ≈ 4 единицы, высота каждой поперечины — dio.surfaceAt
 // (максимум по оси и краям) + подъём; обочина — шире и чуть ниже. Ключ результата — 'дорога|материал'
 export function roadRibbons(THREE, dio) {
@@ -263,21 +387,24 @@ export function roadRibbons(THREE, dio) {
   const add = (key, arr) => (parts[key] || (parts[key] = [])).push(...arr);
   for (const e of dio.edges) {
     const isRamp = /^road-ramp/.test(e.road);
+    if (e.path) { pathRibbon(e, isRamp, add); continue; }
     const [ax, ay] = e.sa, [bx, by] = e.sb;
     const L = Math.hypot(bx - ax, by - ay);
     if (L < 0.01) continue;
     const dx = (bx - ax) / L, dy = (by - ay) / L, nx = -dy, ny = dx;
-    // концы продлены на полширины: на стыках рёбер нет щелей
-    const ext = W / 2, n = Math.max(1, Math.ceil((L + 2 * ext) / 4));
+    // концы продлены на полширины: на стыках рёбер нет щелей (у забоя — не продлеваем: дальше стенка забоя)
+    const ext0 = /^face-/.test(e.from) ? 0 : W / 2, ext1 = /^face-/.test(e.to) ? 0 : W / 2;
+    const n = Math.max(1, Math.ceil((L + ext0 + ext1) / 4));
     for (const [mat, half, lift] of [[isRamp ? 'ramp' : 'open', W / 2, 0.45], ['shoulder', W / 2 + 3, 0.2]]) {
       const tri = [];
       let prev = null;
       for (let i = 0; i <= n; i++) {
-        const s = -ext + (L + 2 * ext) * i / n;
+        const s = -ext0 + (L + ext0 + ext1) * i / n;
         const cxp = ax + dx * s, cyp = ay + dy * s;
         const lx = cxp + nx * half, ly = cyp + ny * half, rx = cxp - nx * half, ry = cyp - ny * half;
-        // каждый край полотна — на поверхности под ним (край не уходит под откос соседнего витка или уступа)
-        const cur = [lx, dio.surfaceAt(lx, ly) + lift, -ly, rx, dio.surfaceAt(rx, ry) + lift, -ry];
+        // край полотна — на поверхности под ним; дорога в карьере (дно, подъезд к забою) — ровно на своей высоте
+        const zc = e.pit && mat !== 'shoulder' ? e.zAt(Math.max(0, Math.min(1, s / L))) : null;
+        const cur = [lx, (zc ?? dio.surfaceAt(lx, ly)) + lift, -ly, rx, (zc ?? dio.surfaceAt(rx, ry)) + lift, -ry];
         if (prev) tri.push(...prev.slice(0, 3), ...prev.slice(3), ...cur.slice(0, 3), ...cur.slice(0, 3), ...prev.slice(3), ...cur.slice(3));
         prev = cur;
       }
@@ -291,6 +418,29 @@ export function roadRibbons(THREE, dio) {
     out[key] = g;
   }
   return out;
+  // съезд по трассе: полотно — на высоте трассы (оно ровное поперёк), обочина — по поверхности; концы продлены
+  function pathRibbon(e, isRamp, addTo) {
+    const pl = e.path, n = pl.length, ext = W / 2;
+    const pts = pl.map((p) => p.slice());
+    const d0 = [pl[0][0] - pl[1][0], pl[0][1] - pl[1][1]], l0 = Math.hypot(...d0) || 1;
+    const d1 = [pl[n - 1][0] - pl[n - 2][0], pl[n - 1][1] - pl[n - 2][1]], l1 = Math.hypot(...d1) || 1;
+    pts.unshift([pl[0][0] + d0[0] / l0 * ext, pl[0][1] + d0[1] / l0 * ext, pl[0][2]]);
+    pts.push([pl[n - 1][0] + d1[0] / l1 * ext, pl[n - 1][1] + d1[1] / l1 * ext, pl[n - 1][2]]);
+    for (const [mat, half, lift, flat] of [[isRamp ? 'ramp' : 'open', W / 2, 0.45, true], ['shoulder', W / 2 + 3, 0.2, false]]) {
+      const tri = [];
+      let prev = null;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[Math.max(0, i - 1)], q = pts[Math.min(pts.length - 1, i + 1)];
+        let tx = q[0] - p[0], ty = q[1] - p[1]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+        const lx = pts[i][0] - ty * half, ly = pts[i][1] + tx * half, rx = pts[i][0] + ty * half, ry = pts[i][1] - tx * half;
+        const zl = flat ? pts[i][2] : dio.surfaceAt(lx, ly), zr = flat ? pts[i][2] : dio.surfaceAt(rx, ry);
+        const cur = [lx, zl + lift, -ly, rx, zr + lift, -ry];
+        if (prev) tri.push(...prev.slice(0, 3), ...prev.slice(3), ...cur.slice(0, 3), ...cur.slice(0, 3), ...prev.slice(3), ...cur.slice(3));
+        prev = cur;
+      }
+      addTo(e.road + '|' + mat, tri);
+    }
+  }
 }
 
 // Текстура степи: мягкие пятна трёх-четырёх тонов с гладкими краями и утрамбованные площадки у объектов
@@ -370,7 +520,7 @@ function rocks(THREE, dio, [x0, y0, x1, y1], u) {
   const keep = (x, y) => {
     const e = ((x - pit.cx) / (pit.a + 10)) ** 2 + ((y - pit.cy) / (pit.b + 10)) ** 2;
     if (e < 1) return false;                                                   // не в карьере
-    for (const ed of dio.edges) if (segDist(x, y, ed.sa, ed.sb) < 30) return false;   // не на дорогах
+    for (const ed of dio.edges) if ((ed.path ? dio.edgeNearest(ed, x, y, 31).d : segDist(x, y, ed.sa, ed.sb)) < 30) return false;   // не на дорогах
     for (const p of busy) if (Math.hypot(x - p[0], y - p[1]) < 280) return false;  // не на площадках
     const tl = D.extra && D.extra.tailings;
     if (tl && ((x - tl.center[0]) / (tl.radii[0] + 80)) ** 2 + ((y - tl.center[1]) / (tl.radii[1] + 80)) ** 2 < 1) return false;

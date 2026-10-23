@@ -24,7 +24,8 @@ const segDist = (p, a, b) => {
   const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
   return { d: Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t), t };
 };
-const onSchemaRoad = (p) => Math.min(...dio.edges.map((e) => segDist(p, e.sa, e.sb).d));
+// расстояние до оси ближайшего ребра схемы (съезды — по их трассе-спирали)
+const onSchemaRoad = (p) => Math.min(...dio.edges.map((e) => dio.edgeNearest(e, p[0], p[1]).d));
 
 // 1. узлы — на своих местах и внутри макета
 for (const [n, r] of Object.entries(geometry.nodes)) {
