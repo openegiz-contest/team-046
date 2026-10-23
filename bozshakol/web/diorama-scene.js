@@ -184,6 +184,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
 
 // Углы точек на кольцах карьера: равный шаг по длине верхнего борта (у длинных боков эллипса точек больше);
 // там, где по борту идёт съезд, — мелкий шаг fine (откосы у полотна ровные, без зубцов)
+const FINE_ARC = 120;   // единицы вдоль борта: мелкий шаг сетки вокруг трассы съезда (у бровки уступы проступают далеко от неё)
 function pitParams(dio, SEG, fine) {
   const { a, b, cx, cy } = dio.pit, N = 8192, cum = [0];
   for (let i = 1; i <= N; i++) {
@@ -199,11 +200,11 @@ function pitParams(dio, SEG, fine) {
   const marks = [];
   for (const e of dio.edges) if (e.path) for (const p of e.path) marks.push(arcAt(p[0], p[1]));
   marks.sort((u, v) => u - v);
-  const near = (L) => {   // точка трассы съезда в пределах 60 единиц по длине борта
+  const near = (L) => {   // точка трассы съезда в пределах FINE_ARC единиц по длине борта (вся зона проявления уступов)
     let lo = 0, hi = marks.length;
     while (lo < hi) { const m = (lo + hi) >> 1; if (marks[m] < L) lo = m + 1; else hi = m; }
-    for (const k of [lo - 1, lo]) if (k >= 0 && k < marks.length) { const d = Math.abs(marks[k] - L); if (Math.min(d, total - d) < 60) return true; }
-    return marks.length && (Math.min(Math.abs(marks[0] - L + total), Math.abs(marks[marks.length - 1] - L - total)) < 60);
+    for (const k of [lo - 1, lo]) if (k >= 0 && k < marks.length) { const d = Math.abs(marks[k] - L); if (Math.min(d, total - d) < FINE_ARC) return true; }
+    return marks.length && (Math.min(Math.abs(marks[0] - L + total), Math.abs(marks[marks.length - 1] - L - total)) < FINE_ARC);
   };
   const ts = [];
   let j = 0;
@@ -220,7 +221,8 @@ function pitParams(dio, SEG, fine) {
 function pitColorer(THREE, dio, colors, u) {
   const { pit, D } = dio;
   const berm = new THREE.Color(0xe4d6b6), road = new THREE.Color(0xddd0b2), floor = new THREE.Color(0xb3a78f);
-  const cut = new THREE.Color(0xb39572), fill = new THREE.Color(0xcdb894);
+  const cut = new THREE.Color(0xbfa27e), fill = new THREE.Color(0xcdb894);   // выемка — светлее: откос у въезда не тёмный клин
+  const slope = cut.clone().lerp(berm, 0.3);   // ровный склон борта у съезда (уступы проступают из него плавно)
   const rust = new THREE.Color(0x9b6a47), grey = new THREE.Color(0x6f6862);
   const sun = [-0.85, -0.53];   // солнце с юго-запада (в плане)
   const ore = { sulphide: new THREE.Color(colors.sulphide), clay: new THREE.Color(colors.clay), waste: new THREE.Color(colors.waste) };
@@ -251,7 +253,7 @@ function pitColorer(THREE, dio, colors, u) {
       const lit = Math.max(0, (nx / n) * sun[0] + (ny / n) * sun[1]);
       out.copy(rust).lerp(grey, k / Math.max(1, pit.benches - 1)).multiplyScalar(0.62 + 0.5 * lit);
     }
-    return sb < 1 ? out.lerp(cut, 1 - sb) : out;
+    return sb < 1 ? out.lerp(slope, 1 - sb) : out;
   };
 }
 const smooth01 = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
@@ -332,8 +334,14 @@ function rampBands(THREE, dio, colorAt) {
   const HW = dio.roadHalf;
   for (const e of dio.edges) {
     if (!e.path) continue;
-    // только внутри карьера: подход к верхнему узлу за бортом — обычная лента дороги
-    const pl = e.path.filter((p) => dio.schemaInset(p[0], p[1]) > 0.5), n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
+    // внутри карьера и чуть за бровкой (там лента уходит под землю): опущенная под съездом сетка карьера
+    // у бровки закрыта лентой до самого края, без провала; подход к верхнему узлу — обычная лента дороги
+    const pl = [];   // точки трассы ближе 1,5 единицы к предыдущей (у узла) пропускаем — без вырожденных треугольников
+    for (const p of e.path) {
+      const q = pl[pl.length - 1];
+      if (dio.schemaInset(p[0], p[1]) > -10 && !(q && Math.hypot(p[0] - q[0], p[1] - q[1]) < 1.5)) pl.push(p);
+    }
+    const n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
     if (n < 2) continue;
     // радиус поворота трассы в каждой точке и сторона центра поворота (+1 — слева); берём наименьший радиус
     // в окне ±3 точки — сжатие внутреннего края меняется плавно, без перекошенных треугольников
@@ -362,7 +370,7 @@ function rampBands(THREE, dio, colorAt) {
         }
         const xs = pl[i][0] - ty * off, ys = pl[i][1] + tx * off;   // слева от хода — положительный сдвиг
         const z = Math.abs(o) <= HW ? pl[i][2] : dio.surfaceAt(xs, ys);
-        const ins = dio.schemaInset(xs, ys), outside = ins < 0 && Math.abs(o) > HW;
+        const ins = dio.schemaInset(xs, ys), outside = ins < 0;
         // за бортом откос ленты не нужен (там степь — сетка земли): уходит под землю, без штриховки с землёй вдали
         pos.push(xs, outside ? z - 0.6 : z + BAND_LIFT, -ys);
         out.push(outside);
