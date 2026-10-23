@@ -129,7 +129,7 @@
 
 ## Presentation
 
-`presentation.pdf` in the repository root. Video (optional): <link>
+`presentation.pdf` in the repository root.
 
 Презентация ещё не подготовлена: файла `presentation.pdf` в репозитории пока нет; видео не планируется.
 
