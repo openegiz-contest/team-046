@@ -20,7 +20,7 @@ import random
 import time
 from collections import deque
 
-from bzlib import DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging
+from bzlib import NAMESPACE, DittoClient, SimClock, Telemetry, TwinWatcher, feature, setup_logging
 
 log = setup_logging("bz-haulage")
 
@@ -65,13 +65,19 @@ FUEL_L_PER_KWH = 0.256                # 215 г/кВт·ч / 0.84 кг/л (пло
 REFUEL_FUEL_PCT = 15.0                # заправляемся, если топлива в баке меньше этого % после разгрузки
 REFUEL_MODEL_MIN = 15.0               # модельных минут простоя на заправке, по договору (fuel-station)
 
-# -- резерв самосвалов (текущая задача «Резерв самосвалов») --
+# -- резерв самосвалов (задача «Резерв самосвалов», затем «Долгое восстановление» часть 2 —
+# резерв на уровне ВСЕГО ПАРКА, не по экскаваторам) --
 RESERVE_REFUEL_FUEL_PCT = 50.0        # порог из текста задачи: топливо < 50% перед резервом — сначала заправка
-RESERVE_MIN_MODEL_S = 10.0 * 60.0     # допущение (защита от «дрызганья»): минимум 10 модельных минут
-                                       # в резерве, прежде чем самосвал можно вернуть в работу — числа
-                                       # 10 мин в договоре нет, это допущение МОДУЛЯ, см. README
+RESERVE_MARGIN = 0.10                 # запас сверх Σ trucks_needed по доступным экскаваторам — допущение
+                                       # МОДУЛЯ из текста задачи («часть 2»), см. README
+WARMUP_MODEL_S = 30.0 * 60.0          # первые 30 модельных минут после старта — резерв = 0 (разгон),
+                                       # число из текста задачи («часть 2»)
+RESERVE_SURPLUS_TRUCKS = 2            # порог «лишних» для гистерезиса входа в резерв — число из текста задачи
+RESERVE_SURPLUS_HOLD_S = 10.0 * 60.0  # излишек >= RESERVE_SURPLUS_TRUCKS должен держаться непрерывно столько
+                                       # модельных минут, прежде чем начинать отправлять в резерв — текст задачи
+RESERVE_ENTRY_INTERVAL_S = 5.0 * 60.0 # не чаще одного самосвала в резерв за это модельное время — текст задачи
 # «не работает» = не считается в fleet_utilization/trucks_needed как занятый планом; резерв сюда же —
-# по условию задачи (п.7 части 1): резервный самосвал не работающий, даже если формально не в очереди
+# по условию задачи: резервный самосвал не работающий, даже если формально не в очереди
 NOT_WORKING_STATES = ("queued_load", "queued_dump", "refueling", "reserve")
 
 TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
@@ -92,14 +98,14 @@ CLAY_SOFT_FACTOR = 0.9        # заранее не грузить глинис�
 WAIT_WINDOW_MODEL_S = 3600.0  # модельный час — окно для avg_wait_*, trips_per_hour, tph_*
 # оценка времени в пути для выбора экскаватора — та же формула хода (_mean_speed), что и у
 # самосвала на самом деле (без подобранной отдельной скорости диспетчера и без разброса)
-# УДАЛЕНО (часть 2 ЭТОЙ задачи): ORE_PREFERENCE_MARGIN_S/CRUSHER_OVERFLOW_MARGIN_S — отдельная
+# УДАЛЕНО: ORE_PREFERENCE_MARGIN_S/CRUSHER_OVERFLOW_MARGIN_S — отдельная
 # надбавка «руда важнее вскрыши» в choose_excavator. Она была лишней и мешала плану: решение
 # «какую руду возить» принималось по HOME самосвала (см. удалённый _candidate_ore), а margin
 # ещё и не давал уйти на вскрышу, даже когда план рудных уже выполнен — вместе это и объясняет,
 # почему руда на дробилку/склад превышала план. Теперь _best_candidate сравнивает руду и
 # вскрышу напрямую по тому же отставанию от плана, без искусственной надбавки.
 
-# -- план-диспетчер (часть 2 текущей задачи): «план» (целевой т/ч на экскаватор) + «самосвал»
+# -- план-диспетчер: «план» (целевой т/ч на экскаватор) + «самосвал»
 # (к самому отставшему от плана) — как в реальных системах диспетчеризации карьеров --
 # plant-sulphide/plant-clay (модуль №4, bozshakol/modules/processing/main.py) публикуют
 # только feed_rate (факт) и plan_fulfilment (%, факт/план) — самого значения плана (т/ч)
@@ -122,6 +128,16 @@ PLAN_WASTE_TPH = PLAN_CRUSHER_TPH + PLAN_CLAY_TPH
 PLAN_RECOMPUTE_S = 10.0 * 60.0   # план пересчитывается не реже, чем раз в 10 модельных минут
 TRUCK_TIE_BREAK_S = 30.0         # «близкие значения» отставания от плана — 0,5 мин
 PLAN_DEFICIT_FALLBACK_S = 1.0e6  # конечный «очень большой» запасной вариант вместо math.inf (см. _plan_deficit_time_s)
+# допущение: диспетчер не пытается «отыграть» больше
+# 1-2 упущенных рейсов сразу — иначе после восстановления обслуживания (дорога открылась,
+# экскаватор почин) весь парк одновременно бросается к ОДНОМУ экскаватору с огромным накопленным
+# долгом (настоящий баг — план-долг не ограничен сверху). Берём больший класс самосвала
+# (180 т) — щедрее предел, число 2 — прямо из текста задачи, не подбирал под результат.
+PLAN_DEFICIT_CAP_TRUCKS = 2.0
+PLAN_DEFICIT_CAP_T = PLAN_DEFICIT_CAP_TRUCKS * TRUCK_PASSPORT[180]["capacity_t"]
+# средний груз по составу парка (22×135 т + 6×180 т) — для правила «сколько самосвалов нужно
+# экскаватору» (N = целевой т/ч × цикл в часах / средний груз, см. _trucks_needed)
+AVG_PAYLOAD_T = (22 * TRUCK_PASSPORT[135]["capacity_t"] + 6 * TRUCK_PASSPORT[180]["capacity_t"]) / 28.0
 
 # -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
 # запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
@@ -155,7 +171,7 @@ EXCAVATOR_SHORT_STOP_DURATION_S = (3.0 * 60.0, 10.0 * 60.0)  # равномер�
 EXCAVATOR_SHORT_STOP_STATE = "idle"
 
 
-# -- доли времени парка по состояниям (п.6 части 1 задачи «Резерв самосвалов») --
+# -- доли времени парка по состояниям --
 # полный перебор состояния самосвала из договора (contract/README.md, §«Признаки самосвала»):
 # queued_load/queued_dump -> одна доля «очередь» (п.6 задачи: «очередь у экскаватора и на
 # разгрузке — вместе»), остальные состояния — каждое своей долей; суммируются к 100%, т.к.
@@ -266,7 +282,7 @@ class Truck:
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
         self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
         self.entering_reserve = False   # едет на fuel-station, чтобы встать в резерв (не на дозаправку)
-        self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — для RESERVE_MIN_MODEL_S
+        self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — диагностика
         # -- разброс (водитель) --
         self.driver_shift_mult = 1.0    # множитель скорости на смену, равномерно 0.92-1.05
         self.trip_mult = 1.0            # множитель скорости на рейс, нормальный ±7%, обрезан ±15%
@@ -317,7 +333,7 @@ class Excavator:
         self.operator_mult = 1.0       # множитель скорости погрузки на смену, равномерно 0.90-1.10
         self.next_short_stop_at = None  # момент (модельное время, с), когда наступит следующая остановка
         self.short_stop_until = 0.0     # до какого момента активна текущая остановка (0 — не остановлен)
-        # -- план-диспетчер (часть 2) --
+        # -- план-диспетчер --
         self.plan_tph = 0.0             # текущая целевая производительность, т/ч (пересчёт — см. _update_plan)
         self.plan_target_cum_t = 0.0    # накопленный план (интеграл plan_tph по времени), т — для «отставания»
 
@@ -367,15 +383,16 @@ class Haulage:
         self.clay_limit_pct = CLAY_LIMIT_PCT
         self.fuel_used_l_total = 0.0
         self.refuels_total = 0
-        # -- план-диспетчер (часть 2) --
+        # -- план-диспетчер --
         self.plan_crusher_tph = 0.0
         self.plan_clay_tph = 0.0
         self._last_plan_update_t = -math.inf  # форсируем расчёт плана на первом же шаге
         self._plan_inputs = None
+        self._committed_baseline = {}  # {excavator.id: loaded_total на момент старта диспетчера} — см. _committed_tons
         # скользящие окна за последний модельный час для сверки (деque из (sim_time_s, значение))
         self._wait_exc = deque()     # (t, минуты ожидания у экскаватора)
         self._wait_dump = deque()    # (t, минуты ожидания на разгрузке) — по всем пунктам вместе
-        # то же самое, но отдельно по пунктам — для диагностики (sim_check.py, часть 4 сверки);
+        # то же самое, но отдельно по пунктам — для диагностики (sim_check.py, сверка);
         # dispatch.avg_wait_dump (признак из договора) остаётся общим, как было
         self._wait_dump_by_point = {did: deque() for did in ("crusher-01", "stockpile-clay", "dump-waste-1")}
         self._trips_log = deque()    # (t,) — момент завершения разгрузки (рейса)
@@ -388,6 +405,10 @@ class Haulage:
         # trucks_needed/fuel_saved_l_shift за последний модельный час (окно — как у _wait_exc и т.п.)
         self._fleet_state_log = deque()
         self._shift_reserve_s = 0.0  # накоплено секунд в резерве за ТЕКУЩУЮ смену (сброс — см. read_scenarios)
+        # -- резерв на уровне парка (часть 2 «долгого восстановления») --
+        self._reserve_surplus_since_t = None  # момент, с которого излишек >= RESERVE_SURPLUS_TRUCKS держится
+        self._last_reserve_entry_t = -math.inf  # момент последнего входа в резерв (плавность)
+        self._target_working_val = 0.0  # кэш _target_working() на текущий шаг — см. _reserve_surplus
         self._sim_t = 0.0
         # начальное положение: часть самосвалов уже в пути, чтобы сцена была живой
         for t in self.trucks[::3]:
@@ -439,7 +460,7 @@ class Haulage:
         for t in self.trucks:
             t.driver_shift_mult = self.rng.uniform(*TRUCK_DRIVER_SHIFT_MULT_RANGE)
 
-    # -- план (часть 2 текущей задачи: «план» → целевой т/ч на каждый экскаватор) -------
+    # -- план («план» → целевой т/ч на каждый экскаватор) -------
     def _possible_tph(self, ex):
         """Собственная возможная производительность экскаватора, т/ч — если бы самосвалы
         подходили без очереди: с учётом loading_factor забоя (платформа) и множителя
@@ -449,12 +470,39 @@ class Haulage:
         cycle_s = BUCKET_CYCLE_S / info["factor"] / ex.operator_mult
         return EXCAVATOR_BUCKET_T * 3600.0 / cycle_s if cycle_s > 0 else 0.0
 
+    def _excavator_cut_off(self, ex):
+        """Экскаватор физически не обслуживается — не получает цель (`plan_tph = 0`) в
+        `_update_plan` и не копит план-долг (`plan_target_cum_t`, пауза в `step()`): сломан
+        (`ex.down`), отрезан закрытой дорогой (честная проверка путём от fuel-station — узла,
+        который сам никогда не закрывается, т.к. не на съездах road-ramp-1/2/road-crusher),
+        забой исчерпан (`remaining` — признак геологии, в договоре есть, просто раньше не
+        читали). КОРОТКАЯ остановка (`EXCAVATOR_SHORT_STOP_*`, п.6 разброса — сам разброс не
+        трогаем) сюда намеренно НЕ входит, хотя в тексте задачи названа одной из причин —
+        проверено прогоном (`sim_check.py`, режим «со сценариями»): если на каждую короткую
+        3-10-минутную остановку (±раз в час на экскаватор) переставать копить план-долг или
+        перебрасывать её долю плана на остальных экскаваторов группы, план «дёргается» чаще,
+        чем самосвалы успевают доехать — ожидание у экскаватора становится ХУЖЕ (не лучше), а
+        руда у «авто» уходит ниже 90% от плана (настоящее эмпирическое наблюдение по трём
+        отдельным прогонам, не предположение). Короткие остановки — единственная из четырёх
+        причин, которую отдельно НЕ гасим: они и так короткие, укладываются под общий предел
+        PLAN_DEFICIT_CAP_T (ниже) без вреда для точности руды. На ВЫБОР экскаватора самосвалом
+        (`_best_candidate`) ничего из этого не влияет — там уже есть честная проверка
+        достижимости по пути (`_eta_s`), её не трогаем."""
+        if ex.down:
+            return True
+        if self.roads.path("fuel-station", ex.node) is None:
+            return True
+        remaining = self.watcher.get(ex.face, "remaining", None)
+        if remaining is not None and float(remaining) <= 0.0:
+            return True
+        return False
+
     def _update_plan(self):
         """Целевой т/ч для дробилки/склада глины — план добычи (0, если сейчас не принимает);
         делится между работающими экскаваторами своей руды пропорционально их возможной
         производительности (`_possible_tph`). Вскрышным — тоже доля от ОБЩЕГО целевого т/ч,
-        а не собственная необузданная `_possible_tph` каждого (была настоящая ошибка части 2
-        этой задачи: `_possible_tph` — это сколько экскаватор нарубит, если самосвалы подходят
+        а не собственная необузданная `_possible_tph` каждого (была настоящая ошибка:
+        `_possible_tph` — это сколько экскаватор нарубит, если самосвалы подходят
         БЕЗ ОЧЕРЕДИ, т.е. теоретический потолок ~3700-3900 т/ч на экскаватор — в разы больше,
         чем реально способен вывезти весь парк в 28 самосвалов; поставленный целью напрямую,
         он делал план-накопитель вскрышных экскаваторов «бесконечно голодным», и правило
@@ -462,25 +510,48 @@ class Haulage:
         причина перебора руды цели в «авто», НЕ HOME). Целевой т/ч для вскрыши — PLAN_WASTE_TPH
         (== план руды, «вскрыша ≈ тоннаж руды» — уже существующее допущение проекта,
         bozshakol/data/SOURCES.md), делится между работающими вскрышными экскаваторами
-        пропорционально их возможной производительности — так же, как у рудных групп."""
+        пропорционально их возможной производительности — так же, как у рудных групп.
+        Структурно недоступные экскаваторы (`_excavator_cut_off` — сломан/отрезан/забой
+        исчерпан) не получают цель (`plan_tph = 0`) и не входят в `group_total` своей группы
+        — план-долг не копится, пока их физически не обслуживают (настоящий баг: раньше
+        проверялось только `ex.down`). Короткие остановки сюда не входят — см. `_excavator_cut_off`."""
         self.plan_crusher_tph = PLAN_CRUSHER_TPH if self.dumps["crusher-01"].accepting else 0.0
         self.plan_clay_tph = PLAN_CLAY_TPH if self.dumps["stockpile-clay"].accepting else 0.0
         targets = {"sulphide": self.plan_crusher_tph, "clay": self.plan_clay_tph, "waste": PLAN_WASTE_TPH}
-        possible = {ex.id: (0.0 if ex.down else self._possible_tph(ex)) for ex in self.excavators.values()}
+        available = {ex.id: not self._excavator_cut_off(ex) for ex in self.excavators.values()}
+        possible = {ex.id: (self._possible_tph(ex) if available[ex.id] else 0.0) for ex in self.excavators.values()}
         ore_of = {ex.id: self.face_info(ex.id)["ore"] for ex in self.excavators.values()}
         for ex in self.excavators.values():
-            if ex.down:
+            if not available[ex.id]:
                 ex.plan_tph = 0.0
                 continue
             group_total = sum(possible[e.id] for e in self.excavators.values()
-                               if not e.down and ore_of[e.id] == ore_of[ex.id])
+                               if available[e.id] and ore_of[e.id] == ore_of[ex.id])
             ex.plan_tph = targets.get(ore_of[ex.id], 0.0) * possible[ex.id] / group_total if group_total > 0 else 0.0
 
     def _maybe_update_plan(self):
-        """Пересчёт плана не реже раза в 10 модельных минут, и сразу же при смене входных
-        данных плана (поломка экскаватора, дробилка/склад перестали принимать)."""
-        inputs = (self.dumps["crusher-01"].accepting, self.dumps["stockpile-clay"].accepting,
-                  tuple(ex.down for ex in self.excavators.values()))
+        """Пересчёт плана не реже раза в 10 модельных минут, и сразу же при смене состава
+        ДОСТУПНЫХ экскаваторов (`_excavator_cut_off` — поломка/отрезанность дорогой/забой
+        исчерпан, уже учитывает `roads.closed` внутри честной проверкой пути) или приёмки
+        дробилки/склада. Короткая остановка (`ex.short_stop_until`) сюда НЕ входит —
+        `_update_plan` (доля группы) от неё не зависит, см. `_excavator_cut_off`; добавление
+        её сюда проверено и отклонено: план пересчитывался бы практически каждый тик (короткие
+        остановки часты — ~раз в час на каждый из 6 экскаваторов) без какой-либо пользы.
+        В тексте задачи про долгое восстановление после `road_closed` предлагалось ещё и
+        ОБНУЛЯТЬ план-долг (`plan_target_cum_t`) при смене состава — пробовал (и обнуление
+        только на поломку/отрезанность, и дополнительно на смену приёмки дробилки/склада):
+        ухудшало ожидание и точность руды к плану на устойчивом прогоне БЕЗ сценариев вовсе
+        (прогон: без обнуления — 1,18 мин/96% от плана; с обнулением — 2,34 мин/97% от плана
+        при той же старой проверке `_plan_deficit_time_s`, т.е. разница именно от обнуления).
+        Отказался от обнуления: симметричный предел `PLAN_DEFICIT_CAP_T` в `_plan_deficit_time_s`
+        (ниже) сам по себе уже решает долгое восстановление — после смены состава опережение/
+        отставание само пересчитывается на актуальный `plan_tph`, разница лишь не стирается
+        искусственно, а чем дальше во времени накопленный долг от предела, тем меньше у него
+        итогового влияния на выбор (все экскаваторы с долгом у предела неотличимы между собой
+        по score), так что нет причины ещё и обнулять его вручную — лишняя операция делает
+        только хуже (проверено, не предположение)."""
+        available = tuple(not self._excavator_cut_off(ex) for ex in self.excavators.values())
+        inputs = (self.dumps["crusher-01"].accepting, self.dumps["stockpile-clay"].accepting, available)
         if self._sim_t - self._last_plan_update_t >= PLAN_RECOMPUTE_S or inputs != self._plan_inputs:
             self._update_plan()
             self._last_plan_update_t = self._sim_t
@@ -494,8 +565,22 @@ class Haulage:
         Для того, кто грузится сейчас — только ОСТАТОК до полной вместимости (capacity -
         payload), не вся capacity: уже погруженные ковши этого самосвала попадают в
         ex.loaded_total ПОКОВШОВО по ходу погрузки (_loading), так что полная capacity
-        задвоила бы их (баг, найденный проверкой части 2)."""
-        total = ex.loaded_total
+        задвоила бы их (баг, найденный при проверке).
+        `ex.loaded_total` — ОБЩИЙ накопительный счётчик с начала смены, восстанавливается из
+        Ditto при перезапуске (часть «долгое восстановление», восстановление счётчиков) — а
+        `plan_target_cum_t`, с которым он сравнивается в `_plan_deficit_time_s`, после
+        перезапуска ВСЕГДА начинается с нуля (план-долг — внутренняя величина диспетчера, не
+        договорный счётчик, восстанавливать его не просили). Без поправки это создавало
+        огромный искусственный «перегон» план-долга у ВСЕХ экскаваторов сразу после
+        перезапуска (на живом стенде после нескольких часов работы — многие тысячи тонн),
+        который «прижимал» всех к симметричному пределу одновременно — а поскольку предел
+        переводится в секунды делением на `plan_tph`, у вскрышных (plan_tph почти вдвое выше
+        рудных) штраф в секундах выходил слабее, и весь парк после перезапуска уезжал на
+        вскрышу (настоящая причина, найденная диагностикой на стенде: `_committed_baseline`
+        — снимок `loaded_total` на момент старта ДИСПЕТЧЕРА — отнимается, чтобы план-долг
+        всегда начинал считать с нуля в рамках текущего запуска, как и раньше, когда
+        восстановления счётчиков не было вовсе."""
+        total = ex.loaded_total - self._committed_baseline.get(ex.id, 0.0)
         if ex.loading:
             total += ex.loading.capacity - ex.loading.payload
         for t in ex.queue:
@@ -505,24 +590,134 @@ class Haulage:
                 total += t.capacity
         return total
 
+    def _cycle_time_estimate_s(self, ex):
+        """Честная оценка полного цикла самосвала к этому экскаватору (погрузка + путь туда +
+        разгрузка + путь обратно), усреднённая по составу парка (22×135 т + 6×180 т) — та же
+        честная физика хода/погрузки, что у `_eta_s`/`_truck_load_time_s`, без разброса и без
+        текущей очереди (эвристика диспетчера, не точный прогноз). Нужна для `_trucks_needed`."""
+        info = self.face_info(ex.id)
+        dest_id = info["dest"] if info["dest"] in self.dumps else DEST_BY_ORE.get(info["ore"], "dump-waste-1")
+        dest = self.dumps[dest_id]
+        total_s, total_n = 0.0, 0
+        for cls, n in ((135, 22), (180, 6)):
+            ref = next((t for t in self.trucks if t.cls == cls), None)
+            if ref is None:
+                continue
+            there = self.roads.path(ex.node, dest.node)
+            back = self.roads.path(dest.node, ex.node)
+            travel_s = (self._path_time_s(ref, ex.node, there[1:]) if there else 0.0) + \
+                       (self._path_time_s(ref, dest.node, back[1:]) if back else 0.0)
+            cycle_s = self._truck_load_time_s(ref, info["factor"]) + travel_s + DUMP_S
+            total_s += cycle_s * n
+            total_n += n
+        return total_s / total_n if total_n else 0.0
+
+    def _trucks_needed(self, ex):
+        """Сколько самосвалов нужно экскаватору ПРЯМО СЕЙЧАС, чтобы держать его целевой т/ч:
+        N = plan_tph × цикл_часов / средний_груз_т (AVG_PAYLOAD_T). Часть задачи «долгое
+        восстановление», п.3 — правило для резерва: РАБОТАЕТ С ПЕРВОЙ СЕКУНДЫ, без накопленной
+        истории (в отличие от `_plan_deficit_time_s`/`plan_target_cum_t`, которому нужно время,
+        чтобы план-долг стал осмысленным — именно это вызывало всплеск резерва сразу после
+        старта стенда, см. отчёт)."""
+        if ex.plan_tph <= 0:
+            return 0.0
+        cycle_s = self._cycle_time_estimate_s(ex)
+        return ex.plan_tph * (cycle_s / 3600.0) / AVG_PAYLOAD_T
+
+    def _target_working(self):
+        """Сколько самосвалов должно быть В РАБОТЕ (не в резерве) прямо сейчас — резерв решается
+        для ВСЕГО ПАРКА разом, не по экскаваторам (часть 2 задачи «долгое восстановление», после
+        часть 3 того же модуля — старое правило `_plan_needs_truck`/`_assigned_trucks` по
+        экскаватору убрано как конфликтующее, см. `_check_reserve_exits`/`_return`). Σ
+        `_trucks_needed(ex)` по ДОСТУПНЫМ экскаваторам (`_excavator_cut_off` — так же, как в
+        `_update_plan`) плюс запас RESERVE_MARGIN (10%, допущение из текста задачи), но не
+        меньше Σ + 1 — чтобы при малом Σ (мало доступных экскаваторов/план маленький) запас не
+        обращался в 0 из-за округления 10% вниз до целого."""
+        total_needed = sum(self._trucks_needed(ex) for ex in self.excavators.values()
+                            if not self._excavator_cut_off(ex))
+        return math.ceil(max(total_needed * (1.0 + RESERVE_MARGIN), total_needed + 1.0))
+
+    def _working_count(self):
+        """Самосвалов «в работе» прямо сейчас — не в резерве и не сломан (`down`); состояние
+        `reserve`/`down` не считаются работой, остальные (очередь, погрузка, гружёный рейс,
+        разгрузка, обратный путь, заправка) — считаются, как и в `_target_working`/`_trucks_needed`
+        (формула Литтла — пайплайн самосвалов в полном цикле, не мгновенный «едет/стоит»)."""
+        return sum(1 for t in self.trucks if t.state not in ("reserve", "down"))
+
+    def _reserve_surplus(self):
+        """Сколько самосвалов сейчас сверх `_target_working` (0, если недостача — проверка
+        входа в резерв смотрит именно на это, выхода — на сам недобор, см. `_return`/
+        `_check_reserve_exits`). Берёт `_target_working_val` — посчитанный раз за шаг в `step()`,
+        а не свежий вызов `_target_working()`: тот обходит все 6 экскаваторов с поиском пути
+        (`_cycle_time_estimate_s`), и внутри одного шага он не меняется (план-долг/доступность
+        считаются раньше в `_maybe_update_plan`) — считать его на каждого самосвала в
+        `_check_reserve_exits` было настоящей проблемой производительности, найденной при
+        проверке (sim_check.py на 12ч стал заметно медленнее после части 2)."""
+        return self._working_count() - self._target_working_val
+
+    def _update_reserve_hysteresis(self):
+        """Вызывается каждый шаг (`step`): следит, держится ли излишек >= RESERVE_SURPLUS_TRUCKS
+        НЕПРЕРЫВНО RESERVE_SURPLUS_HOLD_S модельных секунд подряд — гистерезис входа в резерв
+        (часть 2 задачи, «плавность»): если держится дольше, не останавливается в середине из-за
+        случайного колебания на одну секунду, а просто обновляет момент начала при разрыве."""
+        if self._reserve_surplus() >= RESERVE_SURPLUS_TRUCKS:
+            if self._reserve_surplus_since_t is None:
+                self._reserve_surplus_since_t = self._sim_t
+        else:
+            self._reserve_surplus_since_t = None
+
+    def _reserve_entry_allowed(self):
+        """Можно ли отправить СЛЕДУЮЩЕГО освободившегося самосвала в резерв прямо сейчас — часть 2:
+        разгон (`WARMUP_MODEL_S`) — резерва вообще нет; иначе — гистерезис (излишек держится
+        `RESERVE_SURPLUS_HOLD_S` подряд, см. `_update_reserve_hysteresis`) и плавность (не чаще
+        одного самосвала за `RESERVE_ENTRY_INTERVAL_S`). Проверка излишка — ещё раз, на текущий
+        момент (не только по факту, что гистерезис «накопился»): если он уже погашен другим
+        самосвалом, вошедшим в резерв секундами раньше в тот же тик, не отправляем лишнего."""
+        if self._sim_t < WARMUP_MODEL_S:
+            return False
+        if (self._reserve_surplus_since_t is None
+                or self._sim_t - self._reserve_surplus_since_t < RESERVE_SURPLUS_HOLD_S):
+            return False
+        if self._sim_t - self._last_reserve_entry_t < RESERVE_ENTRY_INTERVAL_S:
+            return False
+        return self._reserve_surplus() >= RESERVE_SURPLUS_TRUCKS
+
     def _plan_deficit_time_s(self, ex):
-        """На сколько секунд экскаватор отстаёт от своего план-графика (п.3 части 2: «у кого
-        по план-графику следующее обслуживание должно было начаться раньше»). Положительное —
-        отстаёт (нужен самосвал раньше), отрицательное — идёт с опережением плана. Конечный
-        «очень большой» запасной вариант вместо math.inf (не 0 т/ч цели, но отставание есть) —
-        чтобы разность score'ов в _best_candidate никогда не давала inf-inf=nan (баг, найденный
-        проверкой части 2: при score=nan сравнение «близко к лучшему» ложно для всех кандидатов,
-        список кандидатов для выбора пустеет, и min() падает)."""
-        deficit_t = ex.plan_target_cum_t - self._committed_tons(ex)
+        """На сколько секунд экскаватор отстаёт от своего план-графика («у кого по
+        план-графику следующее обслуживание должно было начаться раньше»). Положительное —
+        отстаёт (нужен самосвал раньше), отрицательное — идёт с опережением плана. Предел
+        ТОЛЬКО сверху (`min(x, PLAN_DEFICIT_CAP_T)`, как в haulage/reserve, #7) — испытывался
+        и симметричный предел (ограничение с обеих сторон плюс единая, не зависящая от
+        `plan_tph`, мера перевода в секунды — чтобы рудные и вскрышные весили одинаково), но
+        на живом стенде ни один из двух вариантов не дал устойчиво ≤2 мин ожидания и ≥90%
+        руды нарастающим итогом за первые 2 модельных часа (финальная проверка задачи «долгое
+        восстановление») — выбран этот, более простой и ближе к #7, вариант. Честно: при
+        `road_closed` восстановление снова может занимать ощутимое время (см. README,
+        «Сверка с реальностью») — компромисс, не идеальное решение.
+        Конечный «очень большой» запасной вариант (`PLAN_DEFICIT_FALLBACK_S`) вместо
+        `math.inf`, когда `plan_tph <= 0` — чтобы разность score'ов в `_best_candidate`
+        никогда не давала `inf-inf=nan` (баг, найденный проверкой)."""
+        deficit_t = min(ex.plan_target_cum_t - self._committed_tons(ex), PLAN_DEFICIT_CAP_T)
         if ex.plan_tph > 0:
             return deficit_t / (ex.plan_tph / 3600.0)
         return PLAN_DEFICIT_FALLBACK_S if deficit_t > 0 else 0.0
 
     # -- выбор экскаватора ---------------------------------------------------
-    def _truck_load_time_s(self, truck):
-        """Оценка полного времени погрузки самосвала (без текущего loading_factor забоя — это
-        эвристика диспетчера для сравнения экскаваторов, а не точный прогноз)."""
-        return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed
+    def _truck_load_time_s(self, truck, factor=1.0):
+        """Оценка полного времени погрузки самосвала — С учётом `loading_factor` забоя
+        (`factor`, передаёт вызывающий — честная оценка, не разброс: у вскрышных забоёв порода
+        твёрже, `loading_factor` ≈ 0.76-0.77 против ≈1.0 у рудных, реальный цикл ковша ЗАМЕТНО
+        длиннее). Без этого (было раньше: всегда `factor=1.0`) — настоящая нестыковка единиц,
+        найденная при сравнении живого стенда с `sim_check.py` (задача «стенд против
+        sim_check»): `_excavator_free_at_s` уже считает ОСТАТОК погрузки честно, через
+        `cycle_s = BUCKET_CYCLE_S / factor`, а «полное время» для вычитания остатка брало ОТСЮДА
+        — без `factor`, т.е. занижало полное время погрузки у медленных (вскрышных)
+        экскаваторов на те же ≈24-30%, из-за чего диспетчер считал их свободными РАНЬШЕ, чем
+        они реально освобождались, и направлял туда больше самосвалов, чем они успевали
+        обслужить — очередь там росла. `operator_mult` (машинист, разброс) сюда намеренно НЕ
+        входит — это честная оценка без случайного разброса, как и было, `factor` — не разброс,
+        а признак забоя (модуль №3)."""
+        return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed / factor
 
     def _load_elapsed_s(self, truck, cycle_s):
         """Сколько из времени погрузки самосвал УЖЕ потратил (чтобы считать остаток, не всё заново)."""
@@ -563,12 +758,13 @@ class Haulage:
         сколько секунд он освободится: кто уже грузится — по остатку его времени; кто стоит в
         очереди — по порядку, каждый добавляет своё полное время; кто ещё едет — по своему ETA,
         вставляется в очередь по времени прибытия (а не как будто уже стоит на месте)."""
-        cycle_s = BUCKET_CYCLE_S / self.face_info(ex.id)["factor"]
+        factor = self.face_info(ex.id)["factor"]
+        cycle_s = BUCKET_CYCLE_S / factor
         t_free = 0.0
         if ex.loading:
-            t_free = max(0.0, self._truck_load_time_s(ex.loading) - self._load_elapsed_s(ex.loading, cycle_s))
+            t_free = max(0.0, self._truck_load_time_s(ex.loading, factor) - self._load_elapsed_s(ex.loading, cycle_s))
         for t in ex.queue:
-            t_free += self._truck_load_time_s(t)
+            t_free += self._truck_load_time_s(t, factor)
         pending = []
         for t in self.trucks:
             if t is ex.loading or t in ex.queue:
@@ -576,7 +772,7 @@ class Haulage:
             if t.state == "returning" and t.destination == ex.id:
                 eta = self._eta_s(t, ex.node)
                 if eta is not None:
-                    pending.append((eta, self._truck_load_time_s(t)))
+                    pending.append((eta, self._truck_load_time_s(t, factor)))
         pending.sort()
         for eta, svc in pending:
             t_free = max(t_free, eta) + svc
@@ -611,7 +807,7 @@ class Haulage:
     def _best_candidate(self, truck, ores, near_clay_limit):
         """Экскаватор, который сильнее всего отстаёт от своего план-задания к моменту прибытия
         самосвала, среди ВСЕХ пунктов руды, которые сейчас в принципе доступны (`ores` — набор
-        типов, не один тип: часть 2 ТЕКУЩЕЙ задачи — самосвал в «авто» сравнивает руду и вскрышу
+        типов, не один тип — самосвал в «авто» сравнивает руду и вскрышу
         напрямую по плану, а не по тому, у какого экскаватора он «домашний»; HOME здесь вообще не
         участвует — он только для «ручного», см. `choose_excavator`). score = время в пути (+
         честное ожидание на дробилке для сульфидных — она общее узкое место для всех сульфидных
@@ -656,8 +852,8 @@ class Haulage:
     def _eligible_ores(self):
         """Рудные пункты участвуют в сравнении только если физически принимают сейчас
         (crusher_stop/sag_maintenance) — это обязательное правило, не смягчается; вскрыша
-        участвует всегда. Вынесено из choose_excavator (часть 1 задачи «Резерв самосвалов») —
-        тот же набор нужен и в _plan_needs_truck, план-логика при этом не меняется."""
+        участвует всегда. Вынесено из choose_excavator — тот же набор нужен для сравнения
+        экскаваторов, план-логика при этом не меняется."""
         eligible = {"waste"}
         if self.dumps["crusher-01"].accepting:
             eligible.add("sulphide")
@@ -665,34 +861,12 @@ class Haulage:
             eligible.add("clay")
         return eligible
 
-    def _plan_needs_truck(self, truck):
-        """Нужен ли этот самосвал хоть одному экскаватору прямо сейчас (часть 1 задачи «Резерв
-        самосвалов»): есть ли среди допустимых по тем же правилам, что в choose_excavator,
-        экскаватор, который ОТСТАЁТ от своего план-графика (_plan_deficit_time_s > 0 —
-        план-диспетчер читаем, не меняем) и куда этот самосвал физически может доехать. Нет
-        такого — самосвал сейчас никому не нужен (_enter_reserve/_check_reserve_exits)."""
-        near_clay_limit = self._near_clay_limit()
-        eligible = self._eligible_ores()
-        for ex in self.excavators.values():
-            if ex.down:
-                continue
-            info = self.face_info(ex.id)
-            if info["ore"] not in eligible:
-                continue
-            if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
-                continue
-            if self._eta_s(truck, ex.node) is None:
-                continue
-            if self._plan_deficit_time_s(ex) > 0:
-                return True
-        return False
-
     def choose_excavator(self, truck):
         home = self.excavators[truck.home]
         if self.mode == "manual":
-            # закреплённое распределение; если домашний сломан — просто ждём у него (п.1 части 4)
+            # закреплённое распределение; если домашний сломан — просто ждём у него
             return home.id
-        # «авто» (часть 2 прошлой задачи): какую руду возить — решает ПЛАН (кто сильнее отстал),
+        # «авто»: какую руду возить — решает ПЛАН (кто сильнее отстал),
         # а не HOME/тип груза домашнего забоя самосвала — HOME здесь не участвует вовсе.
         near_clay_limit = self._near_clay_limit()
         eligible = self._eligible_ores()
@@ -725,7 +899,7 @@ class Haulage:
         path = self.roads.path(truck.node, dest.node)
         if path is None:
             # дороги к пункту разгрузки нет (road_closed) — ждём на месте и пробуем снова
-            # каждый шаг (часть 3 задачи по проверке координатора), никуда не переадресуем
+            # каждый шаг (проверено координатором), никуда не переадресуем
             truck.travel_pending = True
             truck.travel_kind = "depart"
             truck.path = []
@@ -737,12 +911,14 @@ class Haulage:
 
     def _return(self, truck):
         """Самосвал освободился (после разгрузки, заправки или выхода из резерва). «Авто»:
-        сначала спрашиваем план-диспетчер, нужен ли этот самосвал хоть кому-то прямо сейчас
-        (`_plan_needs_truck`, часть 1 задачи «Резерв самосвалов») — если никому, едет в резерв
-        (`_enter_reserve`), а не к экскаватору. «Ручной» — без изменений, как раньше (резерва
-        не существует, самосвал всегда едет к своему домашнему экскаватору через choose_excavator)."""
-        if self.mode == "auto" and not self._plan_needs_truck(truck):
+        резерв решается для ВСЕГО ПАРКА разом (часть 2 задачи «долгое восстановление»,
+        `_reserve_entry_allowed` — разгон/гистерезис/плавность) — если можно отправить
+        следующего освободившегося в резерв, едет туда (`_enter_reserve`), а не к экскаватору.
+        «Ручной» — без изменений, как раньше (резерва не существует, самосвал всегда едет к
+        своему домашнему экскаватору через choose_excavator)."""
+        if self.mode == "auto" and self._reserve_entry_allowed():
             self._enter_reserve(truck)
+            self._last_reserve_entry_t = self._sim_t
             return
         truck.entering_reserve = False
         truck.excavator = self.choose_excavator(truck)
@@ -754,7 +930,7 @@ class Haulage:
             # дороги к экскаватору нет — ждём на месте и пробуем снова каждый шаг; НЕ встаём
             # в очередь экскаватора заранее (иначе самосвал «телепортировался» бы туда на
             # сцене — очередь позиционируется по узлу экскаватора, а самосвал там физически
-            # ещё не был) и не перемещаемся мгновенно (часть 3 задачи по проверке координатора)
+            # ещё не был) и не перемещаемся мгновенно (проверено координатором)
             truck.travel_pending = True
             truck.travel_kind = "return"
             truck.path = []
@@ -765,11 +941,11 @@ class Haulage:
         truck.seg_pos = 0.0
 
     def _enter_reserve(self, truck):
-        """Самосвал сейчас никому не нужен (часть 1 задачи «Резерв самосвалов») — паркуем в
+        """Самосвал сейчас никому не нужен — паркуем в
         резерв у fuel-station (контракт, contract/README.md: «стоит на стоянке у узла
         fuel-station»), двигатель заглушен (расход топлива 0 — допущение, см. README). Если
         топлива меньше RESERVE_REFUEL_FUEL_PCT — сначала честная заправка (_start_refuel,
-        допущение «заправляются во время простоя», п.4 части 1 задачи): по её завершении
+        допущение «заправляются во время простоя»): по её завершении
         step() снова вызывает _return(), и решение «резерв или работа» принимается заново,
         уже с полным баком."""
         if truck.fuel < RESERVE_REFUEL_FUEL_PCT:
@@ -790,31 +966,36 @@ class Haulage:
         truck.seg_pos = 0.0
 
     def _check_reserve_exits(self):
-        """Выход из резерва (часть 1 задачи «Резерв самосвалов»): проверяем каждый резервный
-        самосвал, который простоял не меньше RESERVE_MIN_MODEL_S (защита от «дрызганья» —
-        допущение, см. README); если план-диспетчер считает, что он сейчас нужен хоть одному
-        экскаватору (`_plan_needs_truck` — та же проверка, что и при входе в резерв), отправляем
-        его в работу обычным путём (`_return`). Вызывается каждый шаг — пересчёт плана (не реже
-        раза в 10 мин) и события (сценарии, поломки, приём дробилки/склада) читаются в
-        read_scenarios()/_maybe_update_plan() тем же шагом, так что ничего не пропускаем."""
+        """Выход из резерва — часть 2 задачи «долгое восстановление»: нехватка важнее экономии
+        топлива (по тексту задачи) — если работающих самосвалов (`_working_count`) меньше
+        `_target_working`, тут же возвращаем резервные самосвалы в работу обычным путём
+        (`_return` — экскаватор для него выберет нынешняя маршрутизация), БЕЗ ограничения на
+        скорость и без минимального времени в резерве (в отличие от входа — там своя плавность
+        и гистерезис, см. `_reserve_entry_allowed`). Ровно по одному — после каждого возврата
+        `_working_count` пересчитывается заново, так что возвращаем не больше, чем нужно. То же
+        правило само срабатывает при возврате экскаватора после поломки или открытия дороги —
+        `_target_working` в этот момент сразу вырастает (`_excavator_cut_off` внутри него уже
+        честно проверяет путь), никакого отдельного кода для этого случая не нужно. Вызывается
+        каждый шаг — пересчёт плана (не реже раза в 10 мин) и события (сценарии, поломки, приём
+        дробилки/склада) читаются в read_scenarios()/_maybe_update_plan() тем же шагом, так что
+        ничего не пропускаем."""
         if self.mode != "auto":
             return
         for truck in self.trucks:
             if truck.state != "reserve":
                 continue
-            if self._sim_t - truck.reserve_since_s < RESERVE_MIN_MODEL_S:
-                continue
-            if self._plan_needs_truck(truck):
-                self._return(truck)
+            if self._working_count() >= self._target_working_val:
+                break
+            self._return(truck)
 
     def _release_all_reserve(self):
-        """Переключение «авто» → «ручной» (п.5 части 1 задачи): резерва не существует — все
+        """Переключение «авто» → «ручной»: резерва не существует — все
         резервные самосвалы сразу выезжают к своим домашним экскаваторам. self.mode уже
         «manual» в момент вызова, поэтому _return (через choose_excavator) сам отправляет их
         по закреплённому распределению, не по диспетчеру. Самосвалы, которые ФИЗИЧЕСКИ ЕЩЁ
         ЕДУТ на fuel-station, чтобы встать в резерв (state=="returning", entering_reserve=True,
         ещё не доехали) — тоже перенаправляем сразу, а не ждём, пока они доедут и попробуют
-        встать в резерв уже в «ручном» (настоящий баг, найденный независимой проверкой части 1:
+        встать в резерв уже в «ручном» (настоящий баг, найденный при проверке:
         без этой ветки такой самосвал на прибытии получал бы state="reserve" даже в manual)."""
         for truck in self.trucks:
             if truck.state == "reserve" or (truck.state == "returning" and truck.entering_reserve):
@@ -838,10 +1019,35 @@ class Haulage:
         truck.path = path[1:]
         truck.seg_pos = 0.0
 
+    def _nearest_reachable_excavator(self, truck, ore=None):
+        """Ближайший (по честному времени хода, та же формула, что у диспетчера — `_path_time_s`)
+        ДОСТИЖИМЫЙ СЕЙЧАС экскаватор, не сломанный; `ore` — опционально ограничить типом руды
+        забоя. Для «ручного»: закреплённый экскаватор отрезан закрытой дорогой — порожний
+        самосвал едет к ближайшему достижимому того же типа руды, а если такого нет — к любому
+        достижимому; план/«авто» это не трогает — там то же
+        самое уже делает `choose_excavator`/`_best_candidate`, см. `_retry_pending_travel`).
+        None, если вообще никого не достать (все сломаны или отрезаны одновременно)."""
+        best, best_s = None, None
+        for ex in self.excavators.values():
+            if ex.down:
+                continue
+            if ore is not None and self.face_info(ex.id)["ore"] != ore:
+                continue
+            path = self.roads.path(truck.node, ex.node)
+            if path is None:
+                continue
+            dist_s = self._path_time_s(truck, truck.node, path[1:]) if len(path) > 1 else 0.0
+            if best_s is None or dist_s < best_s:
+                best, best_s = ex.id, dist_s
+        return best
+
     def _retry_pending_travel(self, truck):
         """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
         ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
-        чужую очередь, пока реально не доедет (часть 3 задачи по проверке координатора)."""
+        чужую очередь, пока реально не доедет (проверено координатором).
+        Гружёный без пути к своему пункту разгрузки (`travel_kind == "depart"`) — ждёт и просто
+        повторяет попытку к ТОЙ ЖЕ цели, на отвал не переадресуем: руду в отвал не возим,
+        ждём, пока дорога откроется или диспетчер не переназначит при следующем рейсе."""
         if truck.travel_kind == "return" and self.mode == "auto":
             # «авто»: если прежний экскаватор всё ещё отрезан, пробуем выбрать другой —
             # choose_excavator сам исключает недостижимые (честный ETA = None у таких кандидатов)
@@ -856,6 +1062,16 @@ class Haulage:
         else:
             return
         path = self.roads.path(truck.node, dest_node)
+        if path is None and truck.travel_kind == "return" and self.mode == "manual":
+            # «ручной»: закреплённый экскаватор отрезан — едем к ближайшему достижимому того
+            # же типа руды, иначе к любому достижимому
+            home_ore = self.face_info(truck.home)["ore"]
+            sub = self._nearest_reachable_excavator(truck, ore=home_ore) or self._nearest_reachable_excavator(truck)
+            if sub is not None:
+                truck.excavator = sub
+                truck.destination = sub
+                dest_node = self.excavators[sub].node
+                path = self.roads.path(truck.node, dest_node)
         if path is None:
             return
         truck.travel_pending = False
@@ -914,8 +1130,8 @@ class Haulage:
                 # реально проезжал), расходуя настоящие dt и топливо, и только оттуда ищем
                 # новый маршрут. Без этого (просто сброс seg_pos=0 и путь от truck.node)
                 # самосвал визуально прыгает на расстояние, которое уже проехал по закрытому
-                # ребру, — вплоть до сотен метров за один шаг (настоящий баг части 3 этой
-                # задачи, найден на проверке road_closed, не только в местах из описания)
+                # ребру, — вплоть до сотен метров за один шаг (настоящий баг, найден на
+                # проверке road_closed, не только в местах из описания)
                 if truck.seg_pos > 0:
                     # едем НАЗАД по тому же ребру — уклон обратный (подъём вперёд = спуск назад)
                     back_grade = -grade
@@ -965,7 +1181,7 @@ class Haulage:
         if truck.state == "hauling":
             # пункт разгрузки сейчас не принимает (crusher_stop/sag_maintenance) — гружёный
             # самосвал всё равно встаёт в очередь у СВОЕГО пункта и ждёт, пока приём не
-            # возобновится (часть 1 задачи по проверке координатора); на отвал не переадресуем
+            # возобновится (проверено координатором); на отвал не переадресуем
             truck.state = "queued_dump"
             truck.timer = 0.0
             truck.dump_wait = 0.0
@@ -986,7 +1202,7 @@ class Haulage:
                 elif truck.entering_reserve:
                     # защита (основной путь — _release_all_reserve в step()): mode уже сменился
                     # на «ручной», пока самосвал был в пути к резерву — не паркуем в резерв,
-                    # отправляем в работу (баг, найденный независимой проверкой части 1)
+                    # отправляем в работу (баг, найденный при проверке)
                     truck.entering_reserve = False
                     self._return(truck)
                 else:
@@ -1007,9 +1223,12 @@ class Haulage:
         self._sim_t += dt
         self._trim_windows()
         self._maybe_update_plan()
+        self._target_working_val = self._target_working()  # раз за шаг — см. _reserve_surplus
+        self._update_reserve_hysteresis()
         self._check_reserve_exits()
         for ex in self.excavators.values():
-            ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
+            if not self._excavator_cut_off(ex):  # план-долг не копится, пока не обслуживается
+                ex.plan_target_cum_t += ex.plan_tph / 3600.0 * dt
         fuel_before = self.fuel_used_l_total
         state_counts = {}
         for truck in self.trucks:
@@ -1223,8 +1442,8 @@ class Haulage:
             truck.heading = (math.degrees(math.atan2(-d[0], -d[1])) + 360) % 360
 
     def _fleet_time_shares(self):
-        """Доли модельного времени ПАРКА по состояниям за последний модельный час (п.6 части 1
-        задачи «Резерв самосвалов», то же окно, что у avg_wait_*/trips_per_hour) — суммируются
+        """Доли модельного времени ПАРКА по состояниям за последний модельный час (то же окно,
+        что у avg_wait_*/trips_per_hour) — суммируются
         к 100%, т.к. это полный перебор состояния самосвала из договора, и каждый самосвал
         всегда ровно в одном из них. trucks_needed — среднее число самосвалов, реально занятых
         планом за тот же час (всё, кроме NOT_WORKING_STATES, т.е. loading/hauling/returning/
@@ -1265,8 +1484,8 @@ class Haulage:
         trips_per_hour = len(self._trips_log) / window_h
         tph = {k: sum(v for _, v in dq) / window_h for k, dq in self._tph_log.items()}
         # "в деле" = не стоит в очереди (ни на погрузке, ни на разгрузке), не заправляется и не
-        # в резерве (часть 1 ТЕКУЩЕЙ задачи — резервные не считаются работающими, NOT_WORKING_STATES
-        # выше); у грузовиков нет отдельного простоя из-за поломки экскаватора — он уже учтён через
+        # в резерве (резервные не считаются работающими, NOT_WORKING_STATES
+        # выше) — у грузовиков нет отдельного простоя из-за поломки экскаватора, он уже учтён через
         # queued_load, отдельно вычитать не нужно (было задвоение).
         fleet_utilization = 100.0 * max(0, len(self.trucks) - not_working) / len(self.trucks)
         clay_share = (100.0 * self._clay_crusher_total_clay_t / self._clay_crusher_total_t
@@ -1326,6 +1545,82 @@ class Haulage:
         }
 
 
+def read_prev_state(ditto, thing_ids):
+    """Прежние значения своих накопительных счётчиков из Ditto (договор, §4: «свои счётчики и
+    запасы при перезапуске сервиса восстанавливать из текущего состояния своего двойника в
+    Ditto, а не начинать с нуля»). Один снимок всех двойников (`ditto.search`, не по одному —
+    быстрее и даёт единый бюджет повторов), до 10 попыток с паузой 3 с (задача — «долгое
+    восстановление», часть 1). Ditto недоступен или ответ не разобрать — пустой словарь: счётчики
+    стартуют с нуля (новый стенд), в журнал пишется предупреждение; никогда не бросает исключение
+    дальше, чтобы не ронять старт сервиса из-за недоступности Ditto."""
+    try:
+        snapshot = ditto.retry(ditto.search, attempts=10, delay=3)
+    except Exception as exc:  # noqa: BLE001 — недоступен, нет пароля, неверный ответ — всё равно стартуем
+        log.warning("прежнее состояние из Ditto не прочитано (%s) — счётчики начинаются с нуля", exc)
+        return {}
+    prev = {}
+    try:
+        for name in thing_ids:
+            item = snapshot.get(f"{NAMESPACE}:{name}") if isinstance(snapshot, dict) else None
+            feats = item.get("features") if isinstance(item, dict) else None
+            if not isinstance(feats, dict):
+                continue
+            vals = {}
+            for fname, feat_val in feats.items():
+                props = feat_val.get("properties") if isinstance(feat_val, dict) else None
+                if isinstance(props, dict) and props.get("value") is not None:
+                    vals[fname] = props["value"]
+            if vals:
+                prev[name] = vals
+    except Exception as exc:  # noqa: BLE001 — ответ неожиданной формы — всё равно стартуем
+        log.warning("ответ Ditto не разобран (%s) — счётчики начинаются с нуля", exc)
+        return {}
+    return prev
+
+
+def restore_counters(model, prev):
+    """Применить прежние значения счётчиков (см. `read_prev_state`) к только что созданной модели,
+    ДО первого такта. Восстанавливаются ровно те признаки, что только растут и принадлежат нам
+    (договор §4 + свои, не упомянутые в таблице явно, но накопительные): у `dispatch` —
+    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total; у каждого
+    excavator-NN — loaded_total, passes_total; у каждого truck-NN — trips_total; у dump-waste-1 —
+    received_total. Остальные признаки (состояния, очереди, координаты) не накопительные —
+    пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно по договору."""
+    restored = []
+    d = prev.get("dispatch")
+    if d:
+        pairs = (("delivered_crusher_t", "crusher-01", 0), ("delivered_crusher_cu_t", "crusher-01", 1),
+                 ("delivered_clay_t", "stockpile-clay", 0), ("delivered_clay_cu_t", "stockpile-clay", 1),
+                 ("delivered_dump_t", "dump-waste-1", 0))
+        for fname, dump_id, idx in pairs:
+            if fname in d:
+                model.delivered[dump_id][idx] = float(d[fname])
+                restored.append(f"dispatch.{fname}")
+        if "trips_total" in d:
+            model.trips = int(d["trips_total"])
+            restored.append("dispatch.trips_total")
+    dw = prev.get("dump-waste-1")
+    if dw and "received_total" in dw:
+        model.dumps["dump-waste-1"].received = float(dw["received_total"])
+        restored.append("dump-waste-1.received_total")
+    for ex in model.excavators.values():
+        e = prev.get(ex.id)
+        if not e:
+            continue
+        if "loaded_total" in e:
+            ex.loaded_total = float(e["loaded_total"])
+            restored.append(f"{ex.id}.loaded_total")
+        if "passes_total" in e:
+            ex.passes_total = int(e["passes_total"])
+            restored.append(f"{ex.id}.passes_total")
+    for truck in model.trucks:
+        t = prev.get(truck.id)
+        if t and "trips_total" in t:
+            truck.trips = int(t["trips_total"])
+            restored.append(f"{truck.id}.trips_total")
+    return restored
+
+
 def main():
     with open("geometry.json", encoding="utf-8") as f:
         geometry = json.load(f)
@@ -1335,6 +1630,16 @@ def main():
     telemetry = Telemetry(client_id="bz-haulage").connect()
     clock = SimClock()
     model = Haulage(geometry, watcher, clock)
+    own_ids = ["dispatch", "dump-waste-1"] + [ex_id for ex_id in model.excavators] + [t.id for t in model.trucks]
+    restored = restore_counters(model, read_prev_state(ditto, own_ids))
+    if restored:
+        log.info("счётчики восстановлены из Ditto (%d признаков): %s", len(restored), ", ".join(restored))
+    else:
+        log.warning("прежних значений счётчиков в Ditto не найдено — начинаем с нуля (новый стенд или Ditto недоступен)")
+    # план-долг (_committed_tons) должен начинать считать с нуля в рамках ТЕКУЩЕГО запуска
+    # диспетчера, даже если loaded_total восстановлен из Ditto с большим накопленным значением —
+    # см. docstring _committed_tons
+    model._committed_baseline = {ex.id: ex.loaded_total for ex in model.excavators.values()}
     model.speed_limit = 50.0
     last_slow = 0.0
     while True:

@@ -41,6 +41,7 @@ def _stub_bzlib():
 
     stub.feature = feature
     stub.setup_logging = lambda name: logging.getLogger(name)
+    stub.NAMESPACE = "kz.bozshakol"  # main.py читает только имя при импорте (restore_counters), не значение
     stub.DittoClient = object
     stub.SimClock = object
     stub.Telemetry = object
@@ -57,15 +58,32 @@ def _load_main():
     return haulage_main
 
 
+# цифры дробилки модуля №4 (bozshakol/modules/processing/main.py) — сверено с кодом: были
+# устаревшие (4000 т/ч и бункер 3000 т — в разы больше реального), теперь CRUSHER_TPH=4500
+# (номинал — у №4 варьируется 0,5-1,15x по p80/крепости забоя, мы это не публикуем и не
+# отслеживаем, упрощаем до номинала, как и раньше), BUNKER_T=900, TRUCK_MAX_T=180 (бункер
+# «принимает», пока в нём есть место под целый кузов — жёсткая отсечка, не плавная доля) —
+# используются ТОЛЬКО для офлайн-эмуляции бункера здесь (не в main.py, модуль №4 офлайн не
+# поднят); дублируются из main.py константы CRUSHER_THROUGHPUT_REF_TPH/CRUSHER_BUNKER_T_REF/
+# CRUSHER_ACCEPT_FRACTION (эвристика нашего диспетчера, НЕ эмуляция — её числа отдельная
+# задача, не переиспользуем намеренно)
+REAL_CRUSHER_TPH = 4500.0
+REAL_BUNKER_T = 900.0
+REAL_TRUCK_MAX_T = 180.0
+
+
 class FakeWatcher:
-    def __init__(self, faces, accepting, speed_limit=50.0, clay_limit=15.0, dispatch_off=False):
+    def __init__(self, faces, accepting, speed_limit=50.0, clay_limit=15.0, dispatch_off=False,
+                 scenario_windows=None):
         self.faces = faces
         self.accepting = accepting
         self.speed_limit = speed_limit
         self.clay_limit = clay_limit
         self.dispatch_off = dispatch_off
-        self.crusher_bunker = 0.0       # т — заполняется эмуляцией бункера в run()
-        self.crusher_throughput = 0.0   # т/ч — заполняется эмуляцией бункера в run()
+        self.crusher_bunker = 0.0       # т — заполняется эмуляцией бункера в run()/run_scenarios()
+        self.crusher_throughput = 0.0   # т/ч — заполняется эмуляцией бункера в run()/run_scenarios()
+        self.scenario_windows = scenario_windows or []  # [(start_s, end_s, name, params), ...]
+        self.now_s = 0.0  # текущее модельное время — выставляется в run()/run_scenarios() перед step()
 
     def get(self, name, feature_name, default=None):
         if name == "crusher-01" and feature_name == "bunker":
@@ -85,6 +103,9 @@ class FakeWatcher:
     def scenario(self, name):
         if name == "dispatch_off":
             return self.dispatch_off, {}
+        for start, end, sname, params in self.scenario_windows:
+            if sname == name and start <= self.now_s < end:
+                return True, params
         return False, {}
 
 
@@ -93,19 +114,35 @@ CONST_FACES = {
     "face-02": dict(ore_type="sulphide", cu_grade=0.39, clay_pct=5.0, loading_factor=1.0, recommended_destination="crusher-01"),
     "face-03": dict(ore_type="sulphide", cu_grade=0.39, clay_pct=5.0, loading_factor=1.0, recommended_destination="crusher-01"),
     "face-04": dict(ore_type="clay", cu_grade=0.31, clay_pct=60.0, loading_factor=1.0, recommended_destination="stockpile-clay"),
-    "face-05": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=1.0, recommended_destination="dump-waste-1"),
-    "face-06": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=1.0, recommended_destination="dump-waste-1"),
+    # вскрышные (face-05/06) — porода твёрже (hardness ≈ 15-16 против ≈10-12 у рудных, модуль
+    # №3), реальный loading_factor на живом стенде ≈ 0.76-0.77, не 1.0 — задача «стенд против
+    # sim_check» (найдено расхождение: физический потолок т/ч вскрышных на стенде ниже, чем
+    # считал sim_check с loading_factor=1.0 у всех забоёв). Числа — наблюдённые на стенде,
+    # не подгонка под результат.
+    "face-05": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=0.76, recommended_destination="dump-waste-1"),
+    "face-06": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=0.77, recommended_destination="dump-waste-1"),
 }
 CONST_ACCEPTING = {"crusher-01": True, "stockpile-clay": True}
 
 
+def _step_bunker(watcher, model, bunker_state, stopped=False):
+    """Один шаг офлайн-эмуляции бункера дробилки (цифры — REAL_* выше, сверены с модулем №4
+    прямо перед этой задачей). `stopped` — форсированная остановка (сценарий crusher_stop,
+    у которого нет своего признака в dispatch — это признак crusher-01, публикует №4: дробилка
+    не дробит, но продолжает НЕ принимать, как у №4 при crusher_state == "stopped")."""
+    delivered = model.delivered["crusher-01"][0]
+    bunker_state["stock"] += max(0.0, delivered - bunker_state["last_delivered"])
+    bunker_state["last_delivered"] = delivered
+    crushed = 0.0 if stopped else min(bunker_state["stock"], REAL_CRUSHER_TPH * STEP_S / 3600.0)
+    bunker_state["stock"] -= crushed
+    watcher.crusher_bunker = bunker_state["stock"]
+    watcher.crusher_throughput = crushed / STEP_S * 3600.0
+    cap = REAL_BUNKER_T - REAL_TRUCK_MAX_T
+    watcher.accepting["crusher-01"] = (not stopped) and bunker_state["stock"] <= cap
+
+
 def run(hm, dispatch_off, seed):
-    """Прогон модели; бункер дробилки эмулируется ЗДЕСЬ (не в main.py) ровно по логике и
-    цифрам модуля №4 (bozshakol/modules/processing/main.py, только читали, не меняли):
-    бункер пополняется разницей dispatch.delivered_crusher_t, срабатывает throughput
-    т/ч (CRUSHER_THROUGHPUT_REF_TPH), accepting=false при заполнении >= 85 % ёмкости
-    (CRUSHER_BUNKER_T_REF) — те же константы, что main.py использует в _crusher_wait_s,
-    единый источник (hm.CRUSHER_*), не продублированные числа."""
+    """Прогон модели 12 модельных часов, постоянные данные забоёв (бункер — см. _step_bunker)."""
     random.seed(seed)
     with open(GEOMETRY_PATH, encoding="utf-8") as f:
         geometry = json.load(f)
@@ -114,27 +151,60 @@ def run(hm, dispatch_off, seed):
     model.speed_limit = 50.0
     steps = int(MODEL_HOURS * 3600 / STEP_S)
 
-    bunker_stock = 0.0
-    last_delivered = 0.0
+    bunker_state = {"stock": 0.0, "last_delivered": 0.0}
     bunker_integral = 0.0
-    reserve_integral = 0.0  # п.4 задачи «Резерв самосвалов»: trucks_reserve — среднее, не снимок
-    cap = hm.CRUSHER_BUNKER_T_REF * hm.CRUSHER_ACCEPT_FRACTION
+    reserve_integral = 0.0  # trucks_reserve — честное среднее за весь прогон, не снимок
     for _ in range(steps):
+        watcher.now_s = model._sim_t
         model.step(STEP_S)
-        delivered = model.delivered["crusher-01"][0]
-        bunker_stock += max(0.0, delivered - last_delivered)
-        last_delivered = delivered
-        crushed = min(bunker_stock, hm.CRUSHER_THROUGHPUT_REF_TPH * STEP_S / 3600.0)
-        bunker_stock -= crushed
-        watcher.crusher_bunker = bunker_stock
-        watcher.crusher_throughput = crushed / STEP_S * 3600.0
-        watcher.accepting["crusher-01"] = bunker_stock < cap
-        bunker_integral += bunker_stock * STEP_S
+        _step_bunker(watcher, model, bunker_state)
+        bunker_integral += bunker_state["stock"] * STEP_S
         reserve_integral += sum(1 for t in model.trucks if t.state == "reserve") * STEP_S
 
-    model.avg_bunker_t = bunker_integral / (MODEL_HOURS * 3600.0)  # для отчёта (часть 4)
+    model.avg_bunker_t = bunker_integral / (MODEL_HOURS * 3600.0)
     model.avg_trucks_reserve = reserve_integral / (MODEL_HOURS * 3600.0)  # среднее за весь прогон, не снимок
     return model
+
+
+# -- режим «со сценариями» (погоня за ожиданием: воспроизвести рост avg_wait_excavator) --------
+# 24 модельных часа, сценарии в разное время, каждый с паузой до/после для оценки «вернулось —
+# не вернулось». crusher_stop — не сценарий модуля №2 (у dispatch такого scenario() нет), это
+# признак crusher-01.accepting/crusher_state, который публикует №4 — эмулируем прямо в _step_bunker
+SCENARIO_WINDOWS_24H = [
+    (4.0 * 3600.0, 5.0 * 3600.0, "road_closed", {"road": "road-ramp-2"}),
+    (10.0 * 3600.0, 11.0 * 3600.0, "excavator_down", {"excavator": "excavator-02"}),
+]
+CRUSHER_STOP_WINDOW_24H = (16.0 * 3600.0, 16.5 * 3600.0)
+
+
+def run_scenarios(hm, seed, dispatch_off=False, hours=24):
+    """24 модельных часа со сценариями — печатаем
+    ожидание у экскаватора ПО КАЖДОМУ модельному часу (не только среднее), чтобы увидеть рост
+    и восстановление после каждого сценария."""
+    random.seed(seed)
+    with open(GEOMETRY_PATH, encoding="utf-8") as f:
+        geometry = json.load(f)
+    watcher = FakeWatcher(CONST_FACES, dict(CONST_ACCEPTING), dispatch_off=dispatch_off,
+                           scenario_windows=SCENARIO_WINDOWS_24H)
+    model = hm.Haulage(geometry, watcher, clock=None, seed=seed)
+    model.speed_limit = 50.0
+    steps = int(hours * 3600 / STEP_S)
+    steps_per_hour = int(3600 / STEP_S)
+
+    bunker_state = {"stock": 0.0, "last_delivered": 0.0}
+    reserve_integral = 0.0
+    hourly_wait = []
+    for i in range(steps):
+        watcher.now_s = model._sim_t
+        stopped = CRUSHER_STOP_WINDOW_24H[0] <= model._sim_t < CRUSHER_STOP_WINDOW_24H[1]
+        model.step(STEP_S)
+        _step_bunker(watcher, model, bunker_state, stopped=stopped)
+        reserve_integral += sum(1 for t in model.trucks if t.state == "reserve") * STEP_S
+        if (i + 1) % steps_per_hour == 0:
+            hourly_wait.append(fv(model.dispatch_features(), "avg_wait_excavator"))
+
+    model.avg_trucks_reserve = reserve_integral / (hours * 3600.0)
+    return model, hourly_wait
 
 
 def fv(features, name):
@@ -192,7 +262,7 @@ def collect(model):
         wait_min = statistics.mean(v for _, v in wait_dq) if wait_dq else 0.0
         dump_stats[did] = dict(trips=d.trips, tph=d.received / (total_s / 3600.0), wait_min=wait_min)
 
-    # часть 4 задачи «Резерв самосвалов»: снимок dispatch.* на конец прогона (окно — последний
+    # снимок dispatch.* на конец прогона (окно — последний
     # модельный час, та же логика, что у avg_wait_excavator/trips_per_hour выше) + среднее за
     # ВЕСЬ прогон для trucks_reserve (считается в run(), не окно в один час — снимок на конец
     # 12-часового прогона был бы не показателен, резерв колеблется)
@@ -294,8 +364,141 @@ def report_mode(label, runs):
 
     bunker = avg_spread([r["avg_bunker_t"] for r in runs])
     print(f"  Средний бункер дробилки: {bunker[0]:.0f}±{bunker[1]:.0f} т "
-          f"(ёмкость {_HM.CRUSHER_BUNKER_T_REF:.0f} т, порог приёмки "
-          f"{_HM.CRUSHER_BUNKER_T_REF * _HM.CRUSHER_ACCEPT_FRACTION:.0f} т)")
+          f"(ёмкость {REAL_BUNKER_T:.0f} т, порог приёмки "
+          f"{REAL_BUNKER_T - REAL_TRUCK_MAX_T:.0f} т — цифры модуля №4, см. REAL_* выше)")
+
+
+def run_cold_start(hm, seed, dispatch_off=False, hours=2, bucket_min=10):
+    """Первые несколько модельных часов после старта («холодный старт» — проверка, что
+    резерв не раздувается на старте, пока план ещё не накопил цель): каждые `bucket_min`
+    модельных минут — число самосвалов в резерве, в работе (`_working_count`, часть 2 задачи
+    «долгое восстановление»), среднее ожидание у экскаватора, суммарная очередь по всем
+    экскаваторам, руда на дробилку (т/ч и % от плана, тот же rolling-hour признак
+    `tph_crusher`/`plan_crusher_tph`, что видит советник координатора)."""
+    random.seed(seed)
+    with open(GEOMETRY_PATH, encoding="utf-8") as f:
+        geometry = json.load(f)
+    watcher = FakeWatcher(CONST_FACES, dict(CONST_ACCEPTING), dispatch_off=dispatch_off)
+    model = hm.Haulage(geometry, watcher, clock=None, seed=seed)
+    model.speed_limit = 50.0
+    steps_per_bucket = int(bucket_min * 60 / STEP_S)
+    bunker_state = {"stock": 0.0, "last_delivered": 0.0}
+    buckets = []
+    plan_cum_t = 0.0  # интеграл plan_crusher_tph по времени — для честного НАКОПЛЕННОГО % плана
+    for i in range(int(hours * 3600 / STEP_S)):
+        model.step(STEP_S)
+        _step_bunker(watcher, model, bunker_state)
+        plan_cum_t += model.plan_crusher_tph * STEP_S / 3600.0
+        if (i + 1) % steps_per_bucket == 0:
+            disp = model.dispatch_features()
+            reserve_n = sum(1 for t in model.trucks if t.state == "reserve")
+            working_n = model._working_count()
+            queue_sum = sum(len(ex.queue) for ex in model.excavators.values())
+            wait = fv(disp, "avg_wait_excavator")
+            crusher_tph = fv(disp, "tph_crusher")
+            plan_crusher = fv(disp, "plan_crusher_tph")
+            buckets.append((model._sim_t / 60.0, reserve_n, working_n, wait, queue_sum,
+                             crusher_tph, plan_crusher))
+    delivered_t = model.delivered["crusher-01"][0]
+    return {"buckets": buckets, "delivered_t": delivered_t, "plan_cum_t": plan_cum_t}
+
+
+def report_cold_start(all_runs):
+    """Отчёт по `run_cold_start` для нескольких seed — среднее и максимум резерва по бакетам
+    (часть задачи «долгое восстановление», п.2: на старте резерв не должен раздувать до
+    половины парка — было 17 из 28), в работе, руда на дробилку (т/ч и % от плана — цель 2
+    задачи «часть 2»: ≥ 90% плана в первые 2 модельных часа, было ≈68%)."""
+    print(f"\n{'=' * 60}\nХОЛОДНЫЙ СТАРТ (первые 2 модельных часа, по 10 модельных минут, "
+          f"{len(all_runs)} seed) — резерв/в работе/ожидание/очередь/руда\n{'=' * 60}")
+    bucket_runs = [r["buckets"] for r in all_runs]
+    n_buckets = len(bucket_runs[0])
+    print(f"  {'t, мин':>7s} {'резерв':>7s} {'в работе':>9s} {'ожидание, мин':>14s} "
+          f"{'очередь':>8s} {'руда т/ч':>9s} {'% плана':>8s}")
+    max_reserve_ever = 0
+    for b in range(n_buckets):
+        t = bucket_runs[0][b][0]
+        reserves = [run[b][1] for run in bucket_runs]
+        working = [run[b][2] for run in bucket_runs]
+        waits = [run[b][3] for run in bucket_runs]
+        queues = [run[b][4] for run in bucket_runs]
+        ore_tph = [run[b][5] for run in bucket_runs]
+        ore_plan = [run[b][6] for run in bucket_runs]
+        m_r = avg_spread(reserves)[0]
+        m_wk = avg_spread(working)[0]
+        m_w, s_w = avg_spread(waits)
+        m_q = avg_spread(queues)[0]
+        m_ore = avg_spread(ore_tph)[0]
+        m_plan = avg_spread(ore_plan)[0]
+        pct = 100.0 * m_ore / m_plan if m_plan > 0 else None
+        max_reserve_ever = max(max_reserve_ever, max(reserves))
+        pct_s = f"{pct:>7.0f}%" if pct is not None else "    н/д"
+        print(f"  {t:>7.0f} {m_r:>7.1f} {m_wk:>9.1f} {m_w:>6.2f}±{s_w:<5.2f} "
+              f"{m_q:>8.1f} {m_ore:>9.0f} {pct_s}")
+    print(f"\n  Максимум резерва за всё окно (по всем seed): {max_reserve_ever} из 28 "
+          f"({'OK, не больше половины парка' if max_reserve_ever < 14 else 'ПЛОХО: половина парка или больше'}).")
+    # по бакетам % от плана — rolling-hour признак, в первые 10-20 мин физически не может быть
+    # ненулевым (первый самосвал ещё не доехал и не разгрузился) — отдельно печатаем честный
+    # НАКОПЛЕННЫЙ итог за все 2 часа (тонны факт / тонны план, интеграл plan_crusher_tph по
+    # времени), который не страдает от этого эффекта первых минут.
+    delivered = avg_spread([r["delivered_t"] for r in all_runs])[0]
+    plan_cum = avg_spread([r["plan_cum_t"] for r in all_runs])[0]
+    cum_pct = 100.0 * delivered / plan_cum if plan_cum > 0 else None
+    if cum_pct is not None:
+        print(f"  Накоплено за 2 ч: факт {delivered:.0f} т / план {plan_cum:.0f} т = {cum_pct:.0f}% "
+              f"({'OK, >= 90%' if cum_pct >= 90.0 else 'ПЛОХО: < 90%'}).")
+
+
+def report_scenarios(hm, auto, manual):
+    """Отчёт по режиму «со сценариями» (24 модельных часа, 5 seed): ожидание у экскаватора
+    по часам — растёт ли со временем, возвращается ли к прежнему уровню после каждого сценария."""
+    a_models, a_hourly = zip(*auto)
+    m_models, m_hourly = zip(*manual)
+    hours = len(a_hourly[0])
+
+    print(f"\n{'=' * 60}\nСО СЦЕНАРИЯМИ (24 модельных часа × {len(SEEDS)} seed) — ожидание у "
+          f"экскаватора по часам\n{'=' * 60}")
+    print("  сценарии: road_closed road-ramp-2 (ч.4-5), excavator_down excavator-02 (ч.10-11), "
+          "crusher_stop (ч.16:00-16:30)")
+    print(f"  {'час':>4s} {'авто, мин':>12s} {'ручной, мин':>14s}   событие")
+    event_by_hour = {4: "road_closed начался", 5: "road_closed закончился",
+                      10: "excavator_down начался", 11: "excavator_down закончился",
+                      16: "crusher_stop (0:00-0:30 этого часа)"}
+    for h in range(hours):
+        a_m, a_s = avg_spread([run[h] for run in a_hourly])
+        m_m, m_s = avg_spread([run[h] for run in m_hourly])
+        event = event_by_hour.get(h + 1, "")
+        print(f"  {h + 1:>4d} {a_m:>7.2f}±{a_s:<4.2f} {m_m:>9.2f}±{m_s:<4.2f}   {event}")
+
+    baseline = avg_spread([statistics.mean(run[0:3]) for run in a_hourly])[0]
+    tail = avg_spread([statistics.mean(run[-3:]) for run in a_hourly])[0]
+    print(f"\n  Базовый уровень (авто, часы 1-3): {baseline:.2f} мин. "
+          f"Конец прогона (часы {hours - 2}-{hours}): {tail:.2f} мин.")
+    growth = tail - baseline
+    print(f"  Разница конец-начало: {growth:+.2f} мин "
+          f"({'РАСТЁТ без возврата к базовому уровню' if growth > 0.5 else 'не растёт / в пределах разброса'}).")
+
+    recovery_checks = [("road_closed", 5, 7), ("excavator_down", 11, 13), ("crusher_stop", 17, 19)]
+    for name, end_hour, check_hour in recovery_checks:
+        if check_hour > hours:
+            continue
+        level = avg_spread([run[check_hour - 1] for run in a_hourly])[0]
+        diff = level - baseline
+        print(f"  После {name} (конец ч.{end_hour}) — ожидание на час {check_hour}: {level:.2f} мин "
+              f"(база {baseline:.2f}, разница {diff:+.2f} — "
+              f"{'вернулось' if abs(diff) < 0.5 else 'НЕ вернулось за 1-2 часа'}).")
+
+    total_s = hours * 3600.0
+    for label, models in (("авто", a_models), ("ручной", m_models)):
+        crusher_tph = statistics.mean(m.delivered["crusher-01"][0] / (total_s / 3600.0) for m in models)
+        clay_tph = statistics.mean(m.delivered["stockpile-clay"][0] / (total_s / 3600.0) for m in models)
+        print(f"  Руда ({label}, 24ч): дробилка {crusher_tph:.0f} т/ч "
+              f"({100 * crusher_tph / hm.PLAN_CRUSHER_TPH:.0f}% от {hm.PLAN_CRUSHER_TPH:.0f}), "
+              f"склад глины {clay_tph:.0f} т/ч ({100 * clay_tph / hm.PLAN_CLAY_TPH:.0f}% от {hm.PLAN_CLAY_TPH:.0f})")
+
+    a_overall = avg_spread([statistics.mean(run) for run in a_hourly])[0]
+    m_overall = avg_spread([statistics.mean(run) for run in m_hourly])[0]
+    print(f"  Среднее по всему 24ч прогону: авто {a_overall:.2f} мин / ручной {m_overall:.2f} мин "
+          f"({'OK, авто не хуже' if a_overall <= m_overall + 0.05 else 'ПЛОХО: авто хуже ручного'})")
 
 
 _HM = None  # заполняется в main() — модуль main.py, используется report_mode для ссылочных констант
@@ -306,6 +509,9 @@ def main():
     hm = _load_main()
     _HM = hm
     print(f"Прогон {MODEL_HOURS} модельных часов × {len(SEEDS)} seed, постоянные данные забоёв.")
+
+    cold_start_runs = [run_cold_start(hm, seed=s, dispatch_off=False) for s in SEEDS]
+    report_cold_start(cold_start_runs)
 
     auto_runs = [collect(run(hm, dispatch_off=False, seed=s)) for s in SEEDS]
     manual_runs = [collect(run(hm, dispatch_off=True, seed=s)) for s in SEEDS]
@@ -322,7 +528,7 @@ def main():
     print(f"      т/ч руды: авто {a_tph:.0f} / ручной {m_tph:.0f} "
           f"({'OK' if a_tph >= m_tph - 1 else 'ПЛОХО: авто меньше'})")
 
-    print(f"\n{'=' * 60}\nРЕЗЕРВ САМОСВАЛОВ (часть 4 ТЕКУЩЕЙ задачи) — доли времени парка, авто vs ручной\n{'=' * 60}")
+    print(f"\n{'=' * 60}\nРЕЗЕРВ САМОСВАЛОВ — доли времени парка, авто vs ручной\n{'=' * 60}")
     pct_names = [
         ("time_loading_pct", "погрузка (установка+ковши)"), ("time_hauling_pct", "гружёный рейс"),
         ("time_returning_pct", "порожний рейс"), ("time_queue_pct", "очередь (экскаватор+разгрузка)"),
@@ -348,7 +554,12 @@ def main():
     print(f"  «Ручной»: резерва не существует вовсе (среднее в резерве за прогон: {m_reserve:.2f} шт — "
           f"должно быть ≈0{'  — OK' if m_reserve < 0.05 else '  — ПРОБЛЕМА: резерв возник в ручном режиме!'}).")
 
-    print(f"\n{'=' * 60}\nСВЕРКА (часть 2 и 3 ТЕКУЩЕЙ задачи: перебор руды в «авто» — причина и фикс) — "
+    print(f"\nПрогон со сценариями: 24 модельных часа × {len(SEEDS)} seed, это дольше обычного прогона.")
+    auto_scen = [run_scenarios(hm, seed=s, dispatch_off=False) for s in SEEDS]
+    manual_scen = [run_scenarios(hm, seed=s, dispatch_off=True) for s in SEEDS]
+    report_scenarios(hm, auto_scen, manual_scen)
+
+    print(f"\n{'=' * 60}\nСВЕРКА: перебор руды в «авто» — причина и фикс — "
           f"main.py, choose_excavator/_best_candidate/_update_plan\n{'=' * 60}")
     print("""
   Причина перебора руды в «авто» (была 129%/166% от плана) — простыми словами, НЕ в HOME
@@ -384,9 +595,9 @@ def main():
 
   Что НЕ получилось — честно, без подгонки параметров под результат:
   - Ожидание у экскаватора в «авто» (см. ИТОГ выше) всё ещё не ниже «ручного» — разрыв
-    намного меньше, чем был (было до фиксов этой задачи — авто хуже на ~0.4-0.5 мин;
-    сейчас — на ~0.1-0.15 мин), но «ПЛОХО» по формальному критерию. Проверил конкретную
-    гипотезу задания «правило <0,5 мин почти всегда срабатывает» — измерил отдельно:
+    намного меньше, чем был до фиксов (авто хуже на ~0.4-0.5 мин; сейчас — на ~0.1-0.15 мин),
+    но «ПЛОХО» по формальному критерию. Проверил конкретную гипотезу — «правило <0,5 мин
+    почти всегда срабатывает» — измерил отдельно:
     тай-брейк по честному путь+ожиданию сработал только в ~21% решений за 3 модельных
     часа, не «почти всегда» — эта гипотеза не подтвердилась. По суммарному т/ч на
     экскаватор (таблица выше) видно: вскрышные (05/06) всё ещё заметно загруженнее
