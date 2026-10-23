@@ -1499,7 +1499,19 @@ class Haulage:
             return None
         if truck.path[-1] != pt.node or (active is None and not pt.queue):
             return None
-        return (len(pt.queue) + QUEUE_FIRST) * QUEUE_GAP_M
+        back = [pt.node] + truck.path[-2::-1] + [truck.node]
+        return self._queue_dist(back, len(pt.queue), len(pt.queue) + 1)
+
+    def _queue_dist(self, back, i, n):
+        """Место i (с нуля) в очереди из n самосвалов, м от пункта по пути подъезда back. Если за первым ребром подъезда —
+        съезд (забой на уступе), очередь на съезд не выходит: шаг сжимается, все стоят на подъезде (при закрытии съезда
+        на нём не остаётся машин из очереди)."""
+        d = (i + QUEUE_FIRST) * QUEUE_GAP_M
+        if len(back) > 2 and self.roads.edge_road.get((back[1], back[2]), "").startswith("road-ramp"):
+            room = self.roads.edge(back[0], back[1])[0] - 10.0
+            if (n - 1 + QUEUE_FIRST) * QUEUE_GAP_M > room:
+                d = min(room, (i + QUEUE_FIRST) * room / (n - 1 + QUEUE_FIRST))
+        return d
 
     def _path_len(self, start, rest):
         total, a = 0.0, start
@@ -1779,7 +1791,7 @@ class Haulage:
             active.speed = 0.0
         for i, truck in enumerate(queue):
             back = truck.queue_back if truck.queue_back and truck.queue_back[0] == node else self._default_back(node)
-            truck.pos, truck.heading = self._along(back, (i + QUEUE_FIRST) * QUEUE_GAP_M)
+            truck.pos, truck.heading = self._along(back, self._queue_dist(back, i, len(queue)))
             truck.speed = 0.0
 
     def _default_back(self, node):

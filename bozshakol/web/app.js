@@ -1793,6 +1793,24 @@ function stationBusy(self, m) {
   }
   return false;
 }
+// место в очереди у забоя на уступе (есть площадка в diorama.json extra.face_pads): номер — по близости места слоя к узлу
+function benchQueueSlot(o, id) {
+  const exId = String(val(id, 'excavator', '')), face = 'face-' + exId.slice(-2);
+  const pads = (dio.D.extra && dio.D.extra.face_pads) || [];
+  if (!pads.some((b) => b.face === face)) return null;
+  const sta = truckStation(id, 'loading');
+  if (!sta) return null;
+  const nd = dio.D.nodes[face], ex = byThing(NS + ':' + exId), e0 = ex.userData.rawPos || ex.position;
+  const dist = (q) => { const r = q.userData.rawPos || q.position; return Math.hypot(r.x - nd[0], -r.z - nd[1]); };
+  const mine = dist(o);
+  let k = 0;
+  for (const q of machineList) {
+    const qid = q.userData.thingId;
+    if (q !== o && qid.indexOf(':truck-') >= 0 && val(qid, 'state', '') === 'queued_load' && String(val(qid, 'excavator', '')) === exId && dist(q) < mine) k++;
+  }
+  const [ux, uy] = sta.u, nx = -uy, ny = ux, s = sta.s, Ex = e0.x, Ey = -e0.z, a = -s * (26 + 21 * k);
+  return [Ex + ux * 4 + nx * a, Ey + uy * 4 + ny * a, planYaw(nx * s, ny * s)];
+}
 // цель показа каждого самосвала: o.position / o.rotation.y (место слоя — rawPos — не меняется)
 function truckTargets() {
   const pitEdges = dio.edges.filter((e) => e.pit);
@@ -1810,6 +1828,12 @@ function truckTargets() {
       continue;
     }
     if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw }; ud.man = null; }
+    // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, по другую сторону
+    // экскаватора от места погрузки, бортом к полотну (не на полосе съезда)
+    if (st === 'queued_load') {
+      const slot = benchQueueSlot(o, id);
+      if (slot) { o.position.x = slot[0]; o.position.z = -slot[1]; o.rotation.y = slot[2]; continue; }
+    }
     // на дороге: место слоя и направление хода по ребру схемы (знак — по курсу модели)
     const x = Number(val(id, 'x', 0)), y = Number(val(id, 'y', 0)), ne = dio.nearestEdge(x, y);
     let tx = 0, ty = 0;
