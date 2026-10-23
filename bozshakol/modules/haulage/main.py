@@ -204,6 +204,7 @@ class Roads:
             self.edge_road[(a, b)] = self.edge_road[(b, a)] = e["road"]
         self.limits = {k: v["speed_limit_kmh"] for k, v in geometry["roads"].items()}
         self.closed = set()
+        self._main_nodes, self._main_key = None, None   # основная сеть: связь с fuel-station по открытым дорогам
 
     def path(self, start, goal):
         """Кратчайший путь по открытым дорогам (Дейкстра, вес — «утяжелённая на подъёме» длина); None — недостижимо."""
@@ -276,6 +277,53 @@ class Roads:
         закрытую дорогу — настоящий баг, найденный диагностикой)."""
         return any(road in self.closed for _, _, _, road in self.adj.get(node, []))
 
+    def main_nodes(self):
+        """Узлы основной сети — связанные с fuel-station (она сама никогда не закрывается) по
+        ОТКРЫТЫМ дорогам; пересчитывается, когда меняется набор закрытых дорог (road_closed)."""
+        key = frozenset(self.closed)
+        if self._main_key != key:
+            seen, stack = {"fuel-station"}, ["fuel-station"]
+            while stack:
+                n = stack.pop()
+                for m, _, _, road in self.adj[n]:
+                    if road not in self.closed and m not in seen:
+                        seen.add(m)
+                        stack.append(m)
+            self._main_nodes, self._main_key = seen, key
+        return self._main_nodes
+
+    def inside_closed(self, node):
+        """Узел ВНУТРИ закрытого участка: у него есть закрытое звено и с основной сетью он по
+        открытым дорогам не связан (середина закрытого съезда). Концы участка — узлы, где закрытая
+        дорога стыкуется с открытой (бровка, подножие), — снаружи: оттуда на участок не въезжают."""
+        return self.on_closed_segment(node) and node not in self.main_nodes()
+
+    def exit_path(self, start, avoid=None):
+        """Путь к БЛИЖАЙШЕМУ концу закрытого участка — первому узлу основной сети — по любым
+        звеньям, в т.ч. закрытым (по закрытому участку можно ехать только чтобы выехать с него).
+        `avoid` — звено (a, b), которое не рассматривать (то, на котором самосвал стоит).
+        Возвращает (путь, длина в м) или (None, inf)."""
+        main = self.main_nodes()
+        dist, prev, heap = {start: 0.0}, {}, [(0.0, start)]
+        while heap:
+            d, n = heapq.heappop(heap)
+            if d > dist.get(n, math.inf):
+                continue
+            if n in main:
+                out = [n]
+                while out[-1] != start:
+                    out.append(prev[out[-1]])
+                return out[::-1], d
+            for m, length, _, _ in self.adj[n]:
+                if avoid and {n, m} == set(avoid):
+                    continue
+                nd = d + length
+                if nd < dist.get(m, math.inf):
+                    dist[m] = nd
+                    prev[m] = n
+                    heapq.heappush(heap, (nd, m))
+        return None, math.inf
+
     def edge(self, a, b):
         for m, length, grade, road in self.adj[a]:
             if m == b:
@@ -327,6 +375,7 @@ class Truck:
         self.evac_until = None          # едет по формально ЗАКРЫТОЙ дороге до этого узла (эвакуация из
                                          # запертого участка, задача «road_closed») — до него закрытость
                                          # этих звеньев не считаем «разрывом под колёсами»
+        self.reroute_at = None          # конец закрытого участка, куда самосвал выезжает: там — новый маршрут
         self.entering_reserve = False   # едет на fuel-station, чтобы встать в резерв (не на дозаправку)
         self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — диагностика
         # -- разброс (водитель) --
@@ -452,6 +501,7 @@ class Haulage:
         # trucks_needed/fuel_saved_l_shift за последний модельный час (окно — как у _wait_exc и т.п.)
         self._fleet_state_log = deque()
         self._shift_reserve_s = 0.0  # накоплено секунд в резерве за ТЕКУЩУЮ смену (сброс — см. read_scenarios)
+        self._shift_saved_base_l = 0.0  # сэкономлено за эту смену до перезапуска сервиса (из Ditto)
         # -- резерв на уровне парка (часть 2 «долгого восстановления») --
         self._reserve_surplus_since_t = None  # момент, с которого излишек >= RESERVE_SURPLUS_TRUCKS держится
         self._last_reserve_entry_t = -math.inf  # момент последнего входа в резерв (плавность)
@@ -500,11 +550,12 @@ class Haulage:
         self.dumps["crusher-01"].accepting = bool(w.get("crusher-01", "accepting", True))
         self.dumps["stockpile-clay"].accepting = bool(w.get("stockpile-clay", "accepting", True))
         self.speed_limit = float(w.get("mine", "speed_limit", 50) or 50)
-        shift = w.get("mine", "shift", 1)
-        if shift != self._current_shift:
+        shift = w.get("mine", "shift", None)   # None — о смене ещё ничего не известно: это не новая смена
+        if shift is not None and shift != self._current_shift:
             self._current_shift = shift
             self._reroll_shift_multipliers()
             self._shift_reserve_s = 0.0  # новая смена — копим fuel_saved_l_shift с нуля
+            self._shift_saved_base_l = 0.0
 
     def _reroll_shift_multipliers(self):
         """Новая смена — у каждого экскаватора свой машинист, у каждого самосвала свой водитель
@@ -1145,9 +1196,12 @@ class Haulage:
         if path is not None:
             truck.evac_until = None
             return path
-        if not self.roads.on_closed_segment(start):
+        # координатор, road_closed: эвакуация — только для самосвала ВНУТРИ закрытого участка и только
+        # к ближайшему его концу (`exit_path`); с конца участка (бровка, подножие) на закрытые звенья не
+        # въезжают — там переназначение цели или ожидание
+        if not self.roads.inside_closed(start):
             return None
-        escape = self.roads.escape_path(start, goal)
+        escape, _ = self.roads.exit_path(start)
         if escape is None:
             return None
         rest = self.roads.path(escape[-1], goal)
@@ -1157,6 +1211,19 @@ class Haulage:
         return escape[:-1] + rest
 
     def _reroute_or_reassign(self, truck):
+        """Путь до цели (`_reroute_or_reassign_goal`); если его нет, а самосвал ВНУТРИ закрытого
+        участка, — всё равно выезд к ближайшему концу участка (по закрытому участку можно ехать
+        только чтобы выехать), там новый маршрут (`truck.reroute_at`) или ожидание."""
+        path = self._reroute_or_reassign_goal(truck)
+        if path is not None or not self.roads.inside_closed(truck.node):
+            return path
+        escape, _ = self.roads.exit_path(truck.node)
+        if escape is None or len(escape) < 2:
+            return None
+        truck.evac_until = truck.reroute_at = escape[-1]
+        return escape
+
+    def _reroute_or_reassign_goal(self, truck):
         """Путь до текущей цели самосвала с эвакуацией (`_route_from`); если даже так пути
         нет — переназначение цели (задача «road_closed», часть 2): порожний («returning»/
         `travel_kind == "return"`) получает другого экскаватора — «авто» через
@@ -1309,6 +1376,15 @@ class Haulage:
                 # ребру, — вплоть до сотен метров за один шаг (настоящий баг, найден на
                 # проверке road_closed, не только в местах из описания)
                 if truck.seg_pos > 0:
+                    # координатор, road_closed: к БЛИЖАЙШЕМУ концу закрытого участка — если он впереди,
+                    # доезжаем по этому звену и дальше по закрытым звеньям до конца участка
+                    _, back_d = self.roads.exit_path(truck.node, avoid=(truck.node, nxt))
+                    fwd, fwd_d = self.roads.exit_path(nxt, avoid=(truck.node, nxt))
+                    if fwd is not None and length - truck.seg_pos + fwd_d < truck.seg_pos + back_d:
+                        truck.path = [nxt] + fwd[1:]
+                        truck.evac_until = truck.reroute_at = fwd[-1]
+                        continue
+                if truck.seg_pos > 0:
                     # едем НАЗАД по тому же ребру — уклон обратный (подъём вперёд = спуск назад)
                     back_grade = -grade
                     v = self._speed(truck, back_grade, road)
@@ -1353,6 +1429,17 @@ class Haulage:
                 # честно построен по ОТКРЫТЫМ дорогам (см. _route_from), «разрыв под
                 # колёсами» снова можно проверять штатно
                 truck.evac_until = None
+            if truck.reroute_at is not None and truck.node == truck.reroute_at:
+                # выехал с закрытого участка к ближайшему концу — отсюда новый маршрут по открытым дорогам
+                truck.reroute_at = None
+                path = self._reroute_or_reassign(truck)
+                if path is None:
+                    truck.travel_pending = True
+                    truck.travel_kind = "return" if truck.state == "returning" else "depart"
+                    truck.path = []
+                    truck.speed = 0.0
+                    return
+                truck.path = path[1:]
         if not truck.path:
             truck.speed = 0.0
             self._arrived(truck)
@@ -1677,7 +1764,7 @@ class Haulage:
                       if self._clay_crusher_total_t > 0 else 0.0)
         time_pct, trucks_needed, fuel_rate_l_per_s = self._fleet_time_shares()
         trucks_reserve = sum(1 for t in self.trucks if t.state == "reserve")
-        fuel_saved_l_shift = self._shift_reserve_s * fuel_rate_l_per_s
+        fuel_saved_l_shift = self._shift_saved_base_l + self._shift_reserve_s * fuel_rate_l_per_s
         return {
             "mode": feature(self.mode),
             "avg_wait_excavator": feature(round(avg_wait_exc, 2), "мин"),
@@ -1794,6 +1881,15 @@ def restore_counters(model, prev):
         if "refuels_total" in d:
             model.refuels_total = int(d["refuels_total"])
             restored.append("dispatch.refuels_total")
+        if "fuel_saved_l_shift" in d:
+            # сэкономлено за текущую смену до перезапуска; дальше копится поверх (сброс — с новой сменой)
+            model._shift_saved_base_l = float(d["fuel_saved_l_shift"])
+            restored.append("dispatch.fuel_saved_l_shift")
+    m = prev.get("mine")
+    if m and m.get("shift") is not None:
+        # смена, к которой относятся счётчики смены: после перезапуска в ту же смену — не новая смена
+        model._current_shift = m["shift"]
+        model._reroll_shift_multipliers()
     dw = prev.get("dump-waste-1")
     if dw and "received_total" in dw:
         model.dumps["dump-waste-1"].received = float(dw["received_total"])
@@ -1826,7 +1922,7 @@ def main():
     clock = SimClock()
     model = Haulage(geometry, watcher, clock)
     own_ids = ["dispatch", "dump-waste-1"] + [ex_id for ex_id in model.excavators] + [t.id for t in model.trucks]
-    restored = restore_counters(model, read_prev_state(ditto, own_ids))
+    restored = restore_counters(model, read_prev_state(ditto, own_ids + ["mine"]))   # mine — номер смены
     if restored:
         log.info("счётчики восстановлены из Ditto (%d признаков): %s", len(restored), ", ".join(restored))
     else:
