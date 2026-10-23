@@ -364,7 +364,7 @@ class Face:
             "hardness": feature(round(c["hardness"], 1), "ед. Протодьяконова"),
             "remaining": feature(round(c["remaining"], 0), "т"),
             "recommended_destination": feature(c["recommended_destination"]), "blasted": feature(c["blasted"]),
-            "block_preview": feature(self.preview, "м, м, % Cu"),
+            "block_preview": feature(self.preview, "м, %"),
             "bench": feature(self.level + 1, "№"),
             "panel_progress": feature(round(100.0 * self.extracted / max(1.0, self.panel.total), 1), "%"),
             "powder_factor": feature(round(c["powder_factor"], 2), "кг/м³"),

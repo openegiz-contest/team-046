@@ -29,7 +29,9 @@
 //   models.excavator()                    экскаватор — обратная лопата (класс Hitachi EX3600):
 //                                         setSwing(рад, + против часовой), setBoom(t 0..1: копает → выгрузка), setState
 //   models.drill()                        буровой станок: setMast(true — мачта вертикально / false — уложена), setState
-//   models.crusher()                      гирационная дробилка: setState('running'|'idle'|'stopped' и др.)
+//   models.crusher()                      гирационная дробилка, врезанная в землю: площадка разгрузки на уровне земли с
+//                                         приёмным бункером в центре (самосвал подаёт задом с −X к отбойному брусу),
+//                                         корпус с приводом — к +X; setState('running'|'idle'|'stopped' и др.)
 //   models.conveyor(points, opts)         конвейер по ломаной (точки уже в сцене) на A-образных опорах, с роликоопорами:
 //                                         setFlow(tph, dt) — при потоке виден слой руды и бегут кучки (шаг ~3 м при 2500 т/ч)
 //                                         opts: { height: 3 (высота ленты над точками), step: 25 (шаг опор) }
@@ -53,7 +55,7 @@ export const MODEL_SIZES = {
   truck180: { length: 15, width: 8, height: 7, wheel: 4.0 },
   excavator: { length: 12, width: 7, height: 7, boom: 10, stick: 5, reach: 16, bucket_m3: 22 },
   drill: { length: 11, width: 5, height: 4.5, mast: 20 },
-  crusher: { length: 25, width: 25, height: 20, total_length: 42, total_height: 28 },
+  crusher: { length: 25, width: 25, height: 16, total_length: 37, total_height: 28, dump_x: -19 },
   building: {
     main: [120, 60, 24], thickener: [30, 30, 6], warehouse: [60, 30, 23], substation: [60, 40, 12], office: [20, 12, 8],
   },
@@ -816,29 +818,24 @@ export function createModels(THREE, colors) {
   // ================================================================ ГИРАЦИОННАЯ ДРОБИЛКА
   function crusherGeos() {
     return cached('crusher', () => {
-      const B = 25, HB = 20, X = B / 2 + 6;
+      // Дробилка врезана в землю (как на борту карьера): сама машина ниже уровня земли, наверху — бетонная площадка
+      // разгрузки B × B вровень с землёй с приёмным бункером в центре; самосвал подаёт задом с запада (−X)
+      // к отбойному брусу и разгружается в бункер; корпус с приводом и лампой состояния — к востоку (+X)
+      const B = 25, X = B / 2 + 6;
       const P = new Parts(), body = new Parts(), D = new Parts(), L = new Parts();
-      // бетонное основание: сплошной низ + стенки вокруг приёмной воронки
-      P.add(rbox(B, HB - 5, B, 0.3), C.concrete, T(0, (HB - 5) / 2, 0));
-      for (const s of [-1, 1]) {
-        P.add(rbox(3.7, 5, B, 0.15), C.concrete, T(s * (B / 2 - 1.85), HB - 2.5, 0));
-        P.add(rbox(B - 7.4, 5, 3.7, 0.15), C.concrete, T(0, HB - 2.5, s * (B / 2 - 1.85)));
-      }
-      for (const u of [-9.4, -3.1, 3.1, 9.4]) {
-        P.add(box(1.0, HB - 0.4, 0.4), C.concreteDark, T(u, (HB - 0.4) / 2, B / 2 + 0.15));   // пилястры
-        P.add(box(0.4, HB - 0.4, 1.0), C.concreteDark, T(-B / 2 - 0.15, (HB - 0.4) / 2, u));
-      }
-      P.add(box(B + 0.3, 0.5, 0.3), C.concreteDark, T(0, HB - 0.25, B / 2 + 0.1));
-      P.add(box(0.3, 0.5, B + 0.3), C.concreteDark, T(-B / 2 - 0.1, HB - 0.25, 0));
-      // отбойные брусья (жёлтые) по трём сторонам площадки разгрузки; въезд с тыла (−Z)
-      P.add(rbox(B, 1.0, 0.9, 0.1), C.safety, T(0, HB + 0.5, B / 2 - 0.45));
-      for (const s of [-1, 1]) P.add(rbox(0.9, 1.0, B, 0.1), C.safety, T(s * (B / 2 - 0.45), HB + 0.5, 0));
-      // приёмная воронка (стенка с толщиной) и руда на дне
-      P.add(lathe([[2.4, HB - 5.2], [8.6, HB + 0.5], [8.15, HB + 0.5], [2.0, HB - 5.2]], 16), C.hopper);
-      P.add(cyl(2.3, 2.3, 0.2, 12), 0x4d4339, T(0, HB - 5.1, 0));
-      // пандус-въезд и валы безопасности
-      P.add(prism([[-B / 2 - 34, 0], [-B / 2, 0], [-B / 2, HB]], B * 0.8), C.gravel);
-      for (const s of [-1, 1]) P.add(prism([[-B / 2 - 34, 0], [-B / 2, HB], [-B / 2, HB + 1.2], [-B / 2 - 34, 1.2]], 1.2), C.concreteDark, T(s * (B * 0.4 - 0.6), 0, 0));
+      // площадка разгрузки: плиты вокруг проёма бункера (проём 17 × 17)
+      const hole = 8.6;
+      P.add(rbox(B, 0.6, B / 2 - hole, 0.1), C.concrete, T(0, 0.3, (B / 2 + hole) / 2));
+      P.add(rbox(B, 0.6, B / 2 - hole, 0.1), C.concrete, T(0, 0.3, -(B / 2 + hole) / 2));
+      P.add(rbox(B / 2 - hole, 0.6, 2 * hole, 0.1), C.concrete, T((B / 2 + hole) / 2, 0.3, 0));
+      P.add(rbox(B / 2 - hole, 0.6, 2 * hole, 0.1), C.concrete, T(-(B / 2 + hole) / 2, 0.3, 0));
+      // приёмный бункер: невысокий бетонный борт по кругу, воронка, руда на дне
+      P.add(lathe([[8.2, 0.6], [8.9, 0.6], [8.9, 1.5], [8.2, 1.5], [7.6, 0.4], [2.6, -2.2], [0.1, -2.2]], 20), C.hopper);
+      P.add(cyl(6.2, 6.6, 0.5, 14), 0x4d4339, T(0, 0.05, 0));
+      P.add(cyl(0.1, 4.2, 1.6, 10), 0x5a4e43, T(0, 0.85, 0));                                  // горка руды в бункере
+      // отбойный брус (жёлтый) со стороны разгрузки (−X) и короткие брусья по бокам проёма
+      P.add(rbox(0.9, 1.0, 16, 0.1), C.safety, T(-9.6, 1.1, 0));
+      for (const s of [-1, 1]) P.add(rbox(6, 1.0, 0.9, 0.1), C.safety, T(-6.6, 1.1, s * 8.3));
       // корпус дробилки (+X): стены перекрашиваются при остановке
       body.add(rbox(12, 16, 16, 0.3), sh(1), T(X, 8, 0));
       body.add(rbox(6, 9, 6, 0.25), sh(0.92), T(X, 21.5, 0));                                // привод
@@ -849,20 +846,15 @@ export function createModels(THREE, colors) {
       P.add(rbox(6.6, 0.5, 6.6, 0.1), C.roof, T(X, 26.25, 0));
       P.add(box(10, 1.2, 0.1), C.glass, T(X, 11.5, 8.06)); P.add(box(0.1, 1.2, 13), C.glass, T(X + 6.06, 11.5, 0));
       P.add(box(3, 4, 0.1), C.dark, T(X - 3, 2, 8.06));
-      // разгрузочная галерея под конвейер (+Z)
-      P.add(rbox(3.4, 2.4, 24, 0.15), C.conveyor, T(0, 5, B / 2 + 10, -14 * DEG));
-      for (const sx of [-1.2, 1.2]) P.add(box(0.5, 6, 0.5), C.steel, T(sx, 3, B / 2 + 16));
-      // лестничная башня на западной стене и гидромолот на площадке (мелочи)
-      for (let i = 0; i < 5; i++) {
+      // гидромолот на площадке у бункера (разбивает негабарит) и лестница на крышу корпуса — на дальней стене (мелочи)
+      D.add(cyl(0.8, 1.0, 2.0, 8), C.dark, T(B / 2 - 3, 1.6, B / 2 - 3));
+      D.add(box(0.5, 1, 0.6), C.safety, BM(V(B / 2 - 3, 2.6, B / 2 - 3), V(B / 2 - 6.5, 6.1, B / 2 - 7)));
+      D.add(box(0.4, 1, 0.5), C.safety, BM(V(B / 2 - 6.5, 6.1, B / 2 - 7), V(B / 2 - 8, 3.2, B / 2 - 9.5)));
+      D.add(rbox(0.6, 1.2, 0.6, 0.08), C.dark, T(B / 2 - 8.2, 2.6, B / 2 - 9.8));
+      for (let i = 0; i < 4; i++) {   // лесенка — по восточной стене корпуса, дальней от бункера
         const y = i * 4, f = i % 2 ? 1 : -1;
-        D.add(box(1.0, 1, 0.12), C.steel, BM(V(-B / 2 - 0.9, y, -7 * f), V(-B / 2 - 0.9, y + 4, 7 * f)));
-        D.add(box(1.2, 0.15, 1.6), C.steel, T(-B / 2 - 0.9, y + 4, 7.8 * f));
-        D.add(box(0.06, 1, 0.06), C.safety, BM(V(-B / 2 - 1.4, y + 1.0, -7 * f), V(-B / 2 - 1.4, y + 5.0, 7 * f)));
+        D.add(box(0.12, 1, 1.0), C.steel, BM(V(X + 6.2, y, 3 * f), V(X + 6.2, y + 4, -3 * f)));
       }
-      D.add(cyl(0.8, 1.0, 2.0, 8), C.dark, T(B / 2 - 3, HB + 1, B / 2 - 3));
-      D.add(box(0.5, 1, 0.6), C.safety, BM(V(B / 2 - 3, HB + 2, B / 2 - 3), V(B / 2 - 6.5, HB + 5.5, B / 2 - 7)));
-      D.add(box(0.4, 1, 0.5), C.safety, BM(V(B / 2 - 6.5, HB + 5.5, B / 2 - 7), V(B / 2 - 8, HB + 2.6, B / 2 - 9.5)));
-      D.add(rbox(0.6, 1.2, 0.6, 0.08), C.dark, T(B / 2 - 8.2, HB + 2.0, B / 2 - 9.8));
       for (const s of [-1, 1]) D.add(box(0.06, 0.06, 6.6), C.rail, T(X + s * 3.25, 27.4, 0));
       L.add(beaconGeo(3.2), sh(1), T(X, 26.5, 0));
       return { stat: P.build(), body: body.build(), detail: D.build(), lamp: L.build() };
