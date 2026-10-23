@@ -82,7 +82,13 @@ NOT_WORKING_STATES = ("queued_load", "queued_dump", "refueling", "reserve")
 
 TRUCK_PUBLISH_S = 1.0    # не чаще раза в секунду, как требует протокол (contract/README.md, §7)
 SLOW_PUBLISH_S = 5.0
-QUEUE_GAP_M = 22.0
+# Дистанции (координатор, проверка движения): в 3D-схеме расстояния сжаты (на дорогах в 2 раза, на съездах сильнее), а
+# самосвалы — в натуральную величину, поэтому зазоры берутся с запасом: на схеме между машинами остаётся не меньше
+# длины самосвала + 5 м. Очередь стоит вдоль своей дороги подъезда; первое место — дальше, чем шаг очереди: у пункта
+# остаётся площадка, где самосвал разворачивается и сдаёт задом под погрузку или к месту разгрузки
+QUEUE_GAP_M = 70.0
+QUEUE_FIRST = 1.5         # первое место в очереди — в QUEUE_FIRST шагах от пункта
+FOLLOW_GAP_M = 90.0       # не ближе этого к впереди идущему по тому же звену: задний тормозит заранее
 
 CARGO_BY_ORE = {"sulphide": "sulphide", "clay": "clay", "waste": "waste"}
 DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dump-waste-1"}
@@ -370,6 +376,8 @@ class Truck:
         self.buckets_done = 0
         self.refuel_timer = 0.0
         self.queue_index = 0
+        self.trail = []                 # последние проеханные узлы (откуда приехал) — очередь стоит вдоль пути подъезда
+        self.queue_back = None          # путь подъезда от пункта назад: [пункт, предыдущий узел, ...]
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
         self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
         self.evac_until = None          # едет по формально ЗАКРЫТОЙ дороге до этого узла (эвакуация из
@@ -1413,6 +1421,24 @@ class Haulage:
             truck.speed = v
             step = v / 3.6 * dt
             remaining = length - truck.seg_pos
+            # координатор, проверка движения: не ближе FOLLOW_GAP_M к впереди идущему; к занятому пункту — только до
+            # хвоста его очереди (встаёт туда, не доезжая до пункта: без скачка к узлу и обратно)
+            limit = self._follow_limit(truck, nxt, length)
+            tail = self._queue_tail_m(truck)
+            to_dest = None
+            if tail is not None:
+                to_dest = remaining + self._path_len(nxt, truck.path[1:])
+                limit = min(limit, truck.seg_pos + max(0.0, to_dest - tail))
+            if limit < length - 1e-6 and step >= limit - truck.seg_pos:
+                adv = max(0.0, limit - truck.seg_pos)
+                truck.seg_pos += adv
+                self._place(truck, nxt, truck.seg_pos / length)
+                self._consume_fuel(truck, self._edge_fuel_l(truck, grade, adv))
+                if to_dest is not None and to_dest - adv <= tail + 0.5:
+                    self._join_queue(truck)
+                else:
+                    truck.speed = v * adv / step if step > 0 else 0.0
+                return
             if step < remaining:
                 truck.seg_pos += step
                 self._place(truck, nxt, truck.seg_pos / length)
@@ -1420,6 +1446,7 @@ class Haulage:
                 return
             dt -= remaining / (v / 3.6)
             self._consume_fuel(truck, self._edge_fuel_l(truck, grade, remaining))
+            truck.trail = (truck.trail + [truck.node])[-8:]
             truck.node = nxt
             truck.path.pop(0)
             truck.seg_pos = 0.0
@@ -1442,7 +1469,57 @@ class Haulage:
                 truck.path = path[1:]
         if not truck.path:
             truck.speed = 0.0
+            truck.queue_back = [truck.node] + truck.trail[::-1]
             self._arrived(truck)
+
+    def _follow_limit(self, truck, nxt, length):
+        """Докуда (м от начала звена truck.node -> nxt) можно доехать, держа FOLLOW_GAP_M до впереди идущего по тому
+        же звену в ту же сторону или только что съехавшего с него за узел nxt."""
+        lim = length
+        for o in self.trucks:
+            if o is truck or not o.path or o.travel_pending or o.state not in ("hauling", "returning"):
+                continue
+            if o.node == truck.node and o.path[0] == nxt and o.seg_pos > truck.seg_pos + 1e-6:
+                lim = min(lim, o.seg_pos - FOLLOW_GAP_M)
+            elif o.node == nxt and o.path[0] != truck.node and o.seg_pos < FOLLOW_GAP_M:   # встречный — не «впереди идущий»
+                lim = min(lim, length + o.seg_pos - FOLLOW_GAP_M)
+        return lim
+
+    def _queue_tail_m(self, truck):
+        """Хвост очереди у пункта, куда едет самосвал (м пути до пункта), или None — пункт свободен / едет не туда."""
+        if not truck.path:
+            return None
+        if truck.state == "returning" and truck.destination in self.excavators:
+            pt = self.excavators[truck.destination]
+            active = pt.loading
+        elif truck.state == "hauling" and truck.destination in self.dumps:
+            pt = self.dumps[truck.destination]
+            active = pt.dumping
+        else:
+            return None
+        if truck.path[-1] != pt.node or (active is None and not pt.queue):
+            return None
+        return (len(pt.queue) + QUEUE_FIRST) * QUEUE_GAP_M
+
+    def _path_len(self, start, rest):
+        total, a = 0.0, start
+        for b in rest:
+            total += self.roads.edge(a, b)[0]
+            a = b
+        return total
+
+    def _join_queue(self, truck):
+        """Встал в хвост очереди, не доезжая до пункта: логически он у пункта (узел назначения), место держит
+        _line_up — вдоль его же пути подъезда, поэтому показанное место не прыгает."""
+        dest = truck.path[-1]
+        back = [dest] + truck.path[-2::-1] + [truck.node] + truck.trail[::-1]
+        truck.queue_back = [n for i, n in enumerate(back) if i == 0 or n != back[i - 1]]
+        truck.trail = (truck.trail + [truck.node])[-8:]
+        truck.node = dest
+        truck.path = []
+        truck.seg_pos = 0.0
+        truck.speed = 0.0
+        self._arrived(truck)
 
     def _place(self, truck, nxt, frac):
         a, b = self.roads.nodes[truck.node], self.roads.nodes[nxt]
@@ -1694,24 +1771,42 @@ class Haulage:
             self._line_up(dump.node, dump.dumping, dump.queue)
 
     def _line_up(self, node, active, queue):
+        """Грузящийся/разгружающийся — у пункта; очередь — вдоль своего пути подъезда (по дорогам, а не по прямой
+        от узла), через QUEUE_GAP_M, носом к пункту."""
         p = self.roads.nodes[node]
-        back = None
-        for m, *_ in self.roads.adj[node]:
-            back = self.roads.nodes[m]
-            break
-        if back is None:
-            return
-        d = [back[i] - p[i] for i in range(3)]
-        n = math.hypot(d[0], d[1]) or 1.0
-        d = [d[0] / n, d[1] / n, 0.0]
         if active:
             active.pos = [p[0], p[1], p[2]]
             active.speed = 0.0
         for i, truck in enumerate(queue):
-            gap = (i + 1) * QUEUE_GAP_M
-            truck.pos = [p[0] + d[0] * gap, p[1] + d[1] * gap, p[2]]
+            back = truck.queue_back if truck.queue_back and truck.queue_back[0] == node else self._default_back(node)
+            truck.pos, truck.heading = self._along(back, (i + QUEUE_FIRST) * QUEUE_GAP_M)
             truck.speed = 0.0
-            truck.heading = (math.degrees(math.atan2(-d[0], -d[1])) + 360) % 360
+
+    def _default_back(self, node):
+        """Путь подъезда, если самосвал к пункту не приезжал (старт модели): к дробилке, от неё — к заправке."""
+        path = self.roads.path(node, "crusher" if node != "crusher" else "fuel-station")
+        if path and len(path) > 1:
+            return path
+        return [node] + [m for m, *_ in self.roads.adj[node]][:1]
+
+    def _along(self, back, dist):
+        """Точка на ломаной back (узлы от пункта назад) в dist м от пункта и курс на пункт."""
+        pts = [self.roads.nodes[n] for n in back]
+        for k in range(len(pts) - 1):
+            a, b = pts[k], pts[k + 1]
+            seg = math.hypot(b[0] - a[0], b[1] - a[1])
+            if seg <= 0:
+                continue
+            last = k == len(pts) - 2
+            if dist <= seg or last:
+                f = dist / seg
+                pos = [a[i] + (b[i] - a[i]) * f for i in range(3)]
+                if f > 1:
+                    pos[2] = b[2]
+                return pos, (math.degrees(math.atan2(a[0] - b[0], a[1] - b[1])) + 360) % 360
+            dist -= seg
+        p = pts[0]
+        return [p[0], p[1], p[2]], 0.0
 
     def _fleet_time_shares(self):
         """Доли модельного времени ПАРКА по состояниям за последний модельный час (то же окно,
