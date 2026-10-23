@@ -216,6 +216,9 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
 
   // --- высота поверхности схемы: уступы, врезанные в них съезды и дороги карьера
   const pitEdges = edges.filter((e) => e.pit);
+  // дороги у бровки (вне карьера, но полотно заходит за кромку): под их полотном и внутри кромки — полка на их высоте
+  const nearRim = (p) => ((p[0] - cx) / (a + ROAD_W / 2 + 6)) ** 2 + ((p[1] - cy) / (b + ROAD_W / 2 + 6)) ** 2 < 1;
+  const rimEdges = edges.filter((e) => !e.pit && Array.from({ length: 41 }, (_, i) => edgeAt(e, i / 40)).some(nearRim));
   // площадки забоев: на дне — круг у узла забоя; на уступе — ровный прямоугольник вдоль уступа (diorama.json extra.face_pads)
   const benchPads = (D.extra && D.extra.face_pads) || [];
   const facePads = Object.entries(D.nodes).filter(([n]) => n.startsWith('face-') && !benchPads.some((b) => b.face === n)).map(([, p]) => p);
@@ -238,11 +241,18 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     };
     const span = CORRIDOR + CORRIDOR_BLEND - HW;
     let aRamp = Infinity;   // расстояние от края полотна съезда
+    let shelf = null;   // полотно, на котором точка (ближайшее): поверхность — ровная полка на высоте этой дороги
     for (const e of pitEdges) {
       const n = edgeNearest(e, xs, ys, HW + Math.max(NEAR2, span + RAMP_GAP + RAMP_SMOOTH + RAMP_SMOOTH_RIM));
       take(n.d - HW, n.z);
       if (e.path) aRamp = Math.min(aRamp, n.d - HW);
+      if (n.d <= HW && (!shelf || n.d < shelf.d)) shelf = n;
     }
+    for (const e of rimEdges) {
+      const n = edgeNearest(e, xs, ys, HW + 1);
+      if (n.d <= HW && (!shelf || n.d < shelf.d)) shelf = n;
+    }
+    if (shelf) return shelf.z;   // под полотном — без смешивания с соседними витками, площадками и кромкой
     // уступы; у съезда за откосом — ровный средний склон борта (ещё RAMP_GAP), дальше уступы проступают плавно
     // (RAMP_SMOOTH): откос встречает ровный склон, а уступы растут вдоль своих кромок — без ступенек и зубцов
     const zStep = benchProfile(ds), zAvg = -depthS * Math.min(1, ds / Ds);
