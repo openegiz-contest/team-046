@@ -157,7 +157,7 @@ function analyze(dir) {
   for (let i = 0; i < S.length; i++) {
     const rec = S[i];
     if (rec.piles) piles = rec.piles;
-    const ms = rec.m.map((r) => Object.assign(T(r), r[0].startsWith('truck-') ? { v: r[12], exc: r[13], dest: r[14] } : {},
+    const ms = rec.m.filter((r) => r[1] !== null && r[3] !== null).map((r) => Object.assign(T(r), r[0].startsWith('truck-') ? { v: r[12], exc: r[13], dest: r[14] } : {},
       r[0].startsWith('excavator-') ? { bkY: r[12], bkX: r[13], bkZ: r[14], bkS: r[15] } : {}));
     const byId = Object.fromEntries(ms.map((m) => [m.id, m]));
     const trucks = ms.filter((m) => m.id.startsWith('truck-'));
