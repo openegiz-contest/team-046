@@ -409,7 +409,7 @@ function plantCard(id, label) {
   return '<div class="plant-card' + (stopped ? ' stopped' : '') + '">' +
     '<div class="row"><b>' + esc(label) + '</b><span class="state ' + stateCls + '">' + esc(STATE_NAMES[state] || state || '—') + '</span></div>' +
     '<div class="row muted">план ' + fmt(plan, 0) + ' т/ч · факт <b>' + fmt(feed, 0) + ' т/ч</b></div>' +
-    '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, pct)).toFixed(0) + '%" class="' + (pct < 70 ? 'bad' : pct < 90 ? 'warn' : 'ok') + '"></i><span>' + fmt(pct, 0) + ' %</span></div>' +
+    '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, pct)).toFixed(0) + '%" class="' + (pct < 70 ? 'bad' : pct < 90 ? 'warn' : 'ok') + '"></i><span>за смену ' + fmt(pct, 0) + ' %</span></div>' +
     (extra.length ? '<div class="muted">' + esc(extra.join(' · ')) + '</div>' : '') + '</div>';
 }
 function renderDispatcher() {
@@ -787,9 +787,12 @@ const roadMats = {
   shoulder: new THREE.MeshLambertMaterial({ color: 0xbfae86 }),   // обочина
   closed: new THREE.MeshLambertMaterial({ color: colors.roadClosed }),
 };
+// сдвиг к камере ступенями: лента съезда (diorama-scene.js: −1/−4) < обочина < полотно — издали и на откосах полотно
+// всегда поверх обочины, обочина — поверх ленты (без «пилы» и штриховки)
+const roadOffset = (k) => ({ polygonOffset: true, polygonOffsetFactor: k === 'shoulder' ? -1.5 : -2, polygonOffsetUnits: k === 'shoulder' ? -6 : -8 });
 function buildRoads() {
   // полотно — лента по единой поверхности (diorama-scene.js roadRibbons): нигде не уходит под землю
-  for (const m of Object.values(roadMats)) Object.assign(m, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+  for (const [k, m] of Object.entries(roadMats)) Object.assign(m, roadOffset(k));
   for (const [key, geo] of Object.entries(roadRibbons(THREE, dio))) {
     const [road, mat] = key.split('|');
     const m = new THREE.Mesh(geo, roadMats[mat]);
@@ -1043,7 +1046,7 @@ function applyQuality(q) {
     if (roadMatKind[k] === want) continue;
     const c = m.userData.base ?? m.color.getHex(), next = high ? new THREE.MeshLambertMaterial({ color: c }) : new THREE.MeshBasicMaterial({ color: c });
     next.userData.base = c;
-    Object.assign(next, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
+    Object.assign(next, roadOffset(k));
     for (const meshes of Object.values(roadMeshes)) for (const mesh of meshes) if (mesh.material === m) mesh.material = next;
     terrain.traverse((o) => { if (o.material === m) o.material = next; });
     roadMats[k] = next; roadMatKind[k] = want;
@@ -1515,8 +1518,10 @@ function lineUpQueues() {
       if (!q) return;
       const p = dio.s(q.x, q.y, q.z);   // высоту ставит groundMachines
       const yaw = Math.atan2(q.dx, -q.dy);      // носом к пункту (в сцене z = −север)
-      // очередь — на одной полосе, встречные проходят; полоса — подальше от конвейера (подъезд к дробилке идёт вдоль него)
-      p.x += -Math.cos(yaw) * LANE * side; p.z += Math.sin(yaw) * LANE * side;
+      // очередь — на одной полосе, встречные проходят; полоса — подальше от конвейера (подъезд к дробилке идёт вдоль него);
+      // стоянка у заправки — рядом с дорогой на площадке (≈ 19 единиц от оси): едущие к заправке её не задевают
+      const off = LANE * side * (node === 'fuel-station' ? 2.7 : 1);
+      p.x += -Math.cos(yaw) * off; p.z += Math.sin(yaw) * off;
       o.position.copy(p);
       o.rotation.y = yaw;
     });
@@ -1600,6 +1605,7 @@ function adjustMachines(dt) {
     separateTrucks();
     separateDrills();   // ещё раз: отведённый назад самосвал не должен въехать в экскаватор
     drillsToBerms();
+    drillsOffRoads();
     smoothShifts(dt);
     separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
     separateDrills();
@@ -1641,7 +1647,7 @@ function trucksOffSlopes() {
   }
 }
 // Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,
-// не на врезке съезда и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
+// не на полотне и не у съезда (там борт — ровный склон без берм, dio.stepBlend < 1) и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
 // единиц до экскаватора), сначала на своём уступе, потом на соседних; место запоминается, пока станок слоя не переехал
 function drillsToBerms() {
   const P = dio.pit;
@@ -1657,6 +1663,42 @@ function drillsToBerms() {
     o.position.x = sp.x; o.position.z = -sp.y; o.rotation.y = sp.yaw;
   }
 }
+// Буровой станок на дне: не на полотне дороги и не на откосе у подножия съезда — отводим его от оси ближайшей дороги
+// на ровное дно (шагами по 2 единицы, не дальше 60; сначала в свою сторону, потом в другую); место запоминается, пока
+// станок слоя не переехал
+function drillsOffRoads() {
+  const pitEdges = dio.edges.filter((e) => e.pit), CLEAR = dio.roadHalf + 10;
+  const uneven = (x, y) => {
+    const h = dio.surfaceAt(x, y);
+    for (const [dx, dy] of [[6, 6], [6, -6], [-6, 6], [-6, -6]]) if (Math.abs(dio.surfaceAt(x + dx, y + dy) - h) > 0.6) return true;
+    return false;
+  };
+  const nearest = (x, y) => {
+    let best = null;
+    for (const e of pitEdges) { const n = dio.edgeNearest(e, x, y, 80); if (!best || n.d < best.n.d) best = { e, n }; }
+    return best;
+  };
+  const bad = (x, y) => { const b = nearest(x, y); return (b && b.n.d < CLEAR) || uneven(x, y); };
+  for (const o of machineList) {
+    if (o.userData.thingId.indexOf(':drill-') < 0) continue;
+    const xs = o.position.x, ys = -o.position.z;
+    if (dio.schemaInset(xs, ys) < dio.pit.Ds) continue;   // на уступах — drillsToBerms
+    const ud = o.userData, key = Math.round(xs / 4) + ',' + Math.round(ys / 4);
+    if (!ud.floor || ud.floor.key !== key) {
+      ud.floor = { key, x: xs, y: ys };
+      const b = nearest(xs, ys);
+      if (b && b.n.d < 80 && bad(xs, ys)) {
+        const q = dio.edgeAt(b.e, b.n.t), side = Math.sign(-q[4] * (xs - q[0]) + q[3] * (ys - q[1])) || 1;
+        for (const sg of [side, -side]) {
+          let x = xs, y = ys, k = 0;
+          for (; k < 30 && bad(x, y); k++) { x += -q[4] * sg * 2; y += q[3] * sg * 2; }
+          if (!bad(x, y)) { ud.floor = { key, x, y }; break; }
+        }
+      }
+    }
+    o.position.x = ud.floor.x; o.position.z = -ud.floor.y;
+  }
+}
 function bermSpot(xs, ys, ds, ex) {
   const P = dio.pit, k0 = Math.min(P.benches - 1, Math.floor(ds / P.inset));
   const t0 = Math.atan2((ys - P.cy) / (P.b - ds), (xs - P.cx) / (P.a - ds));
@@ -1667,6 +1709,7 @@ function bermSpot(xs, ys, ds, ex) {
     return { x: bx, y: by, d, t, tx, ty, yaw: Math.atan2(tx, -ty) };
   };
   const flat = (c) => {
+    if (dio.stepBlend(c.x, c.y) < 0.999) return false;   // у съезда (и на его полотне на высоте бермы) — не берма
     const h = dio.benchProfile(c.d);
     for (const u of [0, 7, -7]) if (Math.abs(dio.surfaceAt(c.x + c.tx * u, c.y + c.ty * u) - h) > 0.6) return false;
     for (const v of [2.2, -2.2]) {   // поперёк — по отступу от борта (у концов эллипса берма уже 6 единиц)
@@ -1675,10 +1718,10 @@ function bermSpot(xs, ys, ds, ex) {
     }
     return ex.every((e) => Math.hypot(e.position.x - c.x, -e.position.z - c.y) >= 26);
   };
-  for (const k of [k0, k0 - 1, k0 + 1]) {
+  for (const k of [k0, k0 - 1, k0 + 1, k0 - 2, k0 + 2]) {
     if (k < 0 || k >= P.benches) continue;
     const d = k * P.inset + P.berm / 2, rad = Math.hypot((P.a - d) * Math.sin(t0), (P.b - d) * Math.cos(t0)) || 1;
-    for (let i = 0; i <= 40; i++) {   // до 160 единиц в каждую сторону
+    for (let i = 0; i <= 100; i++) {   // до 400 единиц в каждую сторону (вдоль съезда ровный склон тянется далеко)
       for (const sg of i ? [1, -1] : [1]) {
         const c = at(k, t0 + sg * i * 4 / rad);
         if (flat(c)) return c;
