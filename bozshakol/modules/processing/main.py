@@ -298,6 +298,7 @@ def main():
                 "c": float(st("plant-clay", "cu_in_concentrate_total", 0.0))}
     saved_shift = {"shift": st("plant-sulphide", "shift", None), "hour": float(st("plant-sulphide", "shift_hour", 99.0)),   # нет часа — смену не продолжаем
                    "from": float(st("plant-sulphide", "shift_counted_from", 0.0)),
+                   "hrs": float(st("plant-sulphide", "shift_hours_counted", 0.0)),
                    "s_ore": float(st("plant-sulphide", "ore_shift_t", 0.0)), "s_cu": float(st("plant-sulphide", "cu_concentrate_shift", 0.0)),
                    "c_ore": float(st("plant-clay", "ore_shift_t", 0.0)), "c_cu": float(st("plant-clay", "cu_concentrate_shift", 0.0)),
                    "energy": float(st("power-grid", "energy_shift", 0.0)),
@@ -330,7 +331,7 @@ def main():
     conveyor_on = True           # свой конвейер: включён (крутится) или остановлен по холостому ходу
     p_window = []                # (шаг, кВт) за последние 15 модельных минут — для пиковой мощности
     energy_shift = 0.0
-    SHIFT_KEYS = ("s_ore", "s_cu", "c_ore", "c_cu", "idle_kwh", "e_sulph", "e_clay", "peak15", "lost_ore", "lost_cu")
+    SHIFT_KEYS = ("s_ore", "s_cu", "c_ore", "c_cu", "idle_kwh", "e_sulph", "e_clay", "peak15", "lost_ore", "lost_cu", "hrs")
     shift_acc = None
     shift_prev = None
     count_from = 0.0             # с какого часа смены идут счётчики смены (не 0 — после перезапуска стенда посреди смены)
@@ -354,6 +355,8 @@ def main():
                 shift_acc = {k: saved_shift[k] for k in SHIFT_KEYS}
                 energy_shift = saved_shift["energy"]
                 count_from = min(saved_shift["from"], shift_hour)
+                # время простоя сервиса тоже входит в смену (руды за него не было) — часы не меньше, чем по mine
+                shift_acc["hrs"] = max(shift_acc["hrs"], shift_hour - count_from)
                 log.info("смена %d продолжается: руда за смену %.0f т, медь %.1f т", shift, shift_acc["s_ore"], shift_acc["s_cu"])
             else:   # новая смена (или смена прошла, пока сервис стоял) — счётчики смены с нуля
                 shift_acc = {k: 0.0 for k in SHIFT_KEYS}
@@ -362,7 +365,10 @@ def main():
                 count_from = 0.0 if shift_prev is not None else shift_hour
                 log.info("смена %d: счётчики смены с нуля (с %.2f ч смены)", shift, count_from)
             shift_prev = shift
-        hours = max(shift_hour - count_from, 0.05)
+        # часы смены для плана — по своим же шагам, что и руда (часы mine приходят с задержкой до шага:
+        # из-за этого при подаче ровно по плану выходило то 99 %, то 100,6 %)
+        shift_acc["hrs"] += dt / 3600.0
+        hours = max(shift_acc["hrs"], 1e-6)   # без нижнего предела 0,05 ч: он занижал план в первые минуты смены (56 %)
         now = sim_epoch(watcher.get("mine", "sim_time")) or clock.now()
 
         crusher_stop, _ = watcher.scenario("crusher_stop")
@@ -463,7 +469,7 @@ def main():
         cu_total["c"] += cu_c
         shift_acc["c_ore"] += clay_fed
         shift_acc["c_cu"] += cu_c
-        plan_c = 100.0 * shift_acc["c_ore"] / (PLAN_CLAY_TPH * hours)
+        plan_c = min(100.0, 100.0 * shift_acc["c_ore"] / (PLAN_CLAY_TPH * hours))   # факт не меньше плана — ровно 100 %
         clay_accepting = not clay_overflow and clay.stock <= CLAY_CAP - TRUCK_MAX_T
 
         # -- мощность, не зависящая от питания мельниц ------------------------------------------
@@ -499,7 +505,7 @@ def main():
         cu_total["s"] += cu_s
         shift_acc["s_ore"] += milled
         shift_acc["s_cu"] += cu_s
-        plan_s = 100.0 * shift_acc["s_ore"] / (PLAN_SULPH_TPH * hours)
+        plan_s = min(100.0, 100.0 * shift_acc["s_ore"] / (PLAN_SULPH_TPH * hours))  # факт не меньше плана — ровно 100 %
         lost_cu = lost_t * feed_cu / 100.0 * rec_s / 100.0
         shift_acc["lost_ore"] += lost_t
         shift_acc["lost_cu"] += lost_cu
@@ -650,6 +656,7 @@ def main():
             "feed_cu": feature(r(feed_cu, 3), "% Cu"), "feed_clay": feature(r(feed_clay, 1), "%"),
             "plan_fulfilment": feature(r(plan_s, 1), "%"), "shift": feature(shift), "shift_hour": feature(r(shift_hour, 2), "ч"),
             "shift_counted_from": feature(r(count_from, 2), "ч"),
+            "shift_hours_counted": feature(r(shift_acc["hrs"], 4), "ч"),
             "ore_shift_t": feature(r(shift_acc["s_ore"], 1), "т"),
             "cu_concentrate_shift": feature(r(shift_acc["s_cu"], 2), "т"),
             "cu_year_pace": feature(r(cu_s / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
