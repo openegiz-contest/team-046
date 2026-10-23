@@ -14,7 +14,8 @@ TOL_PCT = 10.0           # «в пределах» — отклонение не
 KAZ = ("KAZ Minerals, Q4 2025 Production report — "
        "https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf")
 HEXAGON = "im-mining.com, 28.03.2025 — https://im-mining.com/2025/03/28/hexagons-fleet-and-fatigue-management-in-tandem-at-bozshakol/"
-NDT = ("Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101) — диапазон приведён модулем переработки (ветка processing/energy), координатором не перепроверен")
+NDT = ("Справочник НДТ РК 2023 (zakon.uchet.kz, документ P2300001101), табл. 1.4, п. 4.6: Бозшакольская обогатительная "
+       "фабрика — 26,85–36,33 кВт·ч/т")
 
 # id, название, единица, реальное значение или диапазон, источник, из чего модель
 ROWS = [
@@ -31,7 +32,7 @@ ROWS = [
     ("wait_excavator", "Ожидание самосвала у экскаватора (режим «авто»)", "мин", None, (1.0, 1.5),
      HEXAGON + " (было 3–5 мин до диспетчеризации)", "dispatch.avg_wait_excavator"),
     ("energy_kwh_t", "Удельная электроэнергия фабрики", "кВт·ч/т", None, (26.9, 36.3), NDT,
-     "plant-sulphide.specific_energy — модуль переработки пока не публикует"),
+     "plant-sulphide.specific_energy — удельный расход сульфидной фабрики за смену (модуль переработки)"),
 ]
 
 
