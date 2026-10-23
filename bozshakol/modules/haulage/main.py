@@ -91,6 +91,9 @@ QUEUE_FIRST = 1.5         # первое место в очереди — в QUE
 FOLLOW_GAP_M = 90.0       # не ближе этого к впереди идущему по тому же звену: задний тормозит заранее
 # Развилка (узел, где сходятся три дороги и больше) и пункт разгрузки, через который едут насквозь (дробилка): через
 # узел — по одному. Самосвал ждёт у стоп-линии, пока узел занят или к нему подходит самосвал с бо́льшим правом проезда
+# Две полосы: самосвал едет правее оси дороги на четверть ширины полотна (в 3D-схеме полотно 28 единиц, а боковой
+# сдвиг у дороги переносится туда с множителем 0,4: 17,5 м → 7 единиц); на съездах так же. Встречные не пересекаются
+LANE_M = 17.5
 JUNCTION_STOP_M = 50.0    # стоп-линия — за столько метров до узла
 JUNCTION_BOX_M = 50.0     # узел занят, пока проехавший его самосвал ближе этого к узлу
 JUNCTION_LOOK_M = 160.0   # соперник за проезд — тот, кто подходит к узлу ближе этого
@@ -1594,6 +1597,13 @@ class Haulage:
         a, b = self.roads.nodes[truck.node], self.roads.nodes[nxt]
         truck.pos = [a[i] + (b[i] - a[i]) * frac for i in range(3)]
         truck.heading = (math.degrees(math.atan2(b[0] - a[0], b[1] - a[1])) + 360) % 360
+        self._to_lane(truck)
+
+    def _to_lane(self, truck):
+        """Своя полоса: правее оси по ходу (курс truck.heading) на LANE_M."""
+        h = math.radians(truck.heading)
+        truck.pos[0] += math.cos(h) * LANE_M
+        truck.pos[1] -= math.sin(h) * LANE_M
 
     def _arrived(self, truck):
         if truck.state == "hauling":
@@ -1849,6 +1859,7 @@ class Haulage:
         for i, truck in enumerate(queue):
             back = truck.queue_back if truck.queue_back and truck.queue_back[0] == node else self._default_back(node)
             truck.pos, truck.heading = self._along(back, self._queue_dist(back, i, len(queue)))
+            self._to_lane(truck)   # в очереди — на своей полосе, носом к пункту
             truck.speed = 0.0
 
     def _default_back(self, node):
