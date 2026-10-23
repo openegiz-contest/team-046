@@ -233,6 +233,49 @@ class Roads:
             out.append(prev[out[-1]])
         return out[::-1]
 
+    def escape_path(self, start, goal):
+        """Для самосвала в `start`, у которого нет обычного пути (по открытым дорогам) до
+        `goal`, потому что он оказался ВНУТРИ закрытого участка (закрытие по имени дороги
+        закрывает сразу все её звенья — середина такого участка заперта с обеих сторон, см.
+        README/задача «road_closed»): кратчайший путь ДО БЛИЖАЙШЕГО узла, ОТКУДА `goal`
+        СНОВА достижим обычным путём, — по тем же (пока ещё формально закрытым) рёбрам,
+        которыми самосвал уже сюда заехал, не по новой/придуманной дороге. Тупиковый
+        отросток с формально открытым ребром (например face-06 — floor, пока ramp-2 рядом
+        закрыт) НЕ считается выходом сам по себе — проверяем именно достижимость `goal`, а
+        не «есть хоть одно открытое ребро» (настоящий баг первой версии, найденный на
+        проверке: самосвал «не считался» запертым из-за такого тупика и просто стоял).
+        None — `goal` недостижим вообще ниоткуда (честно сдаёмся, см. `_route_from`)."""
+        dist = {start: 0.0}
+        prev = {}
+        heap = [(0.0, start)]
+        while heap:
+            d, n = heapq.heappop(heap)
+            if d > dist.get(n, math.inf):
+                continue
+            if n != start and self.path(n, goal) is not None:
+                out = [n]
+                while out[-1] != start:
+                    out.append(prev[out[-1]])
+                return out[::-1]
+            for m, length, grade, road in self.adj[n]:
+                nd = d + length
+                if nd < dist.get(m, math.inf):
+                    dist[m] = nd
+                    prev[m] = n
+                    heapq.heappush(heap, (nd, m))
+        return None
+
+    def on_closed_segment(self, node):
+        """Узел лежит на (сейчас формально) закрытом участке — у него есть хотя бы одно
+        закрытое прилегающее звено. Используется, чтобы отличить самосвал, который
+        действительно заперт на закрытом участке (ему нужна эвакуация, `escape_path`), от
+        любого другого, для которого обычного объезда к конкретной цели просто нет —
+        закрытые звенья ему, как и всем остальным, недоступны (задача «road_closed-2»,
+        цель 1: раньше `_route_from` звал `escape_path` для ЛЮБОГО провала `path()`, из-за
+        чего самосвал, стоящий на совершенно открытом узле, мог получить маршрут через
+        закрытую дорогу — настоящий баг, найденный диагностикой)."""
+        return any(road in self.closed for _, _, _, road in self.adj.get(node, []))
+
     def edge(self, a, b):
         for m, length, grade, road in self.adj[a]:
             if m == b:
@@ -281,6 +324,9 @@ class Truck:
         self.queue_index = 0
         self.travel_pending = False     # дороги к цели сейчас нет (road_closed) — ждём и пробуем снова
         self.travel_kind = None         # "depart"/"return"/"refuel"/"reserve" — куда именно едем, для повтора
+        self.evac_until = None          # едет по формально ЗАКРЫТОЙ дороге до этого узла (эвакуация из
+                                         # запертого участка, задача «road_closed») — до него закрытость
+                                         # этих звеньев не считаем «разрывом под колёсами»
         self.entering_reserve = False   # едет на fuel-station, чтобы встать в резерв (не на дозаправку)
         self.reserve_since_s = 0.0      # момент входа в резерв (self._sim_t) — диагностика
         # -- разброс (водитель) --
@@ -389,6 +435,7 @@ class Haulage:
         self._last_plan_update_t = -math.inf  # форсируем расчёт плана на первом же шаге
         self._plan_inputs = None
         self._committed_baseline = {}  # {excavator.id: loaded_total на момент старта диспетчера} — см. _committed_tons
+        self._closed_prev = set()  # предыдущий roads.closed — для мгновенного пересчёта маршрутов при смене road_closed
         # скользящие окна за последний модельный час для сверки (деque из (sim_time_s, значение))
         self._wait_exc = deque()     # (t, минуты ожидания у экскаватора)
         self._wait_dump = deque()    # (t, минуты ожидания на разгрузке) — по всем пунктам вместе
@@ -439,6 +486,13 @@ class Haulage:
         for r in self.road_open:
             self.road_open[r] = not (closed and r == road)
         self.roads.closed = {r for r, ok in self.road_open.items() if not ok}
+        if self.roads.closed != self._closed_prev:
+            # road_closed включился/выключился — пересчитываем маршруты СРАЗУ для всех, кого
+            # это касается, не дожидаясь, пока каждый физически доедет до разрыва (задача
+            # «road_closed», часть 2: «маршрут проходит через закрытый участок — пересчитать
+            # маршрут сразу от текущего положения»)
+            self._replan_all_for_road_change()
+            self._closed_prev = set(self.roads.closed)
         down, p = w.scenario("excavator_down")
         ex_down = p.get("excavator", "excavator-02")
         for ex in self.excavators.values():
@@ -804,6 +858,24 @@ class Haulage:
         bunker_wait_s = (fill_frac ** 3) * buffer_t / (throughput / 3600.0) if throughput > 0 else 0.0
         return t_free + bunker_wait_s
 
+    def _assigned_trucks(self, ex):
+        """Сколько самосвалов уже «идут» к этому экскаватору прямо сейчас — грузится, стоит в
+        очереди, едет сюда порожним (включая тех, кто ждёт из-за `travel_pending`). Аналог
+        `_committed_tons`, но в штуках самосвалов, а не в тоннах — для предела на НОВОЕ
+        назначение в `_best_candidate` (задача «road_closed-2», цель 2: план-долг отрезанного
+        экскаватора не копится (`_excavator_cut_off`), но, пока закрыта дорога, у него могут
+        стать недоступны конкуренты по группе (руда/вскрыша) — их план уходит в 0, и вся доля
+        группы перетекает на этого одного, из-за чего по открытии дороги на него разом едет
+        куда больше машин, чем он успевает переварить. Без отдельного предела по штукам
+        симметричный предел план-долга (`PLAN_DEFICIT_CAP_T`) это не решает — он ограничивает
+        НАКОПЛЕННОЕ отставание, а не то, сколько самосвалов УЖЕ едет сюда прямо сейчас)."""
+        n = 1 if ex.loading else 0
+        n += len(ex.queue)
+        n += sum(1 for t in self.trucks
+                 if t.excavator == ex.id and t is not ex.loading and t not in ex.queue
+                 and (t.state == "returning" or (t.travel_pending and t.travel_kind == "return")))
+        return n
+
     def _best_candidate(self, truck, ores, near_clay_limit):
         """Экскаватор, который сильнее всего отстаёт от своего план-задания к моменту прибытия
         самосвала, среди ВСЕХ пунктов руды, которые сейчас в принципе доступны (`ores` — набор
@@ -817,6 +889,10 @@ class Haulage:
         план — вся оставшаяся возможная производительность, см. `_update_plan`) сами забирают
         излишек, когда рудным/глинистым экскаваторам по плану уже достаточно самосвалов — без
         отдельной надбавки «руда важнее вскрыши» (та была нечестной: решала по HOME, не по плану).
+        Кандидат, у которого уже «идёт» (`_assigned_trucks`) `trucks_needed(ex) + 1` самосвалов
+        или больше, пропускается — предел НА НОВОЕ назначение, отдельный от предела план-долга
+        (задача «road_closed-2», цель 2: без него после открытия дороги на один отрезанный ранее
+        экскаватор может разом хлынуть вся накопленная доля группы).
         Возвращает id экскаватора или None, если подходящих кандидатов не нашлось вовсе."""
         crusher_wait = self._crusher_wait_s() if "sulphide" in ores else 0.0
         candidates = []
@@ -827,6 +903,8 @@ class Haulage:
             if info["ore"] not in ores:
                 continue
             if near_clay_limit and info["ore"] == "sulphide" and info["clay"] > self.clay_limit_pct:
+                continue
+            if self._assigned_trucks(ex) >= self._trucks_needed(ex) + 1.0:
                 continue
             my_eta = self._eta_s(truck, ex.node)
             if my_eta is None:
@@ -1033,7 +1111,7 @@ class Haulage:
                 continue
             if ore is not None and self.face_info(ex.id)["ore"] != ore:
                 continue
-            path = self.roads.path(truck.node, ex.node)
+            path = self._route_from(truck, ex.node)
             if path is None:
                 continue
             dist_s = self._path_time_s(truck, truck.node, path[1:]) if len(path) > 1 else 0.0
@@ -1041,42 +1119,140 @@ class Haulage:
                 best, best_s = ex.id, dist_s
         return best
 
+    def _route_from(self, truck, goal):
+        """Маршрут от текущего узла `truck` к `goal` — с «эвакуацией», если обычного пути (по
+        открытым дорогам) нет, потому что самосвал оказался ВНУТРИ закрытого участка
+        (`Roads.escape_path` — задача «road_closed»: закрытие по имени дороги закрывает все её
+        звенья разом, и самосвал, оказавшийся ровно в середине, не может уехать ни вперёд, ни
+        назад обычным путём). Сначала — обычный путь; если его нет — едет по тем же, пока
+        формально закрытым, звеньям до ближайшего узла, ОТКУДА `goal` снова достижим, — не по
+        новой/придуманной дороге; `truck.evac_until` запоминает, до какого узла эти звенья
+        считаются проезжими (иначе `_move()` каждый шаг заново «натыкался» бы на ту же
+        закрытую дорогу и пересчитывал тот же путь — настоящий бесконечный цикл, найденный
+        при проверке: 100%+ CPU, ни одной строки в журнале). None — недостижимо даже так
+        (честно, без выдумывания пути, см. README).
+
+        Эвакуация (`escape_path`) — ТОЛЬКО если самосвал прямо сейчас стоит на закрытом
+        участке (`Roads.on_closed_segment`); если обычного пути нет просто потому, что для
+        этой ЦЕЛИ сейчас в принципе нет объезда (единственный маршрут шёл через закрытую
+        дорогу, а сам самосвал стоит на открытом узле) — закрытые звенья ему, как и всем
+        остальным, недоступны, честно возвращаем None (задача «road_closed-2», цель 1:
+        раньше `escape_path` звался при ЛЮБОМ провале `path()`, из-за чего самосвал с
+        совершенно открытого узла мог получить маршрут через закрытую дорогу — настоящий
+        баг, найденный диагностикой на стенде)."""
+        start = truck.node
+        path = self.roads.path(start, goal)
+        if path is not None:
+            truck.evac_until = None
+            return path
+        if not self.roads.on_closed_segment(start):
+            return None
+        escape = self.roads.escape_path(start, goal)
+        if escape is None:
+            return None
+        rest = self.roads.path(escape[-1], goal)
+        if rest is None:
+            return None
+        truck.evac_until = escape[-1] if len(escape) > 1 else None
+        return escape[:-1] + rest
+
+    def _reroute_or_reassign(self, truck):
+        """Путь до текущей цели самосвала с эвакуацией (`_route_from`); если даже так пути
+        нет — переназначение цели (задача «road_closed», часть 2): порожний («returning»/
+        `travel_kind == "return"`) получает другого экскаватора — «авто» через
+        `choose_excavator` (план сам исключает недостижимых), «ручной» — ближайшего
+        достижимого той же руды, иначе любого достижимого (`_nearest_reachable_excavator`,
+        как и раньше в этой функции); гружёный («hauling»/`travel_kind == "depart"`) — едет
+        на ту же точку разгрузки, а если и обходного пути туда нет — на ближайшую ДОСТУПНУЮ
+        (другую) точку разгрузки. Возвращает путь (список узлов) или None, если выхода
+        действительно нет вообще — само ничего не придумывает."""
+        returning = truck.state == "returning" or (truck.travel_pending and truck.travel_kind == "return")
+        hauling = truck.state == "hauling" or (truck.travel_pending and truck.travel_kind == "depart")
+        if returning:
+            path = self._route_from(truck, self.excavators[truck.excavator].node)
+            if path is not None:
+                return path
+            if self.mode == "auto":
+                truck.excavator = self.choose_excavator(truck)
+                truck.destination = truck.excavator
+                return self._route_from(truck, self.excavators[truck.excavator].node)
+            home_ore = self.face_info(truck.home)["ore"]
+            sub = self._nearest_reachable_excavator(truck, ore=home_ore) or self._nearest_reachable_excavator(truck)
+            if sub is None:
+                return None
+            truck.excavator = sub
+            truck.destination = sub
+            return self._route_from(truck, self.excavators[sub].node)
+        if hauling:
+            path = self._route_from(truck, self.dumps[truck.destination].node)
+            if path is not None:
+                return path
+            best_path = None
+            for did, dump in self.dumps.items():
+                if did == truck.destination:
+                    continue
+                p = self._route_from(truck, dump.node)
+                if p is not None and (best_path is None or len(p) < len(best_path)):
+                    best_path = p
+                    best_did = did
+            if best_path is not None:
+                truck.destination = best_did
+            return best_path
+        if truck.travel_pending and truck.travel_kind in ("refuel", "reserve"):
+            return self._route_from(truck, "fuel-station")
+        return None
+
     def _retry_pending_travel(self, truck):
         """truck.travel_pending: дороги к цели не было в момент выезда (road_closed) — самосвал
         ждёт на месте и пробует снова КАЖДЫЙ шаг, не застывая навсегда и не телепортируясь в
-        чужую очередь, пока реально не доедет (проверено координатором).
-        Гружёный без пути к своему пункту разгрузки (`travel_kind == "depart"`) — ждёт и просто
-        повторяет попытку к ТОЙ ЖЕ цели, на отвал не переадресуем: руду в отвал не возим,
-        ждём, пока дорога откроется или диспетчер не переназначит при следующем рейсе."""
-        if truck.travel_kind == "return" and self.mode == "auto":
-            # «авто»: если прежний экскаватор всё ещё отрезан, пробуем выбрать другой —
-            # choose_excavator сам исключает недостижимые (честный ETA = None у таких кандидатов)
-            truck.excavator = self.choose_excavator(truck)
-            truck.destination = truck.excavator
-        if truck.travel_kind == "depart":
-            dest_node = self.dumps[truck.destination].node
-        elif truck.travel_kind == "return":
-            dest_node = self.excavators[truck.excavator].node
-        elif truck.travel_kind in ("refuel", "reserve"):
-            dest_node = "fuel-station"
-        else:
-            return
-        path = self.roads.path(truck.node, dest_node)
-        if path is None and truck.travel_kind == "return" and self.mode == "manual":
-            # «ручной»: закреплённый экскаватор отрезан — едем к ближайшему достижимому того
-            # же типа руды, иначе к любому достижимому
-            home_ore = self.face_info(truck.home)["ore"]
-            sub = self._nearest_reachable_excavator(truck, ore=home_ore) or self._nearest_reachable_excavator(truck)
-            if sub is not None:
-                truck.excavator = sub
-                truck.destination = sub
-                dest_node = self.excavators[sub].node
-                path = self.roads.path(truck.node, dest_node)
+        чужую очередь, пока реально не доедет (проверено координатором). Путь и, если нужно,
+        переназначение цели — `_reroute_or_reassign` (эвакуация из запертого участка,
+        порожний — другой экскаватор, гружёный — обходной путь или ближайшая доступная точка
+        разгрузки, см. её докстринг и README, «road_closed»)."""
+        path = self._reroute_or_reassign(truck)
         if path is None:
             return
         truck.travel_pending = False
         truck.path = path[1:]
         truck.seg_pos = 0.0
+
+    def _replan_all_for_road_change(self):
+        """road_closed только что включился или выключился (вызывается из `read_scenarios`,
+        один раз на смену) — для каждого самосвала в пути сразу проверяем, не стал ли его
+        ТЕКУЩИЙ остаток маршрута (не только следующее звено — весь путь до цели) непроходимым,
+        и если да — пересчитываем СРАЗУ (`_reroute_or_reassign`: эвакуация из запертого
+        участка, при необходимости — другой экскаватор/другая точка разгрузки), не дожидаясь,
+        пока самосвал физически доедет до разрыва. Самосвалов НА СЕРЕДИНЕ ребра
+        (`seg_pos > 0`) здесь не трогаем — за разрыв ПОД КОЛЁСАМИ (следующее звено) каждый
+        шаг и честный задний ход уже отвечает `_move()` (он же потом сам вызовет
+        `_reroute_or_reassign`, когда довезёт самосвал до узла); менять путь поверх
+        недопройденного ребра было бы «прыжком» по сцене. Это — для ЗАРАНЕЕ построенного
+        остатка пути, который ещё не дошёл до закрытого звена, но пройдёт через него позже
+        (задача «road_closed», часть 2)."""
+        for truck in self.trucks:
+            if not truck.path or truck.seg_pos > 0:
+                continue
+            nodes = [truck.node] + truck.path
+            blocked = False
+            for a, b in zip(nodes, nodes[1:]):
+                try:
+                    if self.roads.edge(a, b)[2] in self.roads.closed:
+                        blocked = True
+                        break
+                except KeyError:
+                    pass
+            if not blocked:
+                continue
+            path = self._reroute_or_reassign(truck)
+            if path is None:
+                truck.travel_pending = True
+                truck.travel_kind = "return" if truck.state == "returning" else "depart" if truck.state == "hauling" else truck.travel_kind
+                truck.path = []
+                truck.speed = 0.0
+                continue
+            truck.travel_pending = False
+            truck.path = path[1:]
+            truck.seg_pos = 0.0
 
     # -- движение ------------------------------------------------------------
     def _mean_speed(self, truck, grade_pct, road):
@@ -1123,7 +1299,7 @@ class Haulage:
         while dt > 0 and truck.path:
             nxt = truck.path[0]
             length, grade, road = self.roads.edge(truck.node, nxt)
-            if road in self.roads.closed:
+            if road in self.roads.closed and truck.evac_until is None:
                 # дорога закрылась под колёсами — не телепортируемся ни вперёд, ни назад:
                 # если самосвал уже проехал часть ребра (seg_pos > 0), сначала честно
                 # возвращаем его по той же дороге к truck.node (тому узлу, который он уже
@@ -1146,9 +1322,13 @@ class Haulage:
                     self._consume_fuel(truck, self._edge_fuel_l(truck, back_grade, truck.seg_pos))
                     truck.seg_pos = 0.0
                     self._place(truck, truck.node, 1.0)
-                goal = truck.path[-1]
-                path = self.roads.path(truck.node, goal)
+                path = self._reroute_or_reassign(truck)
                 if path is None:
+                    # ни эвакуация, ни переназначение не помогли — честно ждём на месте и
+                    # пробуем снова каждый шаг (как и раньше), не выдумывая дорогу
+                    truck.travel_pending = True
+                    truck.travel_kind = "return" if truck.state == "returning" else "depart"
+                    truck.path = []
                     truck.speed = 0.0
                     return
                 truck.path = path[1:]
@@ -1168,6 +1348,11 @@ class Haulage:
             truck.path.pop(0)
             truck.seg_pos = 0.0
             self._place(truck, nxt, 1.0)
+            if truck.node == truck.evac_until:
+                # доехал до конца эвакуации по закрытой дороге — дальше остаток пути уже
+                # честно построен по ОТКРЫТЫМ дорогам (см. _route_from), «разрыв под
+                # колёсами» снова можно проверять штатно
+                truck.evac_until = None
         if not truck.path:
             truck.speed = 0.0
             self._arrived(truck)
@@ -1582,10 +1767,14 @@ def restore_counters(model, prev):
     """Применить прежние значения счётчиков (см. `read_prev_state`) к только что созданной модели,
     ДО первого такта. Восстанавливаются ровно те признаки, что только растут и принадлежат нам
     (договор §4 + свои, не упомянутые в таблице явно, но накопительные): у `dispatch` —
-    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total; у каждого
-    excavator-NN — loaded_total, passes_total; у каждого truck-NN — trips_total; у dump-waste-1 —
-    received_total. Остальные признаки (состояния, очереди, координаты) не накопительные —
-    пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно по договору."""
+    delivered_crusher_t/_cu_t, delivered_clay_t/_cu_t, delivered_dump_t, trips_total,
+    fuel_used_l, refuels_total; у каждого excavator-NN — loaded_total, passes_total; у каждого
+    truck-NN — trips_total; у dump-waste-1 — received_total. `fuel_used_l`/`refuels_total`
+    раньше в списке не было (настоящий недочёт, найденный проверкой restart — после перезапуска
+    сбрасывались в 0, хотя растут всю смену так же, как остальные счётчики, задача
+    «road_closed-2», цель 3). Остальные признаки (состояния, очереди, координаты) не
+    накопительные — пересчитываются с нуля каждый такт, восстанавливать их не нужно и не нужно
+    по договору."""
     restored = []
     d = prev.get("dispatch")
     if d:
@@ -1599,6 +1788,12 @@ def restore_counters(model, prev):
         if "trips_total" in d:
             model.trips = int(d["trips_total"])
             restored.append("dispatch.trips_total")
+        if "fuel_used_l" in d:
+            model.fuel_used_l_total = float(d["fuel_used_l"])
+            restored.append("dispatch.fuel_used_l")
+        if "refuels_total" in d:
+            model.refuels_total = int(d["refuels_total"])
+            restored.append("dispatch.refuels_total")
     dw = prev.get("dump-waste-1")
     if dw and "received_total" in dw:
         model.dumps["dump-waste-1"].received = float(dw["received_total"])

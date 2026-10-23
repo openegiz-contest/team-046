@@ -88,7 +88,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -155,7 +156,8 @@
      },
      "mappings": [],
      "unit": "m",
-     "decimals": 2
+     "decimals": 2,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -222,7 +224,8 @@
      },
      "mappings": [],
      "unit": "percent",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -281,7 +284,8 @@
      },
      "mappings": [],
      "unit": "percent",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -369,7 +373,8 @@
      },
      "mappings": [],
      "unit": "m",
-     "min": 0
+     "min": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -439,7 +444,8 @@
      "unit": "suffix: шт",
      "min": 0,
      "displayName": "${__field.labels.twin}",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -538,7 +544,8 @@
      },
      "mappings": [],
      "unit": "suffix: т/ч",
-     "min": 0
+     "min": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -596,7 +603,8 @@
      "displayName": "${__field.labels.Состояние}",
      "mappings": [],
      "unit": "suffix: шт",
-     "min": 0
+     "min": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -721,7 +729,8 @@
         }
        }
       }
-     ]
+     ],
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -794,7 +803,8 @@
      },
      "mappings": [],
      "unit": "percent",
-     "min": 0
+     "min": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -868,7 +878,8 @@
       ]
      },
      "mappings": [],
-     "min": 0
+     "min": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -925,7 +936,8 @@
      },
      "mappings": [],
      "unit": "suffix: л",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -984,7 +996,8 @@
      },
      "mappings": [],
      "unit": "suffix: шт",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1043,7 +1056,8 @@
      },
      "mappings": [],
      "unit": "suffix: шт",
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1106,7 +1120,8 @@
      },
      "mappings": [],
      "unit": "suffix: шт",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1165,7 +1180,8 @@
      },
      "mappings": [],
      "unit": "suffix: л",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "0"
     },
     "overrides": []
    },
@@ -1236,7 +1252,8 @@
      "unit": "suffix: шт",
      "min": 0,
      "displayName": "${__field.labels.series}",
-     "decimals": 0
+     "decimals": 0,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
@@ -1310,7 +1327,8 @@
      "min": 0,
      "max": 100,
      "displayName": "${__field.labels.series}",
-     "decimals": 1
+     "decimals": 1,
+     "noValue": "нет данных за период"
     },
     "overrides": []
    },
