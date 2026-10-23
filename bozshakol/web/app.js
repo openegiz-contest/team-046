@@ -9,6 +9,9 @@ import { createModels } from './models.js';
 import { loadDiorama } from './diorama.js';
 import { buildDiorama, roadRibbons } from './diorama-scene.js';
 
+// Отладочный доступ к объектам сцены (window.__*) — только с ?debug=1 в адресе (скрипты проверок)
+const dbgWin = new URLSearchParams(location.search).has('debug') ? window : {};
+
 // ---------------------------------------------------------------- палитра
 const colors = {
   sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff, down: 0xd32f2f,
@@ -1112,7 +1115,7 @@ function applyLighting(l) {
   updateHeadlights();
   const sel = document.getElementById('lighting');
   if (sel) sel.value = lighting;
-  window.__lighting = lighting;
+  dbgWin.__lighting = lighting;
 }
 function renderScenarioBannerSafe() {
   const t = twins[NS + ':scenarios'];
@@ -1278,6 +1281,7 @@ function frame(now) {
     catch (e) { if (L.errors++ % 300 === 0) console.error('Слой ' + L.name + ': ошибка в update', e); }
   }
   adjustMachines(dt);
+  if (motionLog.on) sampleMotion(now);
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
@@ -1291,13 +1295,13 @@ function frame(now) {
       const fps = qualityProbe.frames * 1000 / el;
       qualityProbe = null;
       if (qualityAuto && fps < 25) applyQuality('normal');
-      window.__qualityProbeFps = fps;
+      dbgWin.__qualityProbeFps = fps;
     }
   }
-  window.__quality = quality;
-  window.__sceneFrames = (window.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
-  window.__renderInfo = renderer.info.render;
-  window.__mode = mode;
+  dbgWin.__quality = quality;
+  dbgWin.__sceneFrames = (dbgWin.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
+  dbgWin.__renderInfo = renderer.info.render;
+  dbgWin.__mode = mode;
   if (quality === 'high' || frameNo % 2 === 0 || tween) updateLabels();   // в «Обычном» подписи — через кадр
 }
 
@@ -1445,104 +1449,6 @@ function updateDust(dt) {
     d.size = 6 * o.scale.x; d.age = 0; d.sp.visible = true;
   }
 }
-// Очереди: в схеме подъезды сжаты, а самосвалы — в натуральную величину, поэтому стоящие в очереди к одному
-// пункту (queued_load / queued_dump) слились бы в кучу. Выстраиваем их вдоль дороги, по которой к пункту
-// приезжают (к забою — путь от дробилки, к дробилке — путь из карьера), с шагом в длину самосвала
-// (только в схеме, только картинка)
-const QUEUE_STEP = 25;   // единиц: самосвал 180 т (15 м × 1,25 ≈ 19) + зазор (с запасом на повороты подъезда)
-const queueSlots = {};   // пункт -> [thingId по порядку прихода]: место в очереди закреплено за машиной
-const queueLanes = {};
-function queueLane(node) {
-  if (queueLanes[node] !== undefined) return queueLanes[node];
-  const from = node === 'crusher' ? 'floor-c' : 'crusher';
-  const path = geometry.nodes[from] ? shortestPath(node, from) : null;
-  if (!path || path.length < 2) return (queueLanes[node] = null);
-  // ломаная по узлам; ребро съезда — по его трассе (спираль вдоль борта), а не напрямую
-  const lane = [dio.D.nodes[path[0]]];
-  for (let i = 0; i < path.length - 1; i++) {
-    const e = dio.edges.find((q) => (q.from === path[i] && q.to === path[i + 1]) || (q.to === path[i] && q.from === path[i + 1]));
-    if (e && e.path) lane.push(...(e.from === path[i] ? e.path.slice(1) : e.path.slice(0, -1).reverse()));
-    else lane.push(dio.D.nodes[path[i + 1]]);
-  }
-  return (queueLanes[node] = lane);
-}
-function lanePoint(lane, dist) {   // точка на ломаной на расстоянии dist от начала + направление к началу
-  for (let i = 0; i < lane.length - 1; i++) {
-    const a = lane[i], b = lane[i + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (dist <= L || i === lane.length - 2) {
-      const t = L > 0 ? Math.min(1, dist / L) : 0;
-      return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, z: a[2] + (b[2] - a[2]) * t, dx: a[0] - b[0], dy: a[1] - b[1] };
-    }
-    dist -= L;
-  }
-  return null;
-}
-function queueSide(pts) {   // 1 — правая полоса, −1 — левая: какая дальше от конвейера (на схеме)
-  const conv = dio.D.objects && dio.D.objects['conveyor-01'] && dio.D.objects['conveyor-01'].path;
-  if (!conv) return 1;
-  const distTo = (x, y) => {
-    let m = Infinity;
-    for (let i = 0; i < conv.length - 1; i++) {
-      const [ax, ay] = conv[i], [bx, by] = conv[i + 1], vx = bx - ax, vy = by - ay;
-      const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / (vx * vx + vy * vy || 1)));
-      m = Math.min(m, Math.hypot(x - ax - vx * t, y - ay - vy * t));
-    }
-    return m;
-  };
-  const near = { 1: Infinity, '-1': Infinity };
-  for (const q of pts) {
-    if (!q) continue;
-    const yaw = Math.atan2(q.dx, -q.dy);
-    for (const s of [1, -1]) {   // смещение в плане: восток −cos·s, север −sin·s (сцена z = −север)
-      near[s] = Math.min(near[s], distTo(q.x - Math.cos(yaw) * LANE * s, q.y - Math.sin(yaw) * LANE * s));
-    }
-  }
-  return near[1] < 20 && near['-1'] > near[1] ? -1 : 1;   // 20 единиц: полкорпуса самосвала + ширина конвейера + зазор
-}
-function lineUpQueues() {
-  if (!dio) return;
-  const groups = {};
-  for (const o of clickable) {
-    const id = o.userData.thingId || '';
-    if (id.indexOf(':truck-') < 0 || o.isMesh || !o.parent) continue;
-    const st = val(id, 'state', '');
-    // очереди к экскаватору, дробилке, складу глины; на заправке и в резерве — стоянка вдоль подъезда к заправке
-    const parked = st === 'reserve' || st === 'refueling';
-    if (st !== 'queued_load' && st !== 'queued_dump' && !parked) continue;
-    const node = parked && dio.D.nodes['fuel-station'] ? 'fuel-station'
-      : destNode(val(id, 'destination', '')) || nearestNode(Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
-    if (!node || !dio.D.nodes[node]) continue;
-    (groups[node] || (groups[node] = [])).push(o);
-  }
-  for (const node of Object.keys(queueSlots)) if (!groups[node]) queueSlots[node].length = 0;
-  for (const [node, list] of Object.entries(groups)) {
-    const lane = queueLane(node);
-    if (!lane) continue;
-    // порядок — по приходу в очередь (закреплён за машиной): ушедшие освобождают место, новые встают в хвост
-    const slots = queueSlots[node] || (queueSlots[node] = []);
-    const ids = new Set(list.map((o) => o.userData.thingId));
-    for (let i = slots.length - 1; i >= 0; i--) if (!ids.has(slots[i])) slots.splice(i, 1);
-    for (const o of list) if (!slots.includes(o.userData.thingId)) slots.push(o.userData.thingId);
-    list.sort((a, b) => slots.indexOf(a.userData.thingId) - slots.indexOf(b.userData.thingId));
-    // у заправки — не вплотную к будке; у экскаватора — первый в очереди не впритык к грузящемуся, шаг просторнее
-    // (подъезд к забою с поворотом: при прежнем шаге машины сходились углами в кучу)
-    const face = /^face-/.test(node), first = node === 'fuel-station' ? 1.2 : face ? 1.5 : 1, step = face ? QUEUE_STEP * 1.2 : QUEUE_STEP;
-    const pts = list.map((o, k) => lanePoint(lane, (k + first) * step));
-    const side = queueSide(pts);
-    list.forEach((o, k) => {
-      const q = pts[k];
-      if (!q) return;
-      const p = dio.s(q.x, q.y, q.z);   // высоту ставит groundMachines
-      const yaw = Math.atan2(q.dx, -q.dy);      // носом к пункту (в сцене z = −север)
-      // очередь — на одной полосе, встречные проходят; полоса — подальше от конвейера (подъезд к дробилке идёт вдоль него);
-      // стоянка у заправки — рядом с дорогой на площадке (≈ 19 единиц от оси): едущие к заправке её не задевают
-      const off = LANE * side * (node === 'fuel-station' ? 2.7 : 1);
-      p.x += -Math.cos(yaw) * off; p.z += Math.sin(yaw) * off;
-      o.position.copy(p);
-      o.rotation.y = yaw;
-    });
-  }
-}
 // Дно карьера в схеме сжато сильнее всего: буровой в 20–30 м от экскаватора оказался бы внутри него —
 // после update слоёв отводим буровые не ближе 24 единиц от экскаваторов (только в схеме, только картинка)
 function separateDrills() {
@@ -1556,22 +1462,6 @@ function separateDrills() {
       const k = d > 0.01 ? R / d : 1;
       o.position.x = e.position.x + (d > 0.01 ? dx * k : R); o.position.z = e.position.z + (d > 0.01 ? dz * k : 0);
 
-    }
-  }
-  // самосвал под погрузкой у увеличенного экскаватора (×1,4) — не ближе 15 единиц от его центра (без наложения на гусеницы)
-  for (const o of clickable) {
-    if (!/:truck-/.test(o.userData.thingId || '') || o.isMesh) continue;
-    for (const e of ex) {
-      const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z, d = Math.hypot(dx, dz);
-      const R = 23;   // единиц: полкорпуса экскаватора (≈ 10,5) + полкорпуса самосвала (≈ 9,4) + зазор
-      if (d >= R) continue;
-      // самосвал в самой точке экскаватора (забой на заезде): отводим назад по его ходу — он стоит носом к экскаватору
-      const ux = d > 0.01 ? dx / d : -Math.sin(o.rotation.y), uz = d > 0.01 ? dz / d : -Math.cos(o.rotation.y);
-      o.position.x = e.position.x + ux * R; o.position.z = e.position.z + uz * R;
-      // корпус самосвала не касается экскаватора (поворотная платформа с поручнями шире гусениц): отводим дальше
-      for (let k = 0; k < 12 && obbOverlap(o, TRUCK_L / 2, TRUCK_W / 2, e, EXC_HALF[0], EXC_HALF[1]); k++) {
-        o.position.x += ux * 2; o.position.z += uz * 2;
-      }
     }
   }
 }
@@ -1610,58 +1500,20 @@ function adjustMachines(dt) {
   machineList = clickable.filter((o) => !o.isMesh && o.parent && MACHINE_RE.test(o.userData.thingId || ''));
   for (const o of machineList) (o.userData.rawPos || (o.userData.rawPos = new THREE.Vector3())).copy(o.position);
   if (dio) {
-    orientTrucks(dt);
     shrinkFaceZones();
     for (const o of machineList) if (/:drill-/.test(o.userData.thingId)) o.scale.setScalar(markerScale);   // как остальная техника
     schemaDetail();
-    orientDumping();
-    laneOffsets();
-    lineUpQueues();
+    truckTargets();          // самосвалы: цель показа — своя полоса, манёвр у пункта, стоянка у заправки
     separateDrills();
-    separateTrucks();
-    separateDrills();   // ещё раз: отведённый назад самосвал не должен въехать в экскаватор
     drillsToBerms();
     drillsOffRoads();
-    smoothShifts(dt);
-    separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
-    separateDrills();
-    trucksOffSlopes();       // уже по показанному месту: без переходов, когда машина съехала бы на откос
-    separateTrucks(3, 8);    // переставленные на полосу не налезают на соседей
-    separateDrills();        // и последним — никто не стоит в экскаваторе (разводка выше могла подвинуть к нему)
+    smoothShifts(dt);        // буровые и экскаваторы — без скачков
+    separateDrills();        // никто из буровых не стоит в экскаваторе
+    followTrucks(dt);        // самосвалы: показанное место догоняет цель как машина
+    animateExcavators(dt);   // экскаватор — к развалу, ковш — из развала в кузов
     groundMachines(dt);
   }
   updateMarkers();
-}
-// Самосвал на разгрузке у дробилки стоит задом к бункеру (носом от центра дробилки)
-function orientDumping() {
-  const cr = byThing(NS + ':crusher-01');
-  if (!cr) return;
-  for (const o of machineList) {
-    const id = o.userData.thingId;
-    if (id.indexOf(':truck-') < 0 || val(id, 'state', '') !== 'dumping') continue;
-    const dx = o.position.x - cr.position.x, dz = o.position.z - cr.position.z;
-    if (Math.hypot(dx, dz) < 40) o.rotation.y = Math.atan2(dx, dz);
-  }
-}
-// Самосвал в карьере не стоит на откосе: если под корпусом крутой склон (не полотно и не площадка забоя), ставим его
-// на ближайшую дорогу карьера — не дальше своей полосы от оси (место слоя, rawPos, не меняется)
-function trucksOffSlopes() {
-  const pitEdges = dio.edges.filter((e) => e.pit);
-  for (const o of machineList) {
-    if (o.userData.thingId.indexOf(':truck-') < 0) continue;
-    const xs = o.position.x, ys = -o.position.z;
-    if (dio.schemaInset(xs, ys) < 0) continue;
-    const h0 = dio.surfaceAt(xs, ys);
-    let steep = false;
-    for (const [dx, dy] of [[9, 0], [-9, 0], [0, 9], [0, -9]]) if (Math.abs(dio.surfaceAt(xs + dx, ys + dy) - h0) > 2.5) { steep = true; break; }
-    if (!steep) continue;
-    let best = null;
-    for (const e of pitEdges) { const n = dio.edgeNearest(e, xs, ys, 80); if (!best || n.d < best.n.d) best = { e, n }; }
-    if (!best || best.n.d > 80) continue;
-    const q = dio.edgeAt(best.e, best.n.t), lat = -q[4] * (xs - q[0]) + q[3] * (ys - q[1]);
-    const l = Math.max(-LANE, Math.min(LANE, lat));
-    o.position.x = q[0] - q[4] * l; o.position.z = -(q[1] + q[3] * l);
-  }
 }
 // Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,
 // не на полотне и не у съезда (там борт — ровный склон без берм, dio.stepBlend < 1) и не у экскаватора. Ищем по берме ближайшее ровное место (углы корпуса на высоте бермы, ≥ 26
@@ -1752,6 +1604,7 @@ function bermSpot(xs, ys, ds, ex) {
 function smoothShifts(dt) {
   const a = 1 - Math.exp(-dt / 0.25), ar = 1 - Math.exp(-dt / 0.2);
   for (const o of machineList) {
+    if (o.userData.thingId.indexOf(':truck-') >= 0) continue;
     const raw = o.userData.rawPos, ud = o.userData;
     const ox = o.position.x - raw.x, oz = o.position.z - raw.z;
     if (!ud.shift) ud.shift = { x: ox, z: oz };
@@ -1779,42 +1632,30 @@ function smoothShifts(dt) {
 // по уклону под машиной: продольный (тангаж) и поперечный (крен), сглаженно
 const ROAD_LIFT = 0.45;   // полотно дороги над поверхностью (diorama-scene.js roadRibbons)
 function groundMachines(dt) {
-  const k = 1 - Math.exp(-dt / 0.15);
+  const k = 1 - Math.exp(-dt / 0.05);
   for (const o of machineList) {
     const ud = o.userData, s = o.scale.x || 1;
     const size = ud.size || {};
-    const L = (size.length || size.l || 12) * s * 0.45, W = (size.width || size.w || 7) * s * 0.45;
+    const L = (size.length || size.l || 12) * s * 0.5, W = (size.width || size.w || 7) * s * 0.5;
     const fx = Math.sin(o.rotation.y), fz = Math.cos(o.rotation.y);     // вперёд (локальная +Z)
     const lx = Math.cos(o.rotation.y), lz = -Math.sin(o.rotation.y);    // локальная +X
     const H = (x, z) => dio.surfaceAt(x, -z);
     const x = o.position.x, z = o.position.z;
     const h0 = H(x, z);
-    // точка за кромкой уступа (перепад больше 3 единиц) — не опора: считаем её на уровне центра
+    // опора — четыре угла корпуса (колёса); точка за кромкой уступа (перепад больше 3 единиц) — не опора: на уровне центра
     const near = (h) => (Math.abs(h - h0) > 3 ? h0 : h);
-    const hf = near(H(x + fx * L, z + fz * L)), hb = near(H(x - fx * L, z - fz * L));
-    const hl = near(H(x + lx * W, z + lz * W)), hr = near(H(x - lx * W, z - lz * W));
+    const c = (a, b) => near(H(x + fx * L * a + lx * W * b, z + fz * L * a + lz * W * b));
+    const fl = c(1, 1), fr = c(1, -1), bl = c(-1, 1), br = c(-1, -1);
     const onRoad = ud.thingId.indexOf(':truck-') >= 0 ? ROAD_LIFT : 0;
-    // высота — по поверхности сразу: машину переставили (очередь, полоса) или она быстро идёт по съезду — она не
-    // «догоняет» поверхность (прежний плавный подъём до 40 единиц/с при редких кадрах давал провал или подскок)
-    ud.dispY = h0 + onRoad;
+    // высота и наклон — плоскость через колёса, сразу (без «догона» поверхности: при быстром ходе по съезду и редких
+    // кадрах догон давал провал или подскок)
+    ud.dispY = (fl + fr + bl + br) / 4 + onRoad;
     o.position.y = ud.dispY;
-    const pitch = -Math.atan2(hf - hb, 2 * L), roll = Math.atan2(hl - hr, 2 * W);
+    const pitch = -Math.atan2((fl + fr - bl - br) / 2, 2 * L), roll = Math.atan2((fl + bl - fr - br) / 2, 2 * W);
     if (o.rotation.order !== 'YXZ') o.rotation.order = 'YXZ';
     ud.tilt = ud.tilt || { p: pitch, r: roll };
     ud.tilt.p += (pitch - ud.tilt.p) * k; ud.tilt.r += (roll - ud.tilt.r) * k;
     o.rotation.x = Math.max(-0.35, Math.min(0.35, ud.tilt.p)); o.rotation.z = Math.max(-0.3, Math.min(0.3, ud.tilt.r));
-  }
-}
-// Две полосы: едущий самосвал смещается вправо по ходу (гружёные и порожние идут навстречу — по разным сторонам)
-const LANE = 7;   // единиц: четверть ширины дороги 28
-const MOVING = new Set(['hauling', 'returning', 'to_fuel', 'refueling_trip', 'traveling']);
-function laneOffsets() {
-  for (const o of machineList) {
-    const id = o.userData.thingId;
-    if (id.indexOf(':truck-') < 0) continue;
-    const st = val(id, 'state', ''), m = truckMotion.get(o);
-    if (!m || m.cur === null || !(MOVING.has(st) || Number(val(id, 'speed', 0)) > 1)) continue;
-    o.position.x += -Math.cos(m.cur) * LANE; o.position.z += Math.sin(m.cur) * LANE;   // вправо от направления движения
   }
 }
 // Если два самосвала всё равно налезают (по габаритам с учётом курса) — задний отходит назад вдоль своего хода;
@@ -1829,32 +1670,6 @@ function boxesOverlap(A, B) {   // разделяющая ось для двух
     if (Math.abs(dx * ax + dz * az) >= ra + rb) return false;
   }
   return true;
-}
-function separateTrucks(nudge = 0, passes = 8) {
-  const trucks = machineList.filter((o) => o.userData.thingId.indexOf(':truck-') >= 0);
-  // под погрузкой и разгрузкой самосвал стоит у экскаватора / пункта — его не двигаем, отходит другой
-  const fixed = (o) => { const st = val(o.userData.thingId, 'state', ''); return st === 'loading' || st === 'dumping'; };
-  for (let pass = 0; pass < passes; pass++) {
-    let moved = false;
-    for (let i = 0; i < trucks.length; i++) for (let j = i + 1; j < trucks.length; j++) {
-      const a = trucks[i], b = trucks[j];
-      if (!boxesOverlap(truckBox(a), truckBox(b))) continue;
-      let back, ux, uz;
-      if (fixed(a) && fixed(b)) {          // оба стоят в одной точке разгрузки: второй — вбок на ширину машины
-        back = b; ux = Math.cos(b.rotation.y); uz = -Math.sin(b.rotation.y);
-      } else {
-        const fx = Math.sin(a.rotation.y), fz = Math.cos(a.rotation.y);
-        const dx = a.position.x - b.position.x, dz = a.position.z - b.position.z;
-        back = (dx * fx + dz * fz) >= 0 ? b : a;          // кто сзади по ходу a
-        if (fixed(back)) back = back === a ? b : a;
-        ux = Math.sin(back.rotation.y); uz = Math.cos(back.rotation.y);
-      }
-      const step = nudge || (fixed(a) && fixed(b) ? TRUCK_W : TRUCK_L * 0.5);
-      back.position.x -= ux * step; back.position.z -= uz * step;
-      moved = true;
-    }
-    if (!moved) break;
-  }
 }
 // Значки-стрелки над техникой на дальнем плане (дальше markerFar от камеры) и в виде сверху: цвет — груз/состояние
 let markerMesh = null;
@@ -1899,29 +1714,334 @@ function updateMarkers() {
   markerMesh.instanceMatrix.needsUpdate = true;
   if (markerMesh.instanceColor) markerMesh.instanceColor.needsUpdate = true;
 }
+// ---------------------------------------------------------------- самосвалы: цель показа и езда «как машина»
+// Модель (bz-haulage) ведёт самосвал по оси дороги и ставит очередь вдоль дороги подъезда с запасом под размер машин
+// в схеме. Сцена (только картинка, данные двойников не меняются) задаёт цель показа: на дороге — своя полоса (правее
+// оси по ходу); у экскаватора, дробилки, склада глины и отвала — манёвр: подъехать, развернуться, сдать задом 24 м и
+// встать (у экскаватора — сбоку от него, у пунктов разгрузки — задом к краю); на заправке и в резерве — стоянка рядом
+// с ней (заезд так же, задом). Показанное место догоняет цель как машина: едет передом, поворачивает по дуге, скорость
+// меняется плавно; задним ходом — только в конце манёвра и не быстрее 2 м/с
+const LANE = 8;   // единиц: от оси дороги (ширина 28) до середины полосы: встречные расходятся с зазором
+const QUEUE_SIDE = 12;   // единиц: очередь стоит на обочине — на столько правее своей полосы
+// манёвр: задним ходом REV (24 м), радиус поворота R, скорости (единиц/с: вперёд ≈ 6 м/с, задом ≈ 1,9 м/с при ×10),
+// место у экскаватора: на AHEAD вперёд от его центра и на SIDE вбок
+const MAN = { rev: 12, r: 8, fwd: 28, back: 8.5, ahead: 4, side: 17 };
+const FOLLOW = { rMin: 10, acc: 90, dec: 200, vMax: 88, snap: 400 };   // vMax — догон, но не быстрее 1,5 × 50 км/ч модели (ниже порога «телепорта»)
+const DUMP_AT = { 'crusher-01': ['crusher', 'crusher-01'], 'stockpile-clay': ['stockpile-clay', 'stockpile-clay'], 'dump-waste-1': ['dump-waste-1', 'dump-waste-1'] };
+const PARKED = new Set(['refueling', 'reserve']);
+const DEPART = 20;   // единиц: выезд от пункта прямо вперёд, потом — на дорогу
+const wrapA = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const planYaw = (ux, uy) => Math.atan2(ux, -uy);   // направление в плане (восток, север) → курс сцены (z = −север)
+// пункт, где самосвал стоит: место S (план), наружу u (куда смотрит носом), сторона разворота s
+function truckStation(id, st) {
+  if (st === 'loading') {
+    const exId = val(id, 'excavator', ''), ex = exId && byThing(NS + ':' + exId), nd = exId && dio.D.nodes['face-' + exId.slice(-2)];
+    if (!ex || !nd) return null;
+    const e0 = ex.userData.rawPos || ex.position, Ex = e0.x, Ey = -e0.z;
+    let ux = nd[0] - Ex, uy = nd[1] - Ey; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+    const nx = -uy, ny = ux, s = nx * (dio.pit.cx - Ex) + ny * (dio.pit.cy - Ey) >= 0 ? 1 : -1;   // сбоку — со стороны середины карьера
+    return { key: 'load:' + exId, S: [Ex + ux * MAN.ahead + nx * s * MAN.side, Ey + uy * MAN.ahead + ny * s * MAN.side], u: [ux, uy], s, ex: exId, E: [Ex, Ey] };
+  }
+  if (st === 'dumping') {
+    const d = DUMP_AT[val(id, 'destination', '')], nd = d && dio.D.nodes[d[0]], ob = d && dio.D.objects[d[1]] && dio.D.objects[d[1]].position;
+    if (!nd || !ob) return null;
+    let ux = nd[0] - ob[0], uy = nd[1] - ob[1]; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+    return { key: 'dump:' + d[0], S: [nd[0], nd[1]], u: [ux, uy], s: 1 };
+  }
+  return null;
+}
+// стоянка у заправки: ряды вдоль подъезда к ней с южной стороны (с северной — трасса конвейера), носом к дороге;
+// места по порядку: ближний ряд, второй, третий, потом ближе к узлу rim-ne
+const PARK_SLOTS = [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [1, 1], [2, 1], [0, 2], [1, 2], [5, 0], [3, 1], [2, 2], [6, 0]];
+function parkingSpot(k) {
+  const N = dio.D.nodes['fuel-station'], R = dio.D.nodes['rim-ne'];
+  if (!N || !R) return null;
+  let ax = N[0] - R[0], ay = N[1] - R[1]; const L = Math.hypot(ax, ay) || 1; ax /= L; ay /= L;   // подъезд к заправке
+  const lx = -ay, ly = ax;                                                                     // влево от подъезда (юг)
+  const [i, j] = PARK_SLOTS[k % PARK_SLOTS.length];
+  const along = -35 - 13 * i, side = 24 + 24 * j;
+  return { key: 'park:' + k, S: [N[0] + ax * along + lx * side, N[1] + ay * along + ly * side], u: [-lx, -ly], s: -1 };
+}
+// трасса манёвра от показанного места f: подъезд передом, дуга вперёд (разворот на 90°), дуга задом, прямо задом к месту
+function buildManeuver(f, st) {
+  const [Sx, Sy] = st.S, [ux, uy] = st.u, s = st.s, nx = -uy, ny = ux, r = MAN.r;
+  const Tx = Sx + ux * MAN.rev, Ty = Sy + uy * MAN.rev, P1x = Tx + ux * 2 * r, P1y = Ty + uy * 2 * r;
+  const pts = [], add = (x, y, hx, hy, rev) => pts.push({ x, y, yaw: planYaw(hx, hy), rev });
+  const x0 = f.x, y0 = -f.z, dl = Math.hypot(P1x - x0, P1y - y0), n0 = Math.max(1, Math.ceil(dl / 3));
+  const ax = dl > 1 ? (P1x - x0) / dl : -ux, ay = dl > 1 ? (P1y - y0) / dl : -uy;
+  for (let i = 0; i <= n0; i++) add(x0 + (P1x - x0) * i / n0, y0 + (P1y - y0) * i / n0, ax, ay, false);
+  const C1x = P1x + nx * s * r, C1y = P1y + ny * s * r;
+  for (let k = 1; k <= 12; k++) {
+    const t = k / 12 * Math.PI / 2, c = Math.cos(t), sn = Math.sin(t);
+    add(C1x - r * (nx * s * c + ux * sn), C1y - r * (ny * s * c + uy * sn), nx * s * sn - ux * c, ny * s * sn - uy * c, false);
+  }
+  const C2x = Tx + nx * s * r, C2y = Ty + ny * s * r;
+  for (let k = 11; k >= 0; k--) {
+    const t = k / 12 * Math.PI / 2, c = Math.cos(t), sn = Math.sin(t);
+    add(C2x + r * (-nx * s * c + ux * sn), C2y + r * (-ny * s * c + uy * sn), nx * s * sn + ux * c, ny * s * sn + uy * c, true);
+  }
+  for (let i = 1; i <= 6; i++) add(Tx - ux * MAN.rev * i / 6, Ty - uy * MAN.rev * i / 6, ux, uy, true);
+  return { key: st.key, pts, i: 0, s: 0, S: [Sx, Sy], T: [Tx, Ty], P1: [P1x, P1y], u: [ux, uy], yaw: planYaw(ux, uy), done: false, at: 0, ex: st.ex, E: st.E, n0: Math.max(0, n0 - 2) };
+}
+// место у пункта погрузки/разгрузки занято: другой самосвал (не из очереди) ещё у места или у начала разворота
+function stationBusy(self, m) {
+  if (!/^(load|dump):/.test(m.key)) return false;
+  for (const o of machineList) {
+    if (o === self || o.userData.thingId.indexOf(':truck-') < 0 || !o.userData.follow) continue;
+    if (/^queued_/.test(val(o.userData.thingId, 'state', ''))) continue;
+    const f = o.userData.follow, x = f.x, y = -f.z;
+    for (const p of [m.S, m.T, m.P1]) if (Math.hypot(x - p[0], y - p[1]) < 22) return true;
+  }
+  return false;
+}
+// ребро модели, по которому едет самосвал: в пределах 25 м, вдоль курса (на развилке ближайшее ребро может быть
+// соседним — тогда полоса перескочила бы на другую сторону)
+function edgeAlong(x, y, h) {
+  const hx = Math.sin(h), hy = Math.cos(h);
+  let best = null;
+  for (const e of dio.edges) {
+    const dx = e.rb[0] - e.ra[0], dy = e.rb[1] - e.ra[1], L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - e.ra[0]) * dx + (y - e.ra[1]) * dy) / L2));
+    const d = Math.hypot(x - e.ra[0] - dx * t, y - e.ra[1] - dy * t);
+    if (d > 25) continue;
+    const score = d - 15 * Math.abs((dx * hx + dy * hy) / Math.sqrt(L2));
+    if (!best || score < best.score) best = { e, t, d, score };
+  }
+  return best;
+}
+// место в очереди у забоя на уступе (есть площадка в diorama.json extra.face_pads): номер — по близости места слоя к узлу
+function benchQueueSlot(o, id) {
+  const exId = String(val(id, 'excavator', '')), face = 'face-' + exId.slice(-2);
+  const pads = (dio.D.extra && dio.D.extra.face_pads) || [];
+  if (!pads.some((b) => b.face === face)) return null;
+  const sta = truckStation(id, 'loading');
+  if (!sta) return null;
+  const nd = dio.D.nodes[face], ex = byThing(NS + ':' + exId), e0 = ex.userData.rawPos || ex.position;
+  const dist = (q) => { const r = q.userData.rawPos || q.position; return Math.hypot(r.x - nd[0], -r.z - nd[1]); };
+  const mine = dist(o);
+  let k = 0;
+  for (const q of machineList) {
+    const qid = q.userData.thingId;
+    if (q !== o && qid.indexOf(':truck-') >= 0 && val(qid, 'state', '') === 'queued_load' && String(val(qid, 'excavator', '')) === exId && dist(q) < mine) k++;
+  }
+  const [ux, uy] = sta.u, nx = -uy, ny = ux, s = sta.s, Ex = e0.x, Ey = -e0.z, a = s * (MAN.side + 24 * (k + 1));
+  return [Ex + ux * MAN.ahead + nx * a, Ey + uy * MAN.ahead + ny * a, planYaw(-nx * s, -ny * s)];
+}
+// цель показа каждого самосвала: o.position / o.rotation.y (место слоя — rawPos — не меняется)
+function truckTargets() {
+  const pitEdges = dio.edges.filter((e) => e.pit);
+  const parked = [];
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':truck-') < 0) continue;
+    const ud = o.userData, st = val(id, 'state', '');
+    if (PARKED.has(st)) { parked.push(o); continue; }
+    ud.parkKey = null;
+    const sta = truckStation(id, st);
+    if (sta) {   // у пункта — по манёвру (followTrucks)
+      if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
+      continue;
+    }
+    if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw, E: ud.man.E }; ud.man = null; }
+    // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, за местом погрузки
+    // (дальше от экскаватора), бортом к полотну (не на полосе съезда)
+    if (st === 'queued_load') {
+      const slot = benchQueueSlot(o, id);
+      if (slot) { o.position.x = slot[0]; o.position.z = -slot[1]; o.rotation.y = slot[2]; continue; }
+    }
+    // на дороге: место слоя и направление хода по ребру схемы (знак — по курсу модели)
+    const x = Number(val(id, 'x', 0)), y = Number(val(id, 'y', 0)), ne = edgeAlong(x, y, Number(val(id, 'heading', 0)) * Math.PI / 180);
+    let tx = 0, ty = 0;
+    if (ne) {
+      // у своего забоя (на подъезде к нему, ближе 40) — без полосы: рядом экскаватор; проезжающие мимо — по своей полосе
+      const face = 'face-' + String(val(id, 'excavator', '')).slice(-2), fp = dio.D.nodes[face];
+      const atFace = fp && (ne.e.from === face || ne.e.to === face) && Math.hypot(o.position.x - fp[0], -o.position.z - fp[1]) < 40;
+      // стоящий в очереди — на обочине, правее своей полосы: попутные проезжают мимо
+      const side = atFace ? 0 : LANE + (/^queued_/.test(st) ? QUEUE_SIDE : 0);
+      const q = dio.edgeAt(ne.e, ne.t), h = Number(val(id, 'heading', 0)) * Math.PI / 180;
+      const fw = (ne.e.rb[0] - ne.e.ra[0]) * Math.sin(h) + (ne.e.rb[1] - ne.e.ra[1]) * Math.cos(h) >= 0 ? 1 : -1;
+      tx = q[3] * fw; ty = q[4] * fw;
+      o.position.x += ty * side; o.position.z += tx * side;   // правее оси по ходу (в плане вправо — (ty, −tx); z = −север)
+      o.rotation.y = planYaw(tx, ty);
+    }
+    // съезды и дороги карьера: если цель всё же на откосе — на ближайшую дорогу, не дальше своей полосы от оси
+    const xs = o.position.x, ys = -o.position.z;
+    if (dio.schemaInset(xs, ys) >= 0) {
+      const h0 = dio.surfaceAt(xs, ys);
+      let steep = false;
+      for (const [dx, dy] of [[9, 0], [-9, 0], [0, 9], [0, -9]]) if (Math.abs(dio.surfaceAt(xs + dx, ys + dy) - h0) > 2.5) { steep = true; break; }
+      if (steep) {
+        let best = null;
+        for (const e of pitEdges) { const n = dio.edgeNearest(e, xs, ys, 80); if (!best || n.d < best.n.d) best = { e, n }; }
+        if (best && best.n.d <= 80) {
+          const q = dio.edgeAt(best.e, best.n.t), lat = Math.max(-LANE, Math.min(LANE, -q[4] * (xs - q[0]) + q[3] * (ys - q[1])));
+          o.position.x = q[0] - q[4] * lat; o.position.z = -(q[1] + q[3] * lat);
+        }
+      }
+    }
+    // уезжает от пункта: сначала прямо вперёд от места, где стоял (мимо экскаватора, из-под бункера), — цель на этой
+    // прямой вровень с местом слоя; дальше DEPART единиц — на свою дорогу
+    const dp = ud.depart;
+    if (dp) {
+      const along = (o.position.x - dp.S[0]) * dp.u[0] + (-o.position.z - dp.S[1]) * dp.u[1];
+      const nearExc = dp.E && Math.hypot(o.position.x - dp.E[0], -o.position.z - dp.E[1]) < 32;   // место модели ещё у кормы экскаватора
+      if (nearExc || (along < DEPART && Math.hypot(o.position.x - dp.S[0], -o.position.z - dp.S[1]) < DEPART)) {
+        const a = Math.max(0, Math.min(DEPART, along));
+        o.position.x = dp.S[0] + dp.u[0] * a; o.position.z = -(dp.S[1] + dp.u[1] * a); o.rotation.y = dp.yaw;
+      } else ud.depart = null;
+    }
+  }
+  // стоянка у заправки: место закреплено за машиной, пока она там стоит
+  const used = new Set(parked.map((o) => o.userData.parkKey).filter(Boolean));
+  for (const o of parked) {
+    const ud = o.userData;
+    if (!ud.parkKey) { let k = 0; while (used.has('park:' + k)) k++; ud.parkKey = 'park:' + k; used.add(ud.parkKey); }
+    const sta = parkingSpot(Number(ud.parkKey.slice(5)));
+    if (!sta) continue;
+    if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
+  }
+}
+// показанное место: по манёвру (у пункта) или догоняет цель как машина (поворот по дуге, плавная скорость)
+function followTrucks(dt) {
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':truck-') < 0) continue;
+    const ud = o.userData, tx = o.position.x, tz = o.position.z;
+    let f = ud.follow;
+    if (!f || (!ud.man && !ud.station && Math.hypot(tx - f.x, tz - f.z) > FOLLOW.snap)) f = ud.follow = { x: tx, z: tz, yaw: o.rotation.y, v: 0, px: tx, pz: tz, vx: 0, vz: 0 };
+    if (dt > 0 && isFinite(tx) && isFinite(tz)) {   // скорость цели (сглаженная) — упреждение при погоне
+      const k = 1 - Math.exp(-dt / 0.3);
+      f.vx += ((tx - f.px) / dt - f.vx) * k; f.vz += ((tz - f.pz) / dt - f.vz) * k;
+      if (!isFinite(f.vx) || !isFinite(f.vz)) f.vx = f.vz = 0;
+    }
+    f.px = tx; f.pz = tz;
+    if (ud.station) { if (!ud.man || ud.man.key !== ud.station.key) ud.man = buildManeuver(f, ud.station); ud.station = null; }
+    if (ud.man && !ud.man.done && (ud.man.i >= ud.man.n0 || !stationBusy(o, ud.man))) stepManeuver(f, ud.man, dt);
+    else if (ud.man && !ud.man.done) f.v = 0;   // место у пункта ещё не освободилось — ждёт, не начиная разворот
+    else if (ud.man && ud.man.done) { f.x = ud.man.S[0]; f.z = -ud.man.S[1]; f.yaw = ud.man.yaw; f.v = 0; }
+    else chase(f, tx, tz, dt, o);
+    o.position.x = f.x; o.position.z = f.z; o.rotation.y = f.yaw;
+    // кузов: поднимается назад, только когда самосвал встал задом к краю; опускается плавно
+    const want = val(id, 'state', '') === 'dumping' && ud.man && ud.man.done ? 1 : 0;
+    ud.bed = Math.max(0, Math.min(1, (ud.bed || 0) + Math.sign(want - (ud.bed || 0)) * dt / (want ? 0.9 : 0.6)));
+    if (typeof o.setDumping === 'function') o.setDumping(ud.bed);
+  }
+}
+function stepManeuver(f, m, dt) {
+  // скорость по трассе — только пока корпус смотрит по ней (вперёд или, на участке задним ходом, кормой): если трасса
+  // уходит в сторону больше чем на 90°, самосвал сначала доворачивает на месте, а не едет боком или задом
+  const nb = m.pts[Math.min(m.i + 1, m.pts.length - 1)], align = Math.cos(wrapA(nb.yaw - f.yaw));
+  let left = dt * Math.max(0, align);
+  while (left > 0 && m.i < m.pts.length - 1) {
+    const a = m.pts[m.i], b = m.pts[m.i + 1], v = b.rev ? MAN.back : MAN.fwd, seg = Math.hypot(b.x - a.x, b.y - a.y);
+    const need = (seg - m.s) / v;
+    if (need > left) { m.s += v * left; left = 0; } else { left -= need; m.i++; m.s = 0; }
+  }
+  const a = m.pts[m.i], b = m.pts[Math.min(m.i + 1, m.pts.length - 1)], seg = Math.hypot(b.x - a.x, b.y - a.y);
+  const t = seg > 0 ? Math.min(1, m.s / seg) : 1;
+  f.x = a.x + (b.x - a.x) * t; f.z = -(a.y + (b.y - a.y) * t);
+  const w = Math.max(b.rev ? MAN.back : MAN.fwd, 6) / MAN.r;   // курс — по трассе, поворот не круче радиуса манёвра
+  f.yaw = wrapA(f.yaw + Math.max(-w * dt, Math.min(w * dt, wrapA(b.yaw - f.yaw))));
+  f.v = 0;
+  if (m.i >= m.pts.length - 1) { m.done = true; m.at = performance.now(); f.yaw = m.yaw; }
+}
+function chase(f, tx, tz, dt, self) {
+  if (!isFinite(f.x) || !isFinite(f.z) || !isFinite(f.yaw)) { f.x = tx; f.z = tz; f.yaw = 0; f.v = 0; f.vx = f.vz = 0; }
+  const dx = tx - f.x, dz = tz - f.z, d = Math.hypot(dx, dz), tsp = Math.hypot(f.vx, f.vz);
+  if (d < 0.4 && (tsp < 1 || d < 1e-6)) { f.x = tx; f.z = tz; f.v = 0; return; }   // стоит на месте цели, курс — как подъехал
+  const err = wrapA(Math.atan2(dx, dz) - f.yaw);
+  if (Math.abs(err) > Math.PI / 2 && d < 3) {   // цель чуть позади (место сдвинулось назад): подтянуться, не разворачиваясь
+    const step = Math.min(d, 2 * dt);
+    f.x += dx / d * step; f.z += dz / d * step; f.v = 0; return;
+  }
+  let vt = Math.min(FOLLOW.vMax, tsp + 2.5 * d * Math.max(0, Math.cos(err)));
+  if (Math.abs(err) > 0.5) vt = Math.min(vt, Math.max(14, tsp * 0.6));   // большой угол — разворот по дуге, тише
+  f.v += Math.max(-FOLLOW.dec * dt, Math.min(FOLLOW.acc * dt, vt - f.v));
+  const w = Math.max(f.v, 5) / FOLLOW.rMin;
+  f.yaw = wrapA(f.yaw + Math.max(-w * dt, Math.min(w * dt, err)));
+  const step = clearAhead(self, f, Math.min(f.v * dt, d + tsp * dt));
+  if (step < f.v * dt * 0.5) f.v = step / Math.max(dt, 1e-3);   // впереди машина — тормозит, потом догоняет цель
+  f.x += Math.sin(f.yaw) * step; f.z += Math.cos(f.yaw) * step;
+}
+// Впереди по ходу едет другой самосвал (попутный или пересекающий путь; встречные расходятся по полосам): ближе
+// зазора не подъезжать. Если двое мешают друг другу (перекрёсток) — уступает тот, у кого номер больше
+function inLane(f, hl, hw, g, ohl, ohw) {
+  const fx = Math.sin(f.yaw), fz = Math.cos(f.yaw), dx = g.x - f.x, dz = g.z - f.z;
+  const along = dx * fx + dz * fz, lat = Math.abs(-dx * fz + dz * fx);
+  const dy = wrapA(g.yaw - f.yaw), c = Math.abs(Math.cos(dy)), sn = Math.abs(Math.sin(dy));
+  if (along <= 0 || lat > hw + ohl * sn + ohw * c + 0.5) return null;
+  return along - hl - (ohl * c + ohw * sn) - 3;   // свободно до его корпуса с зазором
+}
+function clearAhead(self, f, step) {
+  const half = (o) => { const s = o.scale.x || 1, z = o.userData.size || {}; return [(z.length || 13) * s / 2, (z.width || 8) * s / 2]; };
+  const [hl, hw] = half(self), me = self.userData.thingId;
+  let lim = step;
+  for (const o of machineList) {
+    const id = o.userData.thingId, g = o.userData.follow;
+    if (o === self || id.indexOf(':truck-') < 0 || !g || Math.abs(g.x - f.x) > 60 || Math.abs(g.z - f.z) > 60) continue;
+    if (Math.abs(wrapA(g.yaw - f.yaw)) > 2.4 || (g.v < 1 && Math.hypot(g.vx, g.vz) < 1)) continue;   // встречный или стоит
+    const [ohl, ohw] = half(o), free = inLane(f, hl, hw, g, ohl, ohw);
+    if (free === null || free > step) continue;
+    if (inLane(g, ohl, ohw, f, hl, hw) !== null && me < id) continue;   // мешают друг другу — едет тот, у кого номер меньше
+    lim = Math.min(lim, Math.max(0, free));
+  }
+  return lim;
+}
+// Экскаватор стоит лицом к своему развалу; когда самосвал встал под погрузку — цикл ковша: зачерпнуть в развале,
+// поднять, повернуть к кузову, высыпать, вернуться (≈ 3,5 с — цикл модели при ×10). Без погрузки — ковш поднят над землёй
+const heapCache = {};
+function animateExcavators(dt) {
+  if (!heapCache.at || performance.now() - heapCache.at > 5000) {
+    heapCache.at = performance.now(); heapCache.byFace = {};
+    scene.traverse((h) => { if (h.name === 'muckpile' && h.userData.face) heapCache.byFace[h.userData.face] = h; });
+  }
+  const inPlace = {};
+  for (const o of machineList) {
+    const m = o.userData.man;
+    if (m && m.done && m.ex && val(o.userData.thingId, 'state', '') === 'loading') inPlace[m.ex] = m.S;
+  }
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':excavator-') < 0 || typeof o.setSwing !== 'function') continue;
+    const ex = id.split(':')[1], heap = heapCache.byFace['face-' + ex.slice(-2)], ud = o.userData;
+    if (heap) o.rotation.y = Math.atan2(heap.position.x - o.position.x, heap.position.z - o.position.z);
+    const S = inPlace[ex];
+    if (!S || val(id, 'state', '') !== 'loading') { ud.dig = 0; o.setSwing(0); o.setBoom(0.55); continue; }
+    const toTruck = wrapA(Math.atan2(S[0] - o.position.x, -S[1] - o.position.z) - o.rotation.y);
+    ud.dig = ((ud.dig || 0) + dt / 3.5) % 1;
+    const p = ud.dig, ease = (t) => t * t * (3 - 2 * t);
+    let sw, bm;
+    if (p < 0.3) { sw = 0; bm = 0.12 * ease(p / 0.3); }                            // зачерпывает в развале
+    else if (p < 0.55) { const t = ease((p - 0.3) / 0.25); sw = toTruck * t; bm = 0.12 + 0.88 * t; }   // поднимает и поворачивает к кузову
+    else if (p < 0.7) { sw = toTruck; bm = 1; }                                       // высыпает
+    else { const t = ease((p - 0.7) / 0.3); sw = toTruck * (1 - t); bm = 1 - t; }    // возвращается к развалу
+    o.setSwing(sw); o.setBoom(bm);
+  }
+}
+
 // для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
-window.__screenOf = (thingId) => {
+dbgWin.__screenOf = (thingId) => {
   const o = byThing(thingId); if (!o) return null;
   o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
   const r = canvas.getBoundingClientRect();
   return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
 };
 // для проверок: камера — поставить (точка и цель в сцене) и прочитать; кадр сцены — номер для покадровых сравнений
-window.__camera = {
+dbgWin.__camera = {
   set(px, py, pz, tx, ty, tz) { setPerspective(); tween = null; zoomGoal = null; stopOrbit(); followId = null;
     perspCam.position.set(px, py, pz); controls.target.set(tx, ty, tz); controls.update(); markViewButton(''); },
-  get() { const p = camera.position, t = controls.target; return { x: p.x, y: p.y, z: p.z, tx: t.x, ty: t.y, tz: t.z, frame: window.__sceneFrames || 0 }; },
+  get() { const p = camera.position, t = controls.target; return { x: p.x, y: p.y, z: p.z, tx: t.x, ty: t.y, tz: t.z, frame: dbgWin.__sceneFrames || 0 }; },
   bounds: () => dio && dio.bounds, surfaceAt: (xs, ys) => (dio ? dio.surfaceAt(xs, ys) : 0),
 };
 // для проверок: места и курсы техники в сцене (после поправок)
-window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
+dbgWin.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
 
 // для проверок: «земля одна для всех» — техника на поверхности, дороги не ниже рельефа, машины не налезают.
 // Высота машины сравнивается с dio.surfaceAt под ней (у самосвалов — плюс полотно дороги); отрезки дорог —
 // вершины лент полотна против поверхности под ними; наложения — самосвалы по габаритам с курсом и самосвал в экскаваторе
 const _ray = new THREE.Raycaster(), _down = new THREE.Vector3(0, -1, 0);
-window.__groundCheck = () => {
+dbgWin.__groundCheck = () => {
   // поверхность, как она нарисована: видимые сетки земли, карьера и полотна дорог (не формула)
   const surf = [];
   const roadSet = new Set(Object.values(roadMats));
@@ -1967,6 +2087,75 @@ window.__groundCheck = () => {
     roadVerts, roadBelow, roadWorst: +roadWorst.toFixed(3), overlaps };
 };
 
+// для проверки движения (core/tools/motion_check): не реже чем раз в 100 мс — место, курс и наклон каждой машины,
+// как она нарисована (после всех поправок сцены), колёса относительно поверхности, нижняя точка ковша экскаватора;
+// раз в 5 с — контуры развалов. Скрипт забирает накопленное порциями (take)
+const motionLog = { on: false, every: 100, last: 0, rows: [], pilesAt: -1e9 };
+const _mb = new THREE.Box3(), _mk = new THREE.Matrix4(), _mi = new THREE.Matrix4(), _mv = new THREE.Vector3();
+function muckPiles() {   // развал — прямоугольник в плане по видимым кускам насыпи (в осях насыпи)
+  const out = [];
+  scene.traverse((o) => {
+    if (o.name !== 'muckpile' || !o.visible) return;
+    o.updateWorldMatrix(true, true);
+    _mi.copy(o.matrixWorld).invert();
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    o.traverse((m) => {
+      if (!m.isMesh || !m.geometry) return;
+      for (let p = m; p && p !== o; p = p.parent) if (!p.visible) return;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      _mb.copy(m.geometry.boundingBox).applyMatrix4(_mk.multiplyMatrices(_mi, m.matrixWorld));
+      x0 = Math.min(x0, _mb.min.x); x1 = Math.max(x1, _mb.max.x); z0 = Math.min(z0, _mb.min.z); z1 = Math.max(z1, _mb.max.z);
+    });
+    if (!isFinite(x0)) return;
+    out.push({ face: o.userData.face || '', corners: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => {
+      _mv.set(x, 0, z).applyMatrix4(o.matrixWorld); return [+_mv.x.toFixed(2), +_mv.z.toFixed(2)]; }) });
+  });
+  return out;
+}
+function sampleMotion(now) {
+  if (now - motionLog.last < motionLog.every) return;
+  motionLog.last = now;
+  const ms = [];
+  for (const o of machineList) {
+    const id = o.userData.thingId, s = o.scale.x || 1, size = o.userData.size || {};
+    const L = (size.length || 12) * s / 2, W = (size.width || 7) * s / 2, truck = id.indexOf(':truck-') >= 0;
+    const yaw = o.rotation.y, fx = Math.sin(yaw), fz = Math.cos(yaw), lx = fz, lz = -fx;
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {   // колёса (углы корпуса): над (+) или под (−) поверхностью
+      const x = o.position.x + fx * L * a + lx * W * b, z = o.position.z + fz * L * a + lz * W * b;
+      const wy = o.position.y - Math.sin(o.rotation.x) * L * a + Math.sin(o.rotation.z) * W * b;
+      const d = wy - (dio.surfaceAt(x, -z) + (truck ? ROAD_LIFT : 0));
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    const r = o.userData.rawPos || o.position;
+    const row = [id.split(':')[1], +o.position.x.toFixed(2), +o.position.y.toFixed(2), +o.position.z.toFixed(2), +yaw.toFixed(4),
+      +L.toFixed(2), +W.toFixed(2), val(id, 'state', ''), +lo.toFixed(2), +hi.toFixed(2), +r.x.toFixed(2), +r.z.toFixed(2)];
+    if (truck) row.push(Number(val(id, 'speed', 0)) || 0, val(id, 'excavator', ''), val(id, 'destination', ''), Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
+    const bk = o.userData.parts && o.userData.parts.bucketPivot;
+    if (bk) {   // ковш: нижняя точка и поверхность под ним
+      _mb.setFromObject(bk);
+      const bx = (_mb.min.x + _mb.max.x) / 2, bz = (_mb.min.z + _mb.max.z) / 2;
+      row.push(+_mb.min.y.toFixed(2), +bx.toFixed(2), +bz.toFixed(2), +dio.surfaceAt(bx, -bz).toFixed(2));
+    }
+    ms.push(row);
+  }
+  const rec = { t: +now.toFixed(1), f: frameNo, sim: val(NS + ':mine', 'sim_time', ''), m: ms };
+  if (now - motionLog.pilesAt > 5000) { motionLog.pilesAt = now; rec.piles = muckPiles(); }
+  motionLog.rows.push(rec);
+}
+dbgWin.__motion = {
+  start(every = 100) { motionLog.every = every; motionLog.rows = []; motionLog.last = 0; motionLog.pilesAt = -1e9; motionLog.on = true; },
+  stop() { motionLog.on = false; },
+  take() { const r = motionLog.rows; motionLog.rows = []; return r; },
+  // места для итога по местам: узлы и объекты схемы, трассы съездов (единицы схемы; x — восток, y — север)
+  meta: () => ({
+    nodes: dio.D.nodes,
+    objects: Object.fromEntries(Object.entries(dio.D.objects).filter(([, v]) => v.position).map(([k, v]) => [k, v.position])),
+    ramps: dio.edges.filter((e) => /^road-ramp-/.test(e.road)).map((e) => ({ road: e.road, pts: e.path ? e.path.map((p) => [p[0], p[1]]) : [e.sa.slice(0, 2), e.sb.slice(0, 2)] })),
+    roads: dio.edges.map((e) => ({ road: e.road, from: e.from, to: e.to, pts: e.path ? e.path.map((p) => [p[0], p[1]]) : [e.sa.slice(0, 2), e.sb.slice(0, 2)] })),
+  }),
+};
+
 // Облёт: двойной клик по объекту — камера летит к нему и вращается вокруг; Esc, виды или перетаскивание — выход
 let orbitId = null;
 function stopOrbit() { orbitId = null; controls.autoRotate = false; }
@@ -2002,26 +2191,6 @@ canvas.addEventListener('dblclick', (e) => {
 });
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') stopOrbit(); });
 canvas.addEventListener('pointerdown', () => { if (orbitId) controls.autoRotate = false; });
-
-// В схеме дороги повёрнуты не так, как в жизни: самосвал разворачивается носом по направлению своего движения в сцене
-const truckMotion = new WeakMap();
-function orientTrucks(dt) {
-  for (const o of clickable) {
-    if ((o.userData.thingId || '').indexOf(':truck-') < 0 || !o.parent) continue;
-    const p = o.position;
-    let m = truckMotion.get(o);
-    if (!m) { truckMotion.set(o, { x: p.x, z: p.z, yaw: null, cur: null }); continue; }
-    const dx = p.x - m.x, dz = p.z - m.z;
-    if (dx * dx + dz * dz > 0.0025) { m.yaw = Math.atan2(dx, dz); m.x = p.x; m.z = p.z; }
-    if (m.yaw === null) continue;
-    if (m.cur === null) m.cur = m.yaw;
-    let d = m.yaw - m.cur;
-    while (d > Math.PI) d -= Math.PI * 2;
-    while (d < -Math.PI) d += Math.PI * 2;
-    m.cur += d * (1 - Math.exp(-dt * 8));
-    o.rotation.y = m.cur;
-  }
-}
 
 // ---------------------------------------------------------------- «Фото местности»: окно со снимком Sentinel-2
 // Реальный Бозшаколь — снимок data/terrain/texture.jpg (квадрат 6 × 6 км в координатах рудника, 10 м/пиксель).

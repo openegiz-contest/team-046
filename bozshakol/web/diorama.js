@@ -216,7 +216,9 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
 
   // --- высота поверхности схемы: уступы, врезанные в них съезды и дороги карьера
   const pitEdges = edges.filter((e) => e.pit);
-  const facePads = Object.entries(D.nodes).filter(([n]) => n.startsWith('face-')).map(([, p]) => p);
+  // площадки забоев: на дне — круг у узла забоя; на уступе — ровный прямоугольник вдоль уступа (diorama.json extra.face_pads)
+  const benchPads = (D.extra && D.extra.face_pads) || [];
+  const facePads = Object.entries(D.nodes).filter(([n]) => n.startsWith('face-') && !benchPads.some((b) => b.face === n)).map(([, p]) => p);
   // Внутри карьера: полотно (±HW от оси) и площадка забоя — ровно на своей высоте; между двумя близкими полосами
   // (витки съезда, съезд и площадка) — ровный откос от края одной до края другой, без обрыва посередине;
   // дальше — плавный возврат к уступам
@@ -248,6 +250,10 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     // рабочие площадки у забоев: ровный круг на уровне забоя (там стоят экскаватор и самосвал под погрузкой);
     // забой на уступе — у площадки на съезде, круг меньше (уступ узкий)
     for (const [fx, fy, fz] of facePads) take(Math.hypot(xs - fx, ys - fy) - (fz > -depthS + 1 ? FACE_PAD_BENCH : FACE_PAD), fz);
+    for (const b of benchPads) {   // до прямоугольника площадки (0 — на ней)
+      const dx = xs - b.c[0], dy = ys - b.c[1], along = dx * b.t[0] + dy * b.t[1], across = -dx * b.t[1] + dy * b.t[0];
+      take(Math.hypot(Math.max(0, Math.abs(along) - b.hl), Math.max(0, Math.abs(across) - b.hd)), b.z);
+    }
     if (den < 1e-9) return z;
     // у самого борта врезка сходит на нет: на кромке поверхность всегда на уровне степи (без обрыва у края)
     const rim = smooth(ds / RIM_FADE);

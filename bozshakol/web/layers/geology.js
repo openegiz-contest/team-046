@@ -239,6 +239,8 @@ export function init(ctx) {
       const patch = new THREE.Group();
       patch.position.copy(ctx.toScene(x, y, gz + HEAP_LIFT));
       const heap = new THREE.Group();
+      heap.name = 'muckpile';   // насыпь развала (по имени её находит проверка движения core/tools/motion_check)
+      heap.userData.face = o.id;
       heap.position.copy(patch.position);
       ctx.group.add(heap);
       ctx.group.add(patch);

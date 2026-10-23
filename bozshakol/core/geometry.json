@@ -558,7 +558,7 @@
    "kind": "face",
    "position": [
     -1500,
-    -330,
+    -380,
     -45
    ],
    "ore_type": "waste"
@@ -568,7 +568,7 @@
    "kind": "face",
    "position": [
     1500,
-    -330,
+    -380,
     -45
    ],
    "ore_type": "waste"
@@ -618,7 +618,7 @@
    "kind": "excavator",
    "position": [
     -1500,
-    -330,
+    -355,
     -45
    ],
    "face": "face-05"
@@ -628,7 +628,7 @@
    "kind": "excavator",
    "position": [
     1500,
-    -330,
+    -355,
     -45
    ],
    "face": "face-06"
