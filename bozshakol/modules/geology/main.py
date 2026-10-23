@@ -27,6 +27,7 @@ log = setup_logging("bz-geology")
 PUBLISH_S = 10.0         # реальных секунд между публикациями
 PREVIEW_BLOCKS = 30      # блоков вокруг забоя в block_preview
 INITIAL_AHEAD_H = 25.0   # взорванный запас перед экскаватором на старте, часов его номинальной работы (получается 20–30) (на реальных рудниках — недели; здесь столько, чтобы станки не отставали с первых часов)
+RATE_SLOW_S = 6 * 3600.0   # постоянная времени медленной оценки скорости отгрузки (для часов запаса), модельных секунд
 NOMINAL_RATE_TPH = {"sulphide": 1000.0, "clay": 700.0, "waste": 2000.0}   # номинальная скорость отгрузки по роли забоя, т/ч: по ней считается начальный запас
 RATE_MAX_TPH = 3000.0     # верхняя граница оценки скорости отгрузки экскаватора, т/ч
 BAD_BLAST_FACTOR = 2.0   # неудачный взрыв: P80 вдвое больше расчётного, если p80_mm не задан или меньше расчётного
@@ -136,6 +137,7 @@ class Face:
         self.last_p80 = bl.P80_REF
         self.win_x = self.win_t = 0.0
         self.rate_tph = 700.0          # скорость отгрузки экскаватора, т/ч (скользящая оценка по loaded_total)
+        self.rate_slow = NOMINAL_RATE_TPH.get(self.role, 1000.0)    # медленная оценка (постоянная RATE_SLOW_S), старт — номинал: по ней считаются часы запаса
         self._new_panel()
         self._restore(prev or {})
         self.preview = json.dumps(bm.preview(model, self.level, self.x, self.y, PREVIEW_BLOCKS), separators=(",", ":"))
@@ -232,7 +234,7 @@ class Face:
 
     def blasted_ahead_h(self):
         """Сколько часов работы экскаватора хватит взорванного запаса; 0 — забой упирается в невзорванный блок."""
-        return self.blasted_ahead_t() / max(self.rate_tph, 300.0)
+        return self.blasted_ahead_t() / max(self.rate_slow, 300.0)
 
     def ahead_status(self):
         """Предупреждение о нехватке бурения: ok (> 12 ч), low (4–12 ч), critical (< 4 ч взорванного запаса)."""
@@ -299,6 +301,7 @@ class Face:
         if self.win_t >= 600.0:
             inst = self.win_x / self.win_t * 3600.0
             self.rate_tph = 0.8 * self.rate_tph + 0.2 * min(RATE_MAX_TPH, inst)
+            self.rate_slow += (min(RATE_MAX_TPH, inst) - self.rate_slow) * min(1.0, self.win_t / RATE_SLOW_S)
             self.win_x = self.win_t = 0.0
         while self.panel.total > 0 and self.extracted >= self.panel.total:
             self.extracted -= self.panel.total

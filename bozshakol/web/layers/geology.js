@@ -12,9 +12,11 @@ const TILE_M = 25;              // сторона блока, м
 const DRILL_SCALE = 1.6;
 const CU_LOW = 0.1, CU_HIGH = 0.7;   // шкала плиток: серый → медный, % Cu
 // Развал забоя: неровная насыпь кусков породы, размеры в единицах сцены (экскаватор в схеме — около 21 единицы). Длина — вдоль уступа,
-// ширина — от экскаватора вглубь забоя; экскаватор стоит у ближнего края и работает забой сбоку.
-const HEAP_L = 96, HEAP_W = 16, HEAP_H = 4.5;
-const HEAP_GAP = 5;             // от центра экскаватора до ближнего края насыпи; насыпь узкая, чтобы буровые рядом с экскаватором не оказались на ней
+// ширина — от экскаватора вглубь забоя; экскаватор стоит у подошвы насыпи, перед его ковшом.
+const HEAP_L = 96, HEAP_W = 12, HEAP_H = 4.5;
+const HEAP_FRONT = 14;           // от центра экскаватора до ближнего края насыпи: полкорпуса экскаватора (≈ 10,5 в сцене) и запас; машина стоит у подошвы, а не на насыпи
+const ROAD_HW = 8;              // полуширина полотна дороги с запасом, единиц сцены: насыпь к дороге ближе не подходит
+const HEAP_TURNS = [0, 25, -25, 50, -50, 80, -80, 110, -110, 150, -150, 180];   // углы (градусы), на которые поворачивается направление «вглубь забоя», если насыпь попала на дорогу
 const HEAP_LIFT = 0.2;          // основание над землёй схемы (ctx.groundAt): небольшой запас, чтобы основание не мерцало вровень с поверхностью
 const HEAP_LEVELS = 3;          // ступеней крупности развала: 0 — обычный, 3 — крупные глыбы
 const HEAP_COLORS = { sulphide: 0x4f8a6e, clay: 0xc9682a, waste: 0x77777a };   // приглушённые: медно-зелёный, рыжий, серый
@@ -140,8 +142,40 @@ function buildMuckpile(ctx, ore, dim, level, seed) {
   return g;
 }
 
-// Положение развала: от экскаватора вглубь забоя, длинной стороной вдоль уступа. Позиция экскаватора — из его двойника (x, y).
-// Направление «от экскаватора к забою» считается в плоскости сцены; если экскаватор в самом забое — от центра карьера наружу.
+// Дороги из geometry.json (все рёбра графа) отрезками в плоскости сцены: насыпь не должна заходить на полотно.
+let roadSegs = null;
+function roadSegments(ctx) {
+  if (roadSegs) return roadSegs;
+  roadSegs = [];
+  const nodes = ctx.geometry.nodes || {};
+  for (const e of ctx.geometry.edges || []) {
+    const a = nodes[e.from], b = nodes[e.to];
+    if (!a || !b) continue;
+    const pa = ctx.toScene(a[0], a[1], a[2]), pb = ctx.toScene(b[0], b[1], b[2]);
+    roadSegs.push([pa.x, pa.z, pb.x, pb.z]);
+  }
+  return roadSegs;
+}
+
+// Расстояние от насыпи (прямоугольник с центром c, осью «вглубь» v = (vx, vz), длина HEAP_L вдоль перпендикуляра) до ближайшей дороги, единиц.
+function roadClearance(ctx, cx, cz, vx, vz) {
+  let best = Infinity;
+  for (const [ax, az, bx, bz] of roadSegments(ctx)) {
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
+    for (let k = 0; k <= n; k++) {
+      const px = ax + (bx - ax) * k / n - cx, pz = az + (bz - az) * k / n - cz;
+      const lz = px * vx + pz * vz, lx = px * -vz + pz * vx;       // координаты точки дороги в осях насыпи
+      const d = Math.hypot(Math.max(Math.abs(lx) - HEAP_L / 2, 0), Math.max(Math.abs(lz) - HEAP_W / 2, 0));
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+// Положение развала: перед экскаватором, у его подошвы: ближний край насыпи в HEAP_FRONT от центра экскаватора, направление — от экскаватора к забою,
+// длинной стороной вдоль уступа. Позиция экскаватора — из его двойника (x, y); признака курса у двойника нет. Если насыпь попадает на дорогу,
+// направление поворачивается (HEAP_TURNS) до первого положения без пересечения, иначе берётся то, что дальше всего от дорог.
+// Если экскаватор стоит в самом забое — направление от центра карьера наружу.
 function placeHeap(ctx, rec, ex) {
   const key = ex[0] + ',' + ex[1];
   if (rec.placeKey === key) return;
@@ -156,11 +190,20 @@ function placeHeap(ctx, rec, ex) {
   }
   const len = Math.hypot(dx, dz) || 1;
   dx /= len; dz /= len;
-  const off = HEAP_GAP + HEAP_W / 2;
-  rec.heap.position.set(pe.x + dx * off, pe.y + HEAP_LIFT, pe.z + dz * off);
-  rec.heap.rotation.y = Math.atan2(dx, dz);     // локальная Z — вглубь забоя, локальная X — вдоль уступа
+  const off = HEAP_FRONT + HEAP_W / 2;
+  let pick = null;
+  for (const deg of HEAP_TURNS) {
+    const a = deg * Math.PI / 180, vx = dx * Math.cos(a) - dz * Math.sin(a), vz = dx * Math.sin(a) + dz * Math.cos(a);
+    const cx = pe.x + vx * off, cz = pe.z + vz * off;
+    const clear = roadClearance(ctx, cx, cz, vx, vz);
+    if (!pick || clear > pick.clear) pick = { vx, vz, cx, cz, clear };
+    if (clear >= ROAD_HW) { pick = { vx, vz, cx, cz, clear }; break; }
+  }
+  rec.heap.position.set(pick.cx, pe.y + HEAP_LIFT, pick.cz);
+  rec.heap.rotation.y = Math.atan2(pick.vx, pick.vz);     // локальная Z — вглубь забоя, локальная X — вдоль уступа
   rec.patch.position.copy(rec.heap.position);
   rec.baseY = rec.heap.position.y;
+  rec.roadClear = pick.clear;
 }
 
 export function init(ctx) {
