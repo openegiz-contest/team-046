@@ -96,6 +96,7 @@ const scene = new THREE.Scene();
 const SKY = 0xdde8f0;
 scene.background = new THREE.Color(SKY);   // до загрузки окружения (environment.js ставит небо и туман)
 let environment = null;
+const ADVICE_AT = { plan: 'plant-sulphide' };   // совет → объект, у которого его подпись (иначе — его цель)
 let weatherBlizzard = false;   // метель: туман пересчитывается по расстоянию камеры (updateCamera)      // небо, туман, качество и вид земли (buildSchemaEnvironment)
 
 const perspCam = new THREE.PerspectiveCamera(50, 1, 2, 30000);
@@ -599,7 +600,9 @@ function renderAdvice() {
   for (const a of list) {
     let b = adviceBadges[a.id];
     if (!b) {
-      const obj = a.target && byThing(a.target);
+      // подпись совета — у объекта, к которому совет относится (план фабрики — у фабрики, а не у узкого места в карьере)
+      const at = ADVICE_AT[a.id];
+      const obj = (at && byThing(NS + ':' + at)) || (a.target && byThing(a.target));
       if (obj) {
         const base = labels.find((L) => L.obj === obj || (L.obj.parent === obj && !L.el.classList.contains('warn')));
         b = adviceBadges[a.id] = addLabel(obj, '💡 совет', { importance: 3.5, cls: 'advice', dy: (base ? base.dy : 20) + 30 * markerScale });
@@ -1045,9 +1048,10 @@ function applyQuality(q) {
   resize();
   renderer.shadowMap.enabled = high;
   sun.castShadow = high;
-  if (environment && environment.setQuality) environment.setQuality(high || lighting === 'night');   // ночью огни горят всегда
+  // ореолы фонарей — только ночью (днём не нужны: белые шары на фоне степи); ночью огни горят всегда, как раньше
+  if (environment && environment.setQuality) environment.setQuality(lighting === 'night');
   if (environment && environment.setLook) environment.setLook({ cheap: !high, night: lighting === 'night' });
-  for (const s of glowSprites) s.visible = high;
+  for (const s of glowSprites) s.visible = high && lighting === 'night';
   // дороги в «Обычном» — без расчёта освещения (ровная лента освещена одинаково)
   for (const [k, m] of Object.entries(roadMats)) {
     const want = high ? 'lambert' : 'basic';
@@ -1100,7 +1104,8 @@ function applyLighting(l) {
   renderer.toneMappingExposure = night ? 1.15 : 1.05;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
   roadNight();
-  if (environment && environment.setQuality) environment.setQuality(quality === 'high' || night);
+  if (environment && environment.setQuality) environment.setQuality(night);   // ореолы фонарей — только ночью
+  for (const s of glowSprites) s.visible = quality === 'high' && night;
   if (environment && environment.setLook) environment.setLook({ cheap: quality !== 'high', night });
   if (night) nightSky();
   else renderScenarioBannerSafe();   // днём фон и туман — по погоде (метель)
