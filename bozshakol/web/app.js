@@ -9,6 +9,9 @@ import { createModels } from './models.js';
 import { loadDiorama } from './diorama.js';
 import { buildDiorama, roadRibbons } from './diorama-scene.js';
 
+// Отладочный доступ к объектам сцены (window.__*) — только с ?debug=1 в адресе (скрипты проверок)
+const dbgWin = new URLSearchParams(location.search).has('debug') ? window : {};
+
 // ---------------------------------------------------------------- палитра
 const colors = {
   sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff, down: 0xd32f2f,
@@ -1112,7 +1115,7 @@ function applyLighting(l) {
   updateHeadlights();
   const sel = document.getElementById('lighting');
   if (sel) sel.value = lighting;
-  window.__lighting = lighting;
+  dbgWin.__lighting = lighting;
 }
 function renderScenarioBannerSafe() {
   const t = twins[NS + ':scenarios'];
@@ -1278,6 +1281,7 @@ function frame(now) {
     catch (e) { if (L.errors++ % 300 === 0) console.error('Слой ' + L.name + ': ошибка в update', e); }
   }
   adjustMachines(dt);
+  if (motionLog.on) sampleMotion(now);
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
@@ -1291,13 +1295,13 @@ function frame(now) {
       const fps = qualityProbe.frames * 1000 / el;
       qualityProbe = null;
       if (qualityAuto && fps < 25) applyQuality('normal');
-      window.__qualityProbeFps = fps;
+      dbgWin.__qualityProbeFps = fps;
     }
   }
-  window.__quality = quality;
-  window.__sceneFrames = (window.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
-  window.__renderInfo = renderer.info.render;
-  window.__mode = mode;
+  dbgWin.__quality = quality;
+  dbgWin.__sceneFrames = (dbgWin.__sceneFrames || 0) + 1;   // счётчик кадров для замера производительности
+  dbgWin.__renderInfo = renderer.info.render;
+  dbgWin.__mode = mode;
   if (quality === 'high' || frameNo % 2 === 0 || tween) updateLabels();   // в «Обычном» подписи — через кадр
 }
 
@@ -1900,28 +1904,28 @@ function updateMarkers() {
   if (markerMesh.instanceColor) markerMesh.instanceColor.needsUpdate = true;
 }
 // для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
-window.__screenOf = (thingId) => {
+dbgWin.__screenOf = (thingId) => {
   const o = byThing(thingId); if (!o) return null;
   o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
   const r = canvas.getBoundingClientRect();
   return { x: r.left + (_v.x + 1) / 2 * r.width, y: r.top + (1 - _v.y) / 2 * r.height, visible: _v.z < 1 };
 };
 // для проверок: камера — поставить (точка и цель в сцене) и прочитать; кадр сцены — номер для покадровых сравнений
-window.__camera = {
+dbgWin.__camera = {
   set(px, py, pz, tx, ty, tz) { setPerspective(); tween = null; zoomGoal = null; stopOrbit(); followId = null;
     perspCam.position.set(px, py, pz); controls.target.set(tx, ty, tz); controls.update(); markViewButton(''); },
-  get() { const p = camera.position, t = controls.target; return { x: p.x, y: p.y, z: p.z, tx: t.x, ty: t.y, tz: t.z, frame: window.__sceneFrames || 0 }; },
+  get() { const p = camera.position, t = controls.target; return { x: p.x, y: p.y, z: p.z, tx: t.x, ty: t.y, tz: t.z, frame: dbgWin.__sceneFrames || 0 }; },
   bounds: () => dio && dio.bounds, surfaceAt: (xs, ys) => (dio ? dio.surfaceAt(xs, ys) : 0),
 };
 // для проверок: места и курсы техники в сцене (после поправок)
-window.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
+dbgWin.__machineLayout = () => machineList.map((o) => ({ id: o.userData.thingId, x: o.position.x, y: o.position.y, z: o.position.z,
   yaw: o.rotation.y, s: o.scale.x, state: val(o.userData.thingId, 'state', '') }));
 
 // для проверок: «земля одна для всех» — техника на поверхности, дороги не ниже рельефа, машины не налезают.
 // Высота машины сравнивается с dio.surfaceAt под ней (у самосвалов — плюс полотно дороги); отрезки дорог —
 // вершины лент полотна против поверхности под ними; наложения — самосвалы по габаритам с курсом и самосвал в экскаваторе
 const _ray = new THREE.Raycaster(), _down = new THREE.Vector3(0, -1, 0);
-window.__groundCheck = () => {
+dbgWin.__groundCheck = () => {
   // поверхность, как она нарисована: видимые сетки земли, карьера и полотна дорог (не формула)
   const surf = [];
   const roadSet = new Set(Object.values(roadMats));
@@ -1965,6 +1969,75 @@ window.__groundCheck = () => {
   const hangList = machines.filter((m) => m.hang > 1.5).map((m) => m.id + ' ' + m.hang);
   return { machines: machines.length, offGround: machines.filter((m) => Math.abs(m.dy) > 0.5).length, worst, sunkList, hangList,
     roadVerts, roadBelow, roadWorst: +roadWorst.toFixed(3), overlaps };
+};
+
+// для проверки движения (core/tools/motion_check): не реже чем раз в 100 мс — место, курс и наклон каждой машины,
+// как она нарисована (после всех поправок сцены), колёса относительно поверхности, нижняя точка ковша экскаватора;
+// раз в 5 с — контуры развалов. Скрипт забирает накопленное порциями (take)
+const motionLog = { on: false, every: 100, last: 0, rows: [], pilesAt: -1e9 };
+const _mb = new THREE.Box3(), _mk = new THREE.Matrix4(), _mi = new THREE.Matrix4(), _mv = new THREE.Vector3();
+function muckPiles() {   // развал — прямоугольник в плане по видимым кускам насыпи (в осях насыпи)
+  const out = [];
+  scene.traverse((o) => {
+    if (o.name !== 'muckpile' || !o.visible) return;
+    o.updateWorldMatrix(true, true);
+    _mi.copy(o.matrixWorld).invert();
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    o.traverse((m) => {
+      if (!m.isMesh || !m.geometry) return;
+      for (let p = m; p && p !== o; p = p.parent) if (!p.visible) return;
+      if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+      _mb.copy(m.geometry.boundingBox).applyMatrix4(_mk.multiplyMatrices(_mi, m.matrixWorld));
+      x0 = Math.min(x0, _mb.min.x); x1 = Math.max(x1, _mb.max.x); z0 = Math.min(z0, _mb.min.z); z1 = Math.max(z1, _mb.max.z);
+    });
+    if (!isFinite(x0)) return;
+    out.push({ face: o.userData.face || '', corners: [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => {
+      _mv.set(x, 0, z).applyMatrix4(o.matrixWorld); return [+_mv.x.toFixed(2), +_mv.z.toFixed(2)]; }) });
+  });
+  return out;
+}
+function sampleMotion(now) {
+  if (now - motionLog.last < motionLog.every) return;
+  motionLog.last = now;
+  const ms = [];
+  for (const o of machineList) {
+    const id = o.userData.thingId, s = o.scale.x || 1, size = o.userData.size || {};
+    const L = (size.length || 12) * s / 2, W = (size.width || 7) * s / 2, truck = id.indexOf(':truck-') >= 0;
+    const yaw = o.rotation.y, fx = Math.sin(yaw), fz = Math.cos(yaw), lx = fz, lz = -fx;
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {   // колёса (углы корпуса): над (+) или под (−) поверхностью
+      const x = o.position.x + fx * L * a + lx * W * b, z = o.position.z + fz * L * a + lz * W * b;
+      const wy = o.position.y - Math.sin(o.rotation.x) * L * a + Math.sin(o.rotation.z) * W * b;
+      const d = wy - (dio.surfaceAt(x, -z) + (truck ? ROAD_LIFT : 0));
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    const r = o.userData.rawPos || o.position;
+    const row = [id.split(':')[1], +o.position.x.toFixed(2), +o.position.y.toFixed(2), +o.position.z.toFixed(2), +yaw.toFixed(4),
+      +L.toFixed(2), +W.toFixed(2), val(id, 'state', ''), +lo.toFixed(2), +hi.toFixed(2), +r.x.toFixed(2), +r.z.toFixed(2)];
+    if (truck) row.push(Number(val(id, 'speed', 0)) || 0, val(id, 'excavator', ''), val(id, 'destination', ''), Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
+    const bk = o.userData.parts && o.userData.parts.bucketPivot;
+    if (bk) {   // ковш: нижняя точка и поверхность под ним
+      _mb.setFromObject(bk);
+      const bx = (_mb.min.x + _mb.max.x) / 2, bz = (_mb.min.z + _mb.max.z) / 2;
+      row.push(+_mb.min.y.toFixed(2), +bx.toFixed(2), +bz.toFixed(2), +dio.surfaceAt(bx, -bz).toFixed(2));
+    }
+    ms.push(row);
+  }
+  const rec = { t: +now.toFixed(1), f: frameNo, sim: val(NS + ':mine', 'sim_time', ''), m: ms };
+  if (now - motionLog.pilesAt > 5000) { motionLog.pilesAt = now; rec.piles = muckPiles(); }
+  motionLog.rows.push(rec);
+}
+dbgWin.__motion = {
+  start(every = 100) { motionLog.every = every; motionLog.rows = []; motionLog.last = 0; motionLog.pilesAt = -1e9; motionLog.on = true; },
+  stop() { motionLog.on = false; },
+  take() { const r = motionLog.rows; motionLog.rows = []; return r; },
+  // места для итога по местам: узлы и объекты схемы, трассы съездов (единицы схемы; x — восток, y — север)
+  meta: () => ({
+    nodes: dio.D.nodes,
+    objects: Object.fromEntries(Object.entries(dio.D.objects).filter(([, v]) => v.position).map(([k, v]) => [k, v.position])),
+    ramps: dio.edges.filter((e) => /^road-ramp-/.test(e.road)).map((e) => ({ road: e.road, pts: e.path ? e.path.map((p) => [p[0], p[1]]) : [e.sa.slice(0, 2), e.sb.slice(0, 2)] })),
+    roads: dio.edges.map((e) => ({ road: e.road, from: e.from, to: e.to, pts: e.path ? e.path.map((p) => [p[0], p[1]]) : [e.sa.slice(0, 2), e.sb.slice(0, 2)] })),
+  }),
 };
 
 // Облёт: двойной клик по объекту — камера летит к нему и вращается вокруг; Esc, виды или перетаскивание — выход
