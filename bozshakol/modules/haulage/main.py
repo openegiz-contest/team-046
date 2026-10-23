@@ -89,6 +89,11 @@ SLOW_PUBLISH_S = 5.0
 QUEUE_GAP_M = 70.0
 QUEUE_FIRST = 1.5         # первое место в очереди — в QUEUE_FIRST шагах от пункта
 FOLLOW_GAP_M = 90.0       # не ближе этого к впереди идущему по тому же звену: задний тормозит заранее
+# Развилка (узел, где сходятся три дороги и больше) и пункт разгрузки, через который едут насквозь (дробилка): через
+# узел — по одному. Самосвал ждёт у стоп-линии, пока узел занят или к нему подходит самосвал с бо́льшим правом проезда
+JUNCTION_STOP_M = 50.0    # стоп-линия — за столько метров до узла
+JUNCTION_BOX_M = 50.0     # узел занят, пока проехавший его самосвал ближе этого к узлу
+JUNCTION_LOOK_M = 160.0   # соперник за проезд — тот, кто подходит к узлу ближе этого
 
 CARGO_BY_ORE = {"sulphide": "sulphide", "clay": "clay", "waste": "waste"}
 DEST_BY_ORE = {"sulphide": "crusher-01", "clay": "stockpile-clay", "waste": "dump-waste-1"}
@@ -210,6 +215,7 @@ class Roads:
             self.edge_road[(a, b)] = self.edge_road[(b, a)] = e["road"]
         self.limits = {k: v["speed_limit_kmh"] for k, v in geometry["roads"].items()}
         self.closed = set()
+        self.junctions = {n for n, adj in self.adj.items() if len(adj) >= 3}   # развилки: через узел — по одному
         self._main_nodes, self._main_key = None, None   # основная сеть: связь с fuel-station по открытым дорогам
 
     def path(self, start, goal):
@@ -1423,7 +1429,7 @@ class Haulage:
             remaining = length - truck.seg_pos
             # координатор, проверка движения: не ближе FOLLOW_GAP_M к впереди идущему; к занятому пункту — только до
             # хвоста его очереди (встаёт туда, не доезжая до пункта: без скачка к узлу и обратно)
-            limit = self._follow_limit(truck, nxt, length)
+            limit = min(self._follow_limit(truck, nxt, length), self._junction_limit(truck, nxt, length))
             tail = self._queue_tail_m(truck)
             to_dest = None
             if tail is not None:
@@ -1484,6 +1490,40 @@ class Haulage:
             elif o.node == nxt and o.path[0] != truck.node and o.seg_pos < FOLLOW_GAP_M:   # встречный — не «впереди идущий»
                 lim = min(lim, length + o.seg_pos - FOLLOW_GAP_M)
         return lim
+
+    def _right_of_way(self, t, remaining):
+        """Право проезда через узел: уже за стоп-линией; гружёный, идущий вверх; ближе к узлу; номер меньше."""
+        up = t.payload > 0 and self.roads.edge(t.node, t.path[0])[1] > 0.5
+        return (remaining <= JUNCTION_STOP_M, up, -remaining, -int(t.id[-2:]))
+
+    def _junction_limit(self, truck, nxt, length):
+        """Докуда (м от начала звена) можно доехать к развилке nxt: если узел занят или к нему подходит самосвал с
+        бо́льшим правом проезда — до стоп-линии (за ней самосвал уже проезжает). Встречный по нашему же звену узел не
+        занимает — с ним расходимся по полосам."""
+        through = None
+        if nxt not in self.roads.junctions:
+            if len(truck.path) < 2:
+                return length
+            through = next((d for d in self.dumps.values() if d.node == nxt), None)   # насквозь через пункт разгрузки
+            if through is None:
+                return length
+        remaining = length - truck.seg_pos
+        if remaining <= JUNCTION_STOP_M:
+            return length
+        hold = length - JUNCTION_STOP_M - 1.0
+        if through is not None and through.dumping is not None:
+            return hold   # у пункта разгружаются — проезд через него ждёт
+        mine = self._right_of_way(truck, remaining)
+        for o in self.trucks:
+            if o is truck or not o.path or o.travel_pending or o.state not in ("hauling", "returning"):
+                continue
+            if o.node == nxt and o.seg_pos < JUNCTION_BOX_M and o.path[0] != truck.node:
+                return hold   # только что проехал узел — ещё в нём
+            if o.path[0] == nxt and o.node != truck.node:
+                o_rem = self.roads.edge(o.node, nxt)[0] - o.seg_pos
+                if o_rem < JUNCTION_LOOK_M and self._right_of_way(o, o_rem) > mine:
+                    return hold
+        return length
 
     def _queue_tail_m(self, truck):
         """Хвост очереди у пункта, куда едет самосвал (м пути до пункта), или None — пункт свободен / едет не туда."""
