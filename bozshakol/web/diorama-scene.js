@@ -223,7 +223,7 @@ function pitColorer(THREE, dio, colors, u) {
   const berm = new THREE.Color(0xe4d6b6), road = new THREE.Color(0xddd0b2), floor = new THREE.Color(0xb3a78f);
   const cut = new THREE.Color(0xbfa27e), fill = new THREE.Color(0xcdb894);   // выемка — светлее: откос у въезда не тёмный клин
   const slope = cut.clone().lerp(berm, 0.3);   // ровный склон борта у съезда (уступы проступают из него плавно)
-  const rust = new THREE.Color(0x9b6a47), grey = new THREE.Color(0x6f6862);
+  const rust = new THREE.Color(0x9b6a47), grey = new THREE.Color(0x7d756e);   // стенки уступов: порода видна, не чёрные
   const sun = [-0.85, -0.53];   // солнце с юго-запада (в плане)
   const ore = { sulphide: new THREE.Color(colors.sulphide), clay: new THREE.Color(colors.clay), waste: new THREE.Color(colors.waste) };
   const faces = Object.entries(D.objects).filter(([id, o]) => id.startsWith('face-') && o.position);
@@ -251,7 +251,7 @@ function pitColorer(THREE, dio, colors, u) {
       const t = Math.atan2((ys - pit.cy) / (pit.b - ins), (xs - pit.cx) / (pit.a - ins));
       const nx = -Math.cos(t) / pit.a, ny = -Math.sin(t) / pit.b, n = Math.hypot(nx, ny) || 1;
       const lit = Math.max(0, (nx / n) * sun[0] + (ny / n) * sun[1]);
-      out.copy(rust).lerp(grey, k / Math.max(1, pit.benches - 1)).multiplyScalar(0.62 + 0.5 * lit);
+      out.copy(rust).lerp(grey, k / Math.max(1, pit.benches - 1)).multiplyScalar(0.8 + 0.4 * lit);
     }
     return sb < 1 ? out.lerp(slope, 1 - sb) : out;
   };
