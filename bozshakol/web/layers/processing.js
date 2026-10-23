@@ -82,7 +82,7 @@ export function init(ctx) {
       // подпись корпуса — над западным торцом, чтобы не закрывать подписи складов у восточного края
       const anchor = new THREE.Object3D(); anchor.position.x = o.kind === 'plant' ? -size[0] * 0.3 : 0; g.add(anchor);
       add(id, { kind: o.kind, g, model: g, anchor, lamp: addLamp(g, h + 6), hit: Math.max(size[0], size[1]) / 2 },
-        o.id, o.kind === 'plant' ? 3 : 2, h + (o.kind === 'plant' ? 70 : 14));
+        o.id, 3, h + (o.kind === 'plant' ? 70 : 14));
     } else if (o.kind === 'mill' || o.kind === 'flotation') {
       // мельница и флотация стоят внутри главного корпуса: отдельной модели нет, только точка
       // (клик, подпись, значок сценария) и фонарь состояния над крышей
@@ -123,7 +123,10 @@ export function update(ctx, twins) {
       const tph = running ? Math.max(Number(fv(twin, 'intake', 0)), Number(fv(twin, 'throughput', 0)), 300) : 0;
       rec.model.setFlow(tph, ctx.dt);                                 // кучки руды едут по ленте
       text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'length', 0) / 1000, 2) + ' км · ' +
-        fmtNum(fv(twin, 'intake', 0), 0) + ' т/ч с дробилки · на ленте ' + fmtNum(fv(twin, 'load', 0), 0) + ' т';
+        fmtNum(fv(twin, 'intake', 0), 0) + ' т/ч с дробилки · на ленте ' + fmtNum(fv(twin, 'load', 0), 0) + ' т · ' +
+        fmtNum(fv(twin, 'power', 0), 0) + ' кВт';
+      const advice = fv(twin, 'advice', '');
+      if (advice) { text += ' · ⚡ ' + advice; lamp = 'amber'; }               // рекомендация по холостому ходу
     } else if (rec.kind === 'stockpile') {
       const stock = Number(fv(twin, 'stock', 0)) || 0;
       rec.model.setVolume(Number(fv(twin, 'volume', stock / BULK_DENSITY)));
@@ -134,9 +137,13 @@ export function update(ctx, twins) {
         // тревога — только по правилу модели (alarm): дробилка не принимает или склад убывает > 15 модельных минут
         const full = fv(twin, 'full', false) === true, alarm = fv(twin, 'alarm', false) === true;
         const expect = alarm && fv(twin, 'stop_expected', false) === true;
-        lamp = full ? 'red' : (expect ? 'amber' : 'green');
+        const overflow = fv(twin, 'overflow_expected', false) === true;   // растёт > 15 мин или мельница на ремонте
+        lamp = full ? 'red' : ((expect || overflow) ? 'amber' : 'green');
         if (full) text += ' · полон';
-        else if (alarm && hours !== null) {
+        else if (overflow) {
+          const hf = Number(fv(twin, 'hours_to_full', -1));
+          text += ' · ' + fv(twin, 'overflow_forecast', '') + (hf >= 0 ? ' · до переполнения ' + fmtNum(hf, 1) + ' ч' : '');
+        } else if (alarm && hours !== null) {
           text += ' · хватит на ' + fmtNum(hours, 1) + ' ч';
           if (expect) text += ' · фабрика встанет в ' + fv(twin, 'stop_forecast', '—');
         } else text += ' · запас в норме';
@@ -151,12 +158,24 @@ export function update(ctx, twins) {
     } else if (rec.kind === 'plant') {
       text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' / ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
         ' т/ч · план ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
+      const grid = twins[NS + ':power-grid'];
+      if (id.endsWith(':plant-sulphide') && grid) {                     // мельничный корпус — мощность мельниц
+        text += ' · мельницы ' + fmtNum(fv(grid, 'mills', 0), 1) + ' МВт · ' + fmtNum(fv(twin, 'specific_energy', 0), 1) + ' кВт·ч/т';
+        if (fv(twin, 'power_limited', false) === true)
+          text += ' · предел мощности: −' + fmtNum(fv(twin, 'power_limit_lost_ore', 0), 0) + ' т/ч';
+      } else if (grid) text += ' · ' + fmtNum(fv(grid, 'clay_plant', 0), 1) + ' МВт';
     } else if (rec.kind === 'mill') {
-      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч';
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'throughput', 0), 0) + ' т/ч · ' + fmtNum(fv(twin, 'mills_power', 0), 1) + ' МВт';
     } else if (rec.kind === 'flotation') {
       text += ' · извлечение ' + fmtNum(fv(twin, 'recovery', 0), 1) + ' %';
     } else if (rec.kind === 'substation') {
-      text += ' · ' + fmtNum(fv(twin, 'load', 0), 1) + ' МВт';
+      // цвет — по нагрузке: норма / близко к пределу (> 90 %) / превышение; предел — сценарий power_limit или подключённая мощность
+      const limitOn = fv(twin, 'limit_on', false) === true;
+      const cap = limitOn ? Number(fv(twin, 'limit_mw', 0)) : Number(fv(twin, 'supply_mw', 0));
+      const lvl = fv(twin, 'load_level', 'normal');
+      lamp = lvl === 'over' ? 'red' : (lvl === 'near' ? 'amber' : 'green');
+      text += ' · ' + fmtNum(fv(twin, 'load', 0), 1) + ' из ' + fmtNum(cap, 0) + ' МВт' + (limitOn ? ' (предел энергосистемы)' : '') +
+        ' · потери холостого хода ' + fmtNum(fv(twin, 'idle_power', 0), 0) + ' кВт';
     } else if (rec.kind === 'dump') {
       text += ' · ' + fmtNum(Number(fv(twin, 'received_total', 0)) / 1000, 1) + ' тыс. т';
     }
