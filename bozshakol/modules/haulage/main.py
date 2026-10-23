@@ -607,7 +607,7 @@ class Haulage:
             back = self.roads.path(dest.node, ex.node)
             travel_s = (self._path_time_s(ref, ex.node, there[1:]) if there else 0.0) + \
                        (self._path_time_s(ref, dest.node, back[1:]) if back else 0.0)
-            cycle_s = self._truck_load_time_s(ref) + travel_s + DUMP_S
+            cycle_s = self._truck_load_time_s(ref, info["factor"]) + travel_s + DUMP_S
             total_s += cycle_s * n
             total_n += n
         return total_s / total_n if total_n else 0.0
@@ -703,10 +703,21 @@ class Haulage:
         return PLAN_DEFICIT_FALLBACK_S if deficit_t > 0 else 0.0
 
     # -- выбор экскаватора ---------------------------------------------------
-    def _truck_load_time_s(self, truck):
-        """Оценка полного времени погрузки самосвала (без текущего loading_factor забоя — это
-        эвристика диспетчера для сравнения экскаваторов, а не точный прогноз)."""
-        return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed
+    def _truck_load_time_s(self, truck, factor=1.0):
+        """Оценка полного времени погрузки самосвала — С учётом `loading_factor` забоя
+        (`factor`, передаёт вызывающий — честная оценка, не разброс: у вскрышных забоёв порода
+        твёрже, `loading_factor` ≈ 0.76-0.77 против ≈1.0 у рудных, реальный цикл ковша ЗАМЕТНО
+        длиннее). Без этого (было раньше: всегда `factor=1.0`) — настоящая нестыковка единиц,
+        найденная при сравнении живого стенда с `sim_check.py` (задача «стенд против
+        sim_check»): `_excavator_free_at_s` уже считает ОСТАТОК погрузки честно, через
+        `cycle_s = BUCKET_CYCLE_S / factor`, а «полное время» для вычитания остатка брало ОТСЮДА
+        — без `factor`, т.е. занижало полное время погрузки у медленных (вскрышных)
+        экскаваторов на те же ≈24-30%, из-за чего диспетчер считал их свободными РАНЬШЕ, чем
+        они реально освобождались, и направлял туда больше самосвалов, чем они успевали
+        обслужить — очередь там росла. `operator_mult` (машинист, разброс) сюда намеренно НЕ
+        входит — это честная оценка без случайного разброса, как и было, `factor` — не разброс,
+        а признак забоя (модуль №3)."""
+        return LOAD_SETUP_S + BUCKET_CYCLE_S * truck.buckets_needed / factor
 
     def _load_elapsed_s(self, truck, cycle_s):
         """Сколько из времени погрузки самосвал УЖЕ потратил (чтобы считать остаток, не всё заново)."""
@@ -747,12 +758,13 @@ class Haulage:
         сколько секунд он освободится: кто уже грузится — по остатку его времени; кто стоит в
         очереди — по порядку, каждый добавляет своё полное время; кто ещё едет — по своему ETA,
         вставляется в очередь по времени прибытия (а не как будто уже стоит на месте)."""
-        cycle_s = BUCKET_CYCLE_S / self.face_info(ex.id)["factor"]
+        factor = self.face_info(ex.id)["factor"]
+        cycle_s = BUCKET_CYCLE_S / factor
         t_free = 0.0
         if ex.loading:
-            t_free = max(0.0, self._truck_load_time_s(ex.loading) - self._load_elapsed_s(ex.loading, cycle_s))
+            t_free = max(0.0, self._truck_load_time_s(ex.loading, factor) - self._load_elapsed_s(ex.loading, cycle_s))
         for t in ex.queue:
-            t_free += self._truck_load_time_s(t)
+            t_free += self._truck_load_time_s(t, factor)
         pending = []
         for t in self.trucks:
             if t is ex.loading or t in ex.queue:
@@ -760,7 +772,7 @@ class Haulage:
             if t.state == "returning" and t.destination == ex.id:
                 eta = self._eta_s(t, ex.node)
                 if eta is not None:
-                    pending.append((eta, self._truck_load_time_s(t)))
+                    pending.append((eta, self._truck_load_time_s(t, factor)))
         pending.sort()
         for eta, svc in pending:
             t_free = max(t_free, eta) + svc

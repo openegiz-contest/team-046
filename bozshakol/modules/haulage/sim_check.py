@@ -114,8 +114,13 @@ CONST_FACES = {
     "face-02": dict(ore_type="sulphide", cu_grade=0.39, clay_pct=5.0, loading_factor=1.0, recommended_destination="crusher-01"),
     "face-03": dict(ore_type="sulphide", cu_grade=0.39, clay_pct=5.0, loading_factor=1.0, recommended_destination="crusher-01"),
     "face-04": dict(ore_type="clay", cu_grade=0.31, clay_pct=60.0, loading_factor=1.0, recommended_destination="stockpile-clay"),
-    "face-05": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=1.0, recommended_destination="dump-waste-1"),
-    "face-06": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=1.0, recommended_destination="dump-waste-1"),
+    # вскрышные (face-05/06) — porода твёрже (hardness ≈ 15-16 против ≈10-12 у рудных, модуль
+    # №3), реальный loading_factor на живом стенде ≈ 0.76-0.77, не 1.0 — задача «стенд против
+    # sim_check» (найдено расхождение: физический потолок т/ч вскрышных на стенде ниже, чем
+    # считал sim_check с loading_factor=1.0 у всех забоёв). Числа — наблюдённые на стенде,
+    # не подгонка под результат.
+    "face-05": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=0.76, recommended_destination="dump-waste-1"),
+    "face-06": dict(ore_type="waste", cu_grade=0.0, clay_pct=0.0, loading_factor=0.77, recommended_destination="dump-waste-1"),
 }
 CONST_ACCEPTING = {"crusher-01": True, "stockpile-clay": True}
 
