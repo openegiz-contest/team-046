@@ -1833,11 +1833,7 @@ function truckTargets() {
     if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw, E: ud.man.E }; ud.man = null; }
     // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, за местом погрузки
     // (дальше от экскаватора), бортом к полотну (не на полосе съезда)
-    const nearBench = st === 'returning' && (() => {
-      const nd = dio.D.nodes['face-' + String(val(id, 'excavator', '')).slice(-2)], r = ud.rawPos || o.position;
-      return nd && Math.hypot(r.x - nd[0], -r.z - nd[1]) < 30;
-    })();
-    if (st === 'queued_load' || nearBench) {
+    if (st === 'queued_load') {
       const slot = benchQueueSlot(o, id);
       if (slot) { o.position.x = slot[0]; o.position.z = -slot[1]; o.rotation.y = slot[2]; continue; }
     }
