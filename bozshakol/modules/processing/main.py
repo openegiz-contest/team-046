@@ -60,7 +60,8 @@ REC_C_PER_CU, REC_C_PER_CLAY = 20.0, 0.2
 CONC_CU = 24.0          # % Cu в концентрате (допущение заглушки)
 
 # -- энергия: мощности потребителей — в energy.py, источники и допущения — в README («Энергетика») ---
-ADVICE_IDLE_S = 15 * 60.0          # рекомендация «остановить конвейер»: дробилка не принимает дольше 15 модельных минут
+SPECIFIC_MIN_H = 0.25              # удельный расход считается, когда за смену переработано ≥ 15 мин планового питания
+ADVICE_IDLE_S = 15 * 60.0         # рекомендация «остановить конвейер»: дробилка не принимает дольше 15 модельных минут
 CONVEYOR_AUTOSTOP_S = 30 * 60.0    # свой конвейер сервис останавливает сам после 30 модельных минут холостого хода
 POWER_LIMIT_DEFAULT_MW = 80.0      # предел мощности по умолчанию, если у сценария power_limit нет параметра limit_mw
 
@@ -425,8 +426,12 @@ def main():
         elif blocked:
             crushed, crusher_state, reason = 0.0, "stopped", "склад крупнодроблёной руды полон"
         else:
-            crushed = bunker.take(cap_tph * dt / 3600.0)
-            crusher_state, reason = ("running", "") if crushed > 0 else ("idle", "нет руды в бункере")
+            # за шаг дробилка не может переработать больше, чем есть: в бункере уже лежит руда, пришедшая за шаг
+            # (приход добавлен выше), поэтому дроблено = min(возможное по p80 и крепости × шаг, бункер + приход)
+            available = bunker.stock
+            crushed = bunker.take(min(cap_tph * dt / 3600.0, available))
+            # исправна, но руды нет — «ожидание руды» (простой, жёлтая лампа), 0 т/ч и мощность холостого хода
+            crusher_state, reason = ("running", "") if crushed > 0 else ("idle", "ожидание руды")
         if crushed > 0:
             belt.append([transit_s, crushed, {k: bunker.q[k] for k in ("cu", "clay")}])
             if not conveyor_on:
@@ -563,8 +568,10 @@ def main():
         shift_acc["e_sulph"] += sulph_kw * dt / 3600.0
         shift_acc["e_clay"] += (p_clay + p_heat_c) * dt / 3600.0
         # удельный расход по фабрикам — за смену (кВт·ч ÷ т)
-        sp_sulph = shift_acc["e_sulph"] / shift_acc["s_ore"] if shift_acc["s_ore"] > 1.0 else 0.0
-        sp_clay = shift_acc["e_clay"] / shift_acc["c_ore"] if shift_acc["c_ore"] > 1.0 else 0.0
+        # пока за смену переработано меньше 15 минут планового питания — не считаем (иначе деление на почти 0);
+        # публикуется пустое значение, на дашборде «нет данных за период»
+        sp_sulph = shift_acc["e_sulph"] / shift_acc["s_ore"] if shift_acc["s_ore"] >= SPECIFIC_MIN_H * PLAN_SULPH_TPH else None
+        sp_clay = shift_acc["e_clay"] / shift_acc["c_ore"] if shift_acc["c_ore"] >= SPECIFIC_MIN_H * PLAN_CLAY_TPH else None
         # пиковая 15-минутная мощность за смену: среднее за последние 15 модельных минут
         p_window.append((dt, total_kw))
         while sum(w for w, _ in p_window) - p_window[0][0] >= 900.0:
@@ -648,7 +655,7 @@ def main():
             "cu_year_pace": feature(r(cu_s / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
             "recovery": feature(r(rec_s, 2), "%"),
             "state": feature("running" if feed_tph > 0 else ("maintenance" if sag_maint else "idle")),
-            "specific_energy": feature(r(sp_sulph, 1), "кВт·ч/т"),
+            "specific_energy": feature(None if sp_sulph is None else r(sp_sulph, 1), "кВт·ч/т"),
             "power_limited": feature(bool(limit_on and lost_t > 0)),
             "power_limit_lost_ore": feature(r(lost_t / dt * 3600.0, 0), "т/ч"),
             "power_limit_lost_ore_shift": feature(r(shift_acc["lost_ore"], 0), "т"),
@@ -673,7 +680,7 @@ def main():
             "cu_year_pace": feature(r(cu_c / dt * 3600.0 * HOURS_YEAR / 1000.0, 1), "тыс. т/год"),
             "recovery": feature(r(rec_c, 2), "%"),
             "state": feature("running" if clay_tph > 0 else "idle"),
-            "specific_energy": feature(r(sp_clay, 1), "кВт·ч/т"),
+            "specific_energy": feature(None if sp_clay is None else r(sp_clay, 1), "кВт·ч/т"),
         })
         mw = lambda kw: r(kw / 1000.0, 2)   # noqa: E731
         telemetry.publish("power-grid", {
@@ -689,7 +696,8 @@ def main():
             "energy_shift": feature(r(energy_shift, 1), "МВт·ч"), "energy_total": feature(r(energy_total, 1), "МВт·ч"),
             "energy_sulphide_shift": feature(r(shift_acc["e_sulph"] / 1000.0, 1), "МВт·ч"),
             "energy_clay_shift": feature(r(shift_acc["e_clay"] / 1000.0, 1), "МВт·ч"),
-            "specific_sulphide": feature(r(sp_sulph, 1), "кВт·ч/т"), "specific_clay": feature(r(sp_clay, 1), "кВт·ч/т"),
+            "specific_sulphide": feature(None if sp_sulph is None else r(sp_sulph, 1), "кВт·ч/т"),
+            "specific_clay": feature(None if sp_clay is None else r(sp_clay, 1), "кВт·ч/т"),
             "mills_share": feature(r(100.0 * groups["mills"] / sulph_kw, 1) if sulph_kw > 0 else 0.0, "%"),
             "sulphide_plant": feature(mw(sulph_kw), "МВт"),
             "peak_15min": feature(mw(p15), "МВт"), "peak_15min_shift": feature(mw(shift_acc["peak15"]), "МВт"),
