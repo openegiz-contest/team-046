@@ -336,7 +336,12 @@ function rampBands(THREE, dio, colorAt) {
     if (!e.path) continue;
     // внутри карьера и чуть за бровкой (там лента уходит под землю): опущенная под съездом сетка карьера
     // у бровки закрыта лентой до самого края, без провала; подход к верхнему узлу — обычная лента дороги
-    const pl = e.path.filter((p) => dio.schemaInset(p[0], p[1]) > -40), n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
+    const pl = [];   // точки трассы ближе 1,5 единицы к предыдущей (у узла) пропускаем — без вырожденных треугольников
+    for (const p of e.path) {
+      const q = pl[pl.length - 1];
+      if (dio.schemaInset(p[0], p[1]) > -10 && !(q && Math.hypot(p[0] - q[0], p[1] - q[1]) < 1.5)) pl.push(p);
+    }
+    const n = pl.length, base = pos.length / 3, K = BAND_OFFS.length;
     if (n < 2) continue;
     // радиус поворота трассы в каждой точке и сторона центра поворота (+1 — слева); берём наименьший радиус
     // в окне ±3 точки — сжатие внутреннего края меняется плавно, без перекошенных треугольников
