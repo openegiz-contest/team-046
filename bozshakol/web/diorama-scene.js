@@ -249,7 +249,7 @@ function pitColorer(THREE, dio, colors, u) {
   };
 }
 const smooth01 = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
-const BAND = 18;                  // единицы: лента съезда — полотно ±16 и край откоса до 18 (дальше — мелкая сетка карьера)
+const BAND = 30;                  // единицы: лента съезда — полотно ±16 и откос до 28 (вся полоса, где поверхность врезана)
 const SINK_IN = 10, SINK_OUT = 14; // сетка карьера под полотном (ближе 10 от оси) опущена на 3, до 14 — плавно к поверхности
 
 // Карьер: кольца точно по кромкам уступов (начало бермы, середина бермы, низ стенки), высоты — dio.surfaceAt;
@@ -318,7 +318,8 @@ function buildPitMesh(THREE, dio, colorAt, ts) {
 // (полотно ±16 ровное, откосы до 28, дальше — уступы как есть), высоты — dio.surfaceAt. На крутом повороте у торца
 // карьера внутренний край ленты короче (не ближе 8 единиц к центру поворота) — без вырожденных треугольников.
 // Сетка карьера под лентой опущена (buildPitMesh), а сама лента чуть сдвинута к камере (polygonOffset)
-const BAND_OFFS = [-18, -15.5, -8, 0, 8, 15.5, 18];   // ±15,5 — край ровного полотна
+const BAND_OFFS = [-30, -26, -22, -19, -15.5, -8, 0, 8, 15.5, 19, 22, 26, 30];   // ±15,5 — край ровного полотна
+const BAND_LIFT = 0.15;           // лента чуть выше сетки карьера (вместе с polygonOffset — без ряби там, где они совпадают)
 function rampBands(THREE, dio, colorAt) {
   const pos = [], col = [], idx = [], tmp = new THREE.Color();
   const HW = dio.roadHalf;
@@ -346,7 +347,7 @@ function rampBands(THREE, dio, colorAt) {
         }
         const xs = pl[i][0] - ty * off, ys = pl[i][1] + tx * off;   // слева от хода — положительный сдвиг
         const z = Math.abs(o) <= HW ? pl[i][2] : dio.surfaceAt(xs, ys);
-        pos.push(xs, z, -ys);
+        pos.push(xs, z + BAND_LIFT, -ys);
         const ins = dio.schemaInset(xs, ys);
         if (ins < 0 && Math.abs(o) > HW) tmp.setHex(0xd6c896);   // за бортом — степь
         else colorAt(xs, ys, z, ins >= dio.pit.Ds ? -1 : ins, tmp, Math.abs(o) <= HW);

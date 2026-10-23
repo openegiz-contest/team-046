@@ -172,6 +172,7 @@ function defaultImportance(obj) {
   return 2;
 }
 const MAX_LABELS = 30;
+const adviceTitles = {};   // id совета → его заголовок по-русски (для журнала «Совет снят»)
 const IN_CYCLE = new Set(['queued_load', 'loading', 'hauling', 'queued_dump', 'dumping', 'returning']);   // самосвал в работе
 // Окна поверх сцены (сверка, фото местности, путеводитель): Esc закрывает верхнее открытое, по одному за нажатие
 const openWindows = [];
@@ -366,7 +367,7 @@ const FEATURE_RU = {
   cu_concentrate_shift: 'медь в концентрате за смену', ore_shift_t: 'руда за смену', cu_year_pace: 'медь, темп года',
   specific_energy: 'удельная электроэнергия', power: 'мощность', load_level: 'нагрузка сети', stock: 'запас', stock_t: 'запас',
   capacity_t: 'вместимость', hours_left: 'хватит на', inflow: 'поступление', outflow: 'отгрузка', stop_forecast: 'фабрика встанет в',
-  ore_type: 'тип руды', clay_pct: 'доля глины', cu_grade: 'содержание меди', p80: 'крупность P80', hardness: 'крепость',
+  ore_type: 'тип руды', clay_pct: 'доля глины', cu_grade: 'содержание меди', au_grade: 'содержание золота', p80: 'крупность P80', hardness: 'крепость',
   loading_factor: 'скорость погрузки', remaining: 'остаток', recommended_destination: 'куда везти', blasted: 'взорван',
   blasted_ahead_h: 'взорванный запас', bench: 'уступ', open: 'открыта', closed_reason: 'причина закрытия', length_m: 'длина',
   mode: 'режим', avg_wait_excavator: 'ожидание у экскаватора', avg_wait_dump: 'ожидание на разгрузке',
@@ -609,13 +610,13 @@ function renderAdvice() {
   for (const [id, b] of Object.entries(adviceBadges)) if (!ids.has(id)) b.enabled = false;
   // журнал: новые, снятые советы и смена приоритета
   const pri = {};
-  for (const a of list) pri[a.id] = a.priority;
+  for (const a of list) { pri[a.id] = a.priority; adviceTitles[a.id] = a.title || adviceTitles[a.id]; }
   if (prevAdvicePri !== null) {
     for (const a of list) {
       if (!(a.id in prevAdvicePri)) logEvent('Совет (' + (ADVICE_PRI[a.priority] || a.priority) + '): ' + a.text);
       else if (prevAdvicePri[a.id] !== a.priority) logEvent('Совет теперь «' + (ADVICE_PRI[a.priority] || a.priority) + '»: ' + (a.title || a.id));
     }
-    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + id);
+    for (const id of Object.keys(prevAdvicePri)) if (!ids.has(id)) logEvent('Совет снят: ' + (adviceTitles[id] || 'совет'));
   }
   prevAdvicePri = pri;
 }
@@ -1602,6 +1603,8 @@ function adjustMachines(dt) {
     smoothShifts(dt);
     separateTrucks(3, 24);   // дожим после сглаживания: мелкими шагами, без заметных скачков
     separateDrills();
+    trucksOffSlopes();       // уже по показанному месту: без переходов, когда машина съехала бы на откос
+    separateTrucks(3, 8);    // переставленные на полосу не налезают на соседей
     groundMachines(dt);
   }
   updateMarkers();
@@ -1615,6 +1618,26 @@ function orientDumping() {
     if (id.indexOf(':truck-') < 0 || val(id, 'state', '') !== 'dumping') continue;
     const dx = o.position.x - cr.position.x, dz = o.position.z - cr.position.z;
     if (Math.hypot(dx, dz) < 40) o.rotation.y = Math.atan2(dx, dz);
+  }
+}
+// Самосвал в карьере не стоит на откосе: если под корпусом крутой склон (не полотно и не площадка забоя), ставим его
+// на ближайшую дорогу карьера — не дальше своей полосы от оси (место слоя, rawPos, не меняется)
+function trucksOffSlopes() {
+  const pitEdges = dio.edges.filter((e) => e.pit);
+  for (const o of machineList) {
+    if (o.userData.thingId.indexOf(':truck-') < 0) continue;
+    const xs = o.position.x, ys = -o.position.z;
+    if (dio.schemaInset(xs, ys) < 0) continue;
+    const h0 = dio.surfaceAt(xs, ys);
+    let steep = false;
+    for (const [dx, dy] of [[9, 0], [-9, 0], [0, 9], [0, -9]]) if (Math.abs(dio.surfaceAt(xs + dx, ys + dy) - h0) > 2.5) { steep = true; break; }
+    if (!steep) continue;
+    let best = null;
+    for (const e of pitEdges) { const n = dio.edgeNearest(e, xs, ys, 80); if (!best || n.d < best.n.d) best = { e, n }; }
+    if (!best || best.n.d > 80) continue;
+    const q = dio.edgeAt(best.e, best.n.t), lat = -q[4] * (xs - q[0]) + q[3] * (ys - q[1]);
+    const l = Math.max(-LANE, Math.min(LANE, lat));
+    o.position.x = q[0] - q[4] * l; o.position.z = -(q[1] + q[3] * l);
   }
 }
 // Буровой станок в карьере — на берме своего уступа, вдоль неё (берма ≈ 6 единиц, станок шириной ≈ 6): не в стенке,

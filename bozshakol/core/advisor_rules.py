@@ -364,7 +364,7 @@ def rule_fleet(snap):
     return _advice("fleet", "important", "Лишние самосвалы", text,
                    f"среднее ожидание у экскаватора {wait:.1f} мин — больше {WAIT_LIMIT_MIN:.0f} мин в режиме «авто»; {how}" +
                    (f"; экскаваторы в аварии: {', '.join(downs)}" if downs else ""),
-                   f"ожидание у экскаватора снизится к {WAIT_TARGET_MIN:.1f} мин, расход топлива и износ — меньше на ≈ {k} машин",
+                   f"ожидание у экскаватора снизится к {WAIT_TARGET_MIN:.1f} мин, расход топлива и износ — меньше на ≈ {k} {_machines(k)}",
                    _busiest_excavator(snap), {"dispatch.avg_wait_excavator": wait, "dispatch.trucks_hauling": hauling,
                                 "excavator_queue_total": queued, "excavators_working": working, "reserve_estimate": k})
 
@@ -462,6 +462,16 @@ def rule_blizzard(snap, ctx=None):
     return _advice("blizzard", priority, "Метель", text, reason,
                    "фабрика переживёт просадку привоза за счёт склада; при запасе ниже порога — сократить вскрышу в пользу руды",
                    "stockpile-coarse", data)
+
+
+def _machines(k):
+    """«машина / машины / машин» по числу."""
+    k = int(k)
+    if k % 10 == 1 and k % 100 != 11:
+        return "машина"
+    if 2 <= k % 10 <= 4 and not 12 <= k % 100 <= 14:
+        return "машины"
+    return "машин"
 
 
 def rule_warmup(snap, history):
