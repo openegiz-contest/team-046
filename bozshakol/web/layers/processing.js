@@ -184,8 +184,9 @@ export function update(ctx, twins) {
         if (q) text += ' · очередь: ' + q;
       }
     } else if (rec.kind === 'plant') {
-      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' / ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
-        ' т/ч · план ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
+      // текущий темп (т/ч против плана т/ч) и отдельно — выполнение плана за смену (сменный факт ÷ сменный план)
+      text += (STATE_RU[state] ?? '') + ' · ' + fmtNum(fv(twin, 'feed_rate', 0), 0) + ' т/ч (план ' + fmtNum(fv(twin, 'plan_rate', 0), 0) +
+        ') · за смену ' + fmtNum(fv(twin, 'plan_fulfilment', 0), 0) + ' %';
       const grid = twins[NS + ':power-grid'];
       if (id.endsWith(':plant-sulphide') && grid) {                     // мельничный корпус — мощность мельниц
         text += ' · мельницы ' + fmtNum(fv(grid, 'mills', 0), 1) + ' МВт · ' + fmtNum(fv(twin, 'specific_energy', 0), 1) + ' кВт·ч/т';
