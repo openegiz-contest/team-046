@@ -360,7 +360,7 @@ const FEATURE_RU = {
   destination: 'куда едет', source: 'откуда', assigned_excavator: 'закреплён за экскаватором', trips: 'рейсы',
   trips_total: 'рейсы всего', odometer_km: 'пробег', engine_hours: 'моточасы', accepting: 'принимает руду',
   throughput: 'производительность', bunker_t: 'бункер', bunker: 'бункер', stop_reason: 'причина остановки',
-  trucks_queued: 'самосвалов в очереди', queue_crusher: 'очередь у дробилки', queue_clay: 'очередь у склада глины',
+  trucks_queued: 'самосвалов в очереди', trucks_on_road: 'самосвалов на дороге', queue_crusher: 'очередь у дробилки', queue_clay: 'очередь у склада глины',
   feed_rate: 'подача', plan_rate: 'план', plan_fulfilment: 'выполнение плана', feed_cu: 'медь в питании',
   feed_clay: 'глина в питании', feed_hardness: 'крепость питания', feed_p80: 'крупность питания P80', recovery: 'извлечение',
   cu_concentrate_shift: 'медь в концентрате за смену', ore_shift_t: 'руда за смену', cu_year_pace: 'медь, темп года',

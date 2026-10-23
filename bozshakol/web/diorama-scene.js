@@ -21,7 +21,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const K = D.scale || 2;             // м местности на единицу карты
   const u = (m) => m / K;             // расстояние по карте: метры → единицы
   const glows = [];
-  const ts = pitParams(dio, PIT_SEG, 3), tsLow = pitParams(dio, PIT_SEG / 2, 6);
+  const ts = pitParams(dio, PIT_SEG, 3), tsLow = pitParams(dio, PIT_SEG / 2, 10);
 
   // --- степь до горизонта: внешнее поле одного цвета, внутри области рудника — текстура с пятнами и площадками
   const x0 = B.minX, x1 = B.maxX, y0 = B.minY, y1 = B.maxY;
