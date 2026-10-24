@@ -14,12 +14,13 @@ const dbgWin = new URLSearchParams(location.search).has('debug') ? window : {};
 
 // ---------------------------------------------------------------- палитра
 const colors = {
-  sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff, down: 0xd32f2f,
+  sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff,
+  down: 0xd1236a,                         // авария / остановка / закрыто — красно-пурпурный (виден и при дальтонизме)
   steppe: 0xe6d9a8,
   bench: [0xdcc08e, 0xcfae78],            // бермы (площадки) — два чередующихся светлых тона
   wall: [0x8f6a44, 0x7f5c3a],             // стенки уступов — заметно темнее берм
   benchLine: 0x4a3418, floor: 0xa8a27e,   // контуры кромок; дно карьера — серо-оливковое
-  road: 0xcfc3a4, ramp: 0xe8dfc3, roadEdge: 0x4a3f2e, roadClosed: 0xd32f2f,
+  road: 0xcfc3a4, ramp: 0xe8dfc3, roadEdge: 0x4a3f2e, roadClosed: 0xd1236a,
   building: 0xd8d8d8, roof: 0xa9b8cc, conveyor: 0x6f7f95, excavator: 0xf2a21b, drill: 0x4f6d8f,
   dump: 0x9a9a9a, stockpileOre: 0x6b7a5a, stockpileClay: 0xb86f3a, label: 0x2b2620,
 };
@@ -91,8 +92,10 @@ const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
 renderer.setPixelRatio(1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;   // мягкая тональная кривая: светлые тона без пересвета
-renderer.toneMappingExposure = 1.05;
+// AgX: мягкий пересвет без сдвига оттенков (ACES уводил красный в оранжевый) — цвета состояний остаются узнаваемыми
+renderer.toneMapping = THREE.AgXToneMapping;
+const EXPOSURE = { day: 0.92, night: 1.2 };
+renderer.toneMappingExposure = EXPOSURE.day;
 renderer.shadowMap.enabled = false;                   // тени — только в качестве «Высокое»
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
@@ -132,9 +135,9 @@ topControls.enabled = false;
 topControls.update();
 
 // Свет: небо-полусфера (голубое сверху, тёплый отражённый снизу) и тёплое низкое солнце с юго-запада
-const hemi = new THREE.HemisphereLight(0xe3eef8, 0xb59c74, 1.35);
+const hemi = new THREE.HemisphereLight(0xe3eef8, 0x8f7a58, 1.05);   // снизу — темнее: у форм есть теневая сторона
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffe4bd, 3.1);
+const sun = new THREE.DirectionalLight(0xffe4bd, 3.6);
 sun.position.set(-4200, 3600, 2600);   // низкое солнце: стенки уступов и грани рельефа дают разный тон
 sun.target.position.set(-1100, 0, 200);
 sun.shadow.mapSize.set(2048, 2048);
@@ -1236,9 +1239,9 @@ function nightSky() {
 function applyLighting(l) {
   lighting = l === 'night' ? 'night' : 'day';
   const night = lighting === 'night';
-  hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
-  hemi.intensity = night ? 0.8 : 1.35;
-  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
+  hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0x8f7a58);
+  hemi.intensity = night ? 0.8 : 1.05;
+  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.6;   // ночью — луна
   for (const name of ['diorama-grid', 'grid']) {   // сетка фона (если есть) ночью — тёмно-синяя
     const grid = scene.getObjectByName(name);
     if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
@@ -1248,7 +1251,7 @@ function applyLighting(l) {
     if (!o.userData.baseScale) o.userData.baseScale = o.scale.x;
     o.scale.setScalar(o.userData.baseScale * (night ? 1.7 : 1));
   });
-  renderer.toneMappingExposure = night ? 1.15 : 1.05;
+  renderer.toneMappingExposure = night ? EXPOSURE.night : EXPOSURE.day;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
   roadNight();
   if (environment && environment.setQuality) environment.setQuality(night);   // ореолы фонарей — только ночью
@@ -1427,6 +1430,7 @@ function frame(now) {
   adjustMachines(dt);
   if (motionLog.on) sampleMotion(now);
   updateDust(dt);
+  updateContactShadows();
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 15) updateRoadWaitBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
@@ -1552,7 +1556,7 @@ function updateDownBadges() {
     const down = val(id, 'state', '') === 'down';
     let b = downBadges[id];
     if (b && b.obj !== o) { b.el.remove(); const i = labels.indexOf(b); if (i >= 0) labels.splice(i, 1); b = downBadges[id] = null; }
-    if (down && !b) b = downBadges[id] = addLabel(o, '⛔ авария', { importance: 3.5, cls: 'warn', dy: 9 });
+    if (down && !b) b = downBadges[id] = addLabel(o, '⛔ авария', { importance: 3.5, cls: 'warn alarm', dy: 9 });
     if (b) b.enabled = down;
   }
 }
@@ -1597,6 +1601,62 @@ function updateRoadWaitBadges() {
   }
 }
 dbgWin.__roadWait = () => Object.keys(roadWaitBadges).filter((id) => roadWaitBadges[id] && roadWaitBadges[id].enabled);
+// Контакт с землёй: мягкое тёмное пятно под каждой машиной — одна InstancedMesh на всю технику, в любом качестве
+// (в «Обычном» теней нет, без пятна техника висит над дорогой); размер — по габариту модели, курс — по машине
+let contactMesh = null;
+const CONTACT_MAX = 128;
+const contactSize = new WeakMap();
+const _cm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _cwq = new THREE.Quaternion(), _cp = new THREE.Vector3(), _cs = new THREE.Vector3();
+const _cf = new THREE.Vector3(), _cy = new THREE.Vector3(0, 1, 0), _cbox = new THREE.Box3(), _cb = new THREE.Box3(), _cinv = new THREE.Matrix4(), _crel = new THREE.Matrix4();
+function contactTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 3, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(40,30,20,0.62)'); gr.addColorStop(0.5, 'rgba(40,30,20,0.34)'); gr.addColorStop(1, 'rgba(40,30,20,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function machineFootprint(o) {   // [длина, ширина] модели в её собственных осях (без стрелы ковша — пятно мягкое)
+  let s = contactSize.get(o);
+  if (s) return s;
+  o.updateWorldMatrix(true, true);
+  _cinv.copy(o.matrixWorld).invert(); _cbox.makeEmpty();
+  o.traverse((c) => {
+    if (!c.isMesh || !c.geometry || !c.visible || c.isSprite) return;
+    if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+    _crel.multiplyMatrices(_cinv, c.matrixWorld); _cb.copy(c.geometry.boundingBox).applyMatrix4(_crel); _cbox.union(_cb);
+  });
+  if (_cbox.isEmpty()) return null;
+  _cbox.getSize(_cs);
+  s = [Math.min(_cs.x, _cs.z * 2.2) * o.scale.x, _cs.z * o.scale.z];
+  contactSize.set(o, s);
+  return s;
+}
+function updateContactShadows() {
+  if (!contactMesh) {
+    const geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({ map: contactTexture(), transparent: true, depthWrite: false, fog: false, toneMapped: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
+    contactMesh = new THREE.InstancedMesh(geo, mat, CONTACT_MAX);
+    contactMesh.name = 'contact-shadows'; contactMesh.frustumCulled = false; contactMesh.raycast = () => {};
+    scene.add(contactMesh);
+  }
+  let n = 0;
+  for (const o of clickable) {
+    if (n >= CONTACT_MAX) break;
+    const id = o.userData.thingId || '';
+    if (!/:(truck|excavator|drill)-/.test(id) || !o.isObject3D || o.isMesh || !o.visible) continue;
+    const s = machineFootprint(o); if (!s) continue;
+    o.getWorldPosition(_cp); o.getWorldQuaternion(_cwq);
+    _cf.set(1, 0, 0).applyQuaternion(_cwq);
+    _cq.setFromAxisAngle(_cy, Math.atan2(-_cf.z, _cf.x));
+    _cp.y += 0.25;
+    _cs.set(s[0] * 1.3, 1, s[1] * 1.45);
+    _cm.compose(_cp, _cq, _cs); contactMesh.setMatrixAt(n++, _cm);
+  }
+  contactMesh.count = n; contactMesh.instanceMatrix.needsUpdate = true;
+  contactMesh.material.opacity = lighting === 'night' ? 0.5 : (quality === 'high' ? 0.55 : 1);   // в «Высоком» есть и тени солнца
+}
 // Пыль за едущими самосвалами (только «Высокое»): пул мягких спрайтов, гаснут за ~1,5 с
 const dust = [];
 let dustMat = null, dustT = 0;
@@ -1862,7 +1922,7 @@ let markerMesh = null;
 const _mm = new THREE.Matrix4(), _mq = new THREE.Quaternion(), _ms = new THREE.Vector3(), _mc = new THREE.Color();
 function markerColor(id) {
   const st = val(id, 'state', '');
-  if (st === 'down' || st === 'failed') return 0xd32f2f;
+  if (st === 'down' || st === 'failed') return colors.down;
   if (id.indexOf(':excavator-') >= 0) return 0xef7d1e;
   if (id.indexOf(':drill-') >= 0) return 0x4f8fd0;
   if (st === 'reserve') return 0xb8bec4;

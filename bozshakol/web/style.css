@@ -8,7 +8,7 @@
   --accent-soft: #fbeedd;
   --ok: #2f8f6b;
   --warn: #d49a14;
-  --bad: #d23b35;
+  --bad: #c8205f;   /* тревога — красно-пурпурная, как в сцене (отличима при дальтонизме) */
   --line: rgba(35, 38, 43, 0.10);
   --shadow: 0 6px 22px rgba(30, 40, 55, 0.14), 0 1px 3px rgba(30, 40, 55, 0.10);
   --radius: 10px;
@@ -104,6 +104,7 @@ body.panel-collapsed #panel-strip:hover { background: #fff; }
 .kpi .k-row { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; }
 .kpi .k-val { font-size: 24px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--ink); }
 #kpi-mode .k-val { font-size: 19px; }
+.kpi.bad .k-val::before { content: "⚠ "; font-size: .8em; color: var(--bad); }   /* плохая цифра — не только цветом */
 .kpi .k-sub { color: var(--muted); }
 /* «?» и пояснение к нему */
 #panel .q { flex-shrink: 0; width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid #8d949e; background: #fff;
@@ -144,7 +145,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .scenario .hint { color: var(--muted); font-size: 14px; margin-top: 3px; line-height: 1.35; }
 .scenario .params { color: var(--muted); font-size: 14px; margin-top: 2px; }
 .scenario button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 10px; color: #fff; font-size: 14px; font-weight: 600; }
-.scenario button.on { background: #b3261e; }
+.scenario button.on { background: #b0164f; }
 .scenario button.off { background: #23735a; }
 .scenario button.show { background: transparent; color: #9a5510; border: 1px solid rgba(154, 85, 16, 0.5); padding: 3px 8px; font-weight: 600; }
 .scenario button.show:hover { background: var(--accent-soft); }
@@ -168,7 +169,12 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 /* --- подписи-значки сценариев и советов --- */
 .label.warn { background: #fff4d6; color: #7a4a00; box-shadow: 0 0 0 1px #e0b64a, 0 1px 4px rgba(0,0,0,.2); font-weight: 600; }
 .label.advice { background: #e6f5ee; color: #1f5c43; box-shadow: 0 0 0 1px #6fbf9c, 0 1px 4px rgba(0,0,0,.2); font-weight: 600; }
-.label.advice.crit { background: #fde8e7; color: #8a1c1c; box-shadow: 0 0 0 1px #e07a75, 0 1px 4px rgba(0,0,0,.2); }
+.label.advice.crit { background: #fbe4ee; color: #86123f; box-shadow: 0 0 0 1px #d97aa3, 0 1px 4px rgba(0,0,0,.2); }
+/* тревога в сцене — не только цветом: значок в тексте и мягкий пульс рамки (выключен при «меньше движения») */
+.label.alarm, .label.advice.crit { animation: bz-alarm 1s ease-in-out infinite alternate; }
+.label.alarm { background: #fbe4ee; color: #86123f; }
+@keyframes bz-alarm { from { box-shadow: 0 0 0 1px #d1236a, 0 1px 4px rgba(0,0,0,.2); } to { box-shadow: 0 0 0 4px rgba(209,35,106,.45), 0 1px 4px rgba(0,0,0,.2); } }
+@media (prefers-reduced-motion: reduce) { .label.alarm, .label.advice.crit { animation: none; } }
 #scene-notes { position: absolute; right: 12px; bottom: 10px; display: flex; gap: 10px; pointer-events: none;
   font-size: 10px; color: var(--muted); background: rgba(255,255,255,0.7); padding: 2px 8px; border-radius: 999px; }
 
@@ -180,7 +186,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .plant-card .state { font-size: 14px; font-weight: 700; padding: 0 8px; border-radius: 999px; color: #1d5a43; background: rgba(47, 143, 107, 0.15); }
 .plant-card .state::before { content: "● "; }
 .plant-card .state.warn { color: #6b4b00; background: rgba(212, 154, 20, 0.22); }
-.plant-card .state.bad { color: #9c1f1a; background: rgba(210, 59, 53, 0.14); }
+.plant-card .state.bad { color: #a3124f; background: rgba(209, 35, 106, 0.13); }
 .bar { position: relative; height: 14px; background: #ece9e1; border-radius: 999px; margin: 4px 0; overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--ok); border-radius: 999px; }
 .bar i.warn { background: var(--warn); }
@@ -205,7 +211,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 #advice .advice.info { border-color: var(--ok); }
 #advice .advice.none { color: var(--muted); cursor: default; border-color: var(--line); box-shadow: none; background: transparent; }
 #advice .advice .pri { font-size: 14px; color: var(--muted); font-weight: 700; }
-#advice .advice.crit .pri { color: #a8201a; }
+#advice .advice.crit .pri { color: #a3124f; }
 #advice .advice.imp .pri { color: #7d5a00; }
 #advice .advice.info .pri { color: #23735a; }
 #advice .advice.top .text { font-size: 16px; font-weight: 600; line-height: 1.35; margin-top: 2px; }
