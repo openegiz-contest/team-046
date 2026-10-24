@@ -162,6 +162,11 @@ function analyze(dir) {
     const byId = Object.fromEntries(ms.map((m) => [m.id, m]));
     const trucks = ms.filter((m) => m.id.startsWith('truck-'));
     const others = ms.filter((m) => !m.id.startsWith('truck-'));
+    const service = ms.filter((m) => m.id.startsWith('service-'));   // служебные машины сцены (не двойники) — те же правила
+    for (const A of service) for (const E of others) {
+      if (E === A || Math.abs(A.x - E.x) > 50 || Math.abs(A.z - E.z) > 50) continue;
+      if (obbOverlap(obb(A.x, A.z, A.yaw, A.hl, A.hw), obb(E.x, E.z, E.yaw, E.hl, E.hw))) hit('o' + A.id + E.id, 'overlap', i, place(A.x, A.z), `${A.id} × ${E.id}`);
+    }
     for (const m of ms) {
       const pl = place(m.x, m.z);
       if (m.lo < -0.5 || m.hi > 0.5) hit('w' + m.id, 'wheels', i, pl, `${m.id} (${m.st || '—'}): колёса ${m.lo < -0.5 ? 'под поверхностью на ' + (-m.lo).toFixed(1) : 'над поверхностью на ' + m.hi.toFixed(1)}`);
@@ -182,7 +187,7 @@ function analyze(dir) {
       for (const p of piles) if (quadOverlap(oa, p.corners)) hit('o' + A.id + p.face, 'overlap', i, pl, `${A.id} (${A.st}) × развал ${p.face}`);
     }
     // по истории каждой машины: шаг, ход назад, поворот, простой
-    for (const A of trucks) {
+    for (const A of [...trucks, ...service]) {
       const h = hist[A.id] || (hist[A.id] = []);
       h.push({ t: rec.t, x: A.x, z: A.z, yaw: A.yaw, st: A.st, dest: A.dest, exc: A.exc, i });
       while (h.length && rec.t - h[0].t > 1500) h.shift();

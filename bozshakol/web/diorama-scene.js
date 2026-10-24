@@ -147,7 +147,35 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
     };
     line([sub[0] - u(1800), sub[1] - u(1500)], sub, 125);   // ЛЭП приходит с юго-запада
     if (plant) line(sub, [plant[0] + 170, plant[1] - 60], 80);
+    // от подстанции вдоль конвейера (южнее его трассы) к дробилке, с ответвлением к глинистой фабрике;
+    // опоры — не на дорогах, площадках и трассе конвейера (такой пролёт просто длиннее)
+    const free = poleFree(dio);
+    const route = (pts, step) => {
+      const out = [];
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const [a, b] = [pts[k], pts[k + 1]], n = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / step));
+        for (let i = k ? 1 : 0; i <= n; i++) {
+          const x = a[0] + (b[0] - a[0]) * i / n, y = a[1] + (b[1] - a[1]) * i / n;
+          const end = (k === 0 && i === 0) || (k === pts.length - 2 && i === n);
+          if (end || free(x, y)) out.push(S(x, y, 0));
+        }
+      }
+      if (out.length >= 2) group.add(models.powerLine(out, { height: 20 }));
+    };
+    const cr = D.objects['crusher-01'] && D.objects['crusher-01'].position, pc = D.objects['plant-clay'] && D.objects['plant-clay'].position;
+    const mid = [sub[0] + 70, sub[1] + 150], east = [-400, sub[1] + 150];
+    if (cr) route([sub, mid, east, [cr[0] - 40, cr[1] - 40]], 90);
+    if (pc) route([east, [pc[0] - 95, pc[1] - 75]], 90);
   }
+
+  // --- ж/д ветка к складу концентрата у сульфидной фабрики: концентрат вывозят по железной дороге
+  //     (KAZ Minerals, data/SOURCES.md); положение ветки и склада — допущение схемы
+  const railZ = plant ? -plant[1] + 330 : null;
+  const onRail = (x, y) => railZ !== null && x > plant[0] - 1520 && x < plant[0] + 120 && Math.abs(-y - railZ) < 40;
+  // --- живая степь: куртины кустиков (полынь, караганник) и пучки ковыля — по одному InstancedMesh на вид
+  group.add(...steppeLife(THREE, dio, [x0, y0, x1, y1], onRail));
+  const rail = railSiding(THREE, dio, models, plant);
+  if (rail) { group.add(rail.group); anchors.concentrate = rail.anchor; }
 
   // --- подписи карьера
   anchors.pitName = new THREE.Object3D(); anchors.pitName.position.copy(S(pit.cx, pit.cy + pit.b, 6)); group.add(anchors.pitName);
@@ -495,6 +523,17 @@ function steppeTexture(THREE, dio, [x0, y0, x1, y1], u) {
   let seed = 7;
   const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const tones = ['rgba(201,184,128,', 'rgba(224,212,166,', 'rgba(190,176,122,', 'rgba(214,196,140,'];
+  // пятна цвета земли (бурый суглинок, солончак) и серо-зелёной полыни — живее с общего вида
+  const soil = ['rgba(168,142,98,', 'rgba(150,148,104,', 'rgba(184,160,112,', 'rgba(226,220,196,', 'rgba(140,140,96,'];
+  for (let i = 0; i < 140; i++) {
+    const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0), r = u(120) + rnd() * u(420);
+    const gr = g.createRadialGradient(px(x), py(y), 0, px(x), py(y), pr(r));
+    const t = soil[i % soil.length];
+    gr.addColorStop(0, t + '0.42)'); gr.addColorStop(0.55, t + '0.22)'); gr.addColorStop(1, t + '0)');
+    g.fillStyle = gr;
+    g.save(); g.translate(px(x), py(y)); g.rotate(rnd() * Math.PI); g.scale(1, 0.35 + rnd() * 0.6); g.translate(-px(x), -py(y));
+    g.beginPath(); g.arc(px(x), py(y), pr(r), 0, Math.PI * 2); g.fill(); g.restore();
+  }
   for (let i = 0; i < 160; i++) {
     const x = x0 + rnd() * (x1 - x0), y = y0 + rnd() * (y1 - y0), r = u(200) + rnd() * u(600);
     const gr = g.createRadialGradient(px(x), py(y), 0, px(x), py(y), pr(r));
@@ -591,6 +630,111 @@ function rocks(THREE, dio, [x0, y0, x1, y1], u) {
   inst.raycast = () => {};
   inst.name = 'rocks';
   return inst;
+}
+
+// свободное место в степи: не в карьере (с запасом), не на дорогах, не у объектов, не в пруду хвостохранилища
+function steppeFree(dio, roadGap, busyR) {
+  const { pit, D } = dio;
+  const busy = Object.entries(D.objects).filter(([id, o]) => o.position && !/^(face|excavator|drill)-/.test(id)).map(([, o]) => o.position);
+  const segDist = (x, y, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+    return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t);
+  };
+  const tl = D.extra && D.extra.tailings;
+  return (x, y) => {
+    if (((x - pit.cx) / (pit.a + 25)) ** 2 + ((y - pit.cy) / (pit.b + 25)) ** 2 < 1) return false;
+    for (const ed of dio.edges) if ((ed.path ? dio.edgeNearest(ed, x, y, roadGap + 1).d : segDist(x, y, ed.sa, ed.sb)) < roadGap) return false;
+    for (const p of busy) if (Math.hypot(x - p[0], y - p[1]) < busyR) return false;
+    if (tl && ((x - tl.center[0]) / (tl.radii[0] + 90)) ** 2 + ((y - tl.center[1]) / (tl.radii[1] + 90)) ** 2 < 1) return false;
+    return true;
+  };
+}
+// опора ЛЭП: не на дороге и не у объекта (трасса конвейера — тоже объект с путём)
+function poleFree(dio) {
+  const free = steppeFree(dio, 22, 75);
+  const cv = Object.values(dio.D.objects).find((o) => o.kind === 'conveyor' && o.path);
+  return (x, y) => {
+    if (!free(x, y)) return false;
+    if (cv) for (let i = 0; i + 1 < cv.path.length; i++) {
+      const a = cv.path[i], b = cv.path[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+      if (Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t) < 18) return false;
+    }
+    return true;
+  };
+}
+// куртины кустиков и пучки ковыля: куртина 6–14 кустов в круге ≈ 15 единиц — видна и с общего вида
+function steppeLife(THREE, dio, [x0, y0, x1, y1], avoid) {
+  const base = steppeFree(dio, 26, 240), free = (x, y) => base(x, y) && !avoid(x, y);
+  let seed = 23;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const bush = [], grass = [];
+  for (let i = 0; i < 4000 && bush.length < 300; i++) {   // бюджет кадров без видеокарты: ≈ 30 куртин
+    const cx = x0 + 20 + rnd() * (x1 - x0 - 40), cy = y0 + 20 + rnd() * (y1 - y0 - 40);
+    if (!free(cx, cy)) continue;
+    const n = 6 + Math.floor(rnd() * 9);
+    for (let k = 0; k < n; k++) {
+      const a = rnd() * Math.PI * 2, r = rnd() * 15, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      bush.push([x, y, 1.4 + rnd() * 2.6, rnd() * Math.PI]);
+    }
+    for (let k = 0; k < 5; k++) {
+      const a = rnd() * Math.PI * 2, r = 8 + rnd() * 30, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+      if (free(x, y)) grass.push([x, y, 0.8 + rnd() * 1.1, rnd() * Math.PI]);
+    }
+  }
+  const make = (geo, pts, tones, name, lift) => {
+    const inst = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ flatShading: true }), pts.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
+    pts.forEach(([x, y, s, r], i) => {
+      q.setFromAxisAngle(up, r);
+      m.compose(new THREE.Vector3(x, dio.surfaceAt(x, y) + s * lift, -y), q, new THREE.Vector3(s, s, s));
+      inst.setMatrixAt(i, m);
+      inst.setColorAt(i, c.setHex(tones[i % tones.length]));
+    });
+    inst.raycast = () => {};
+    inst.name = name;
+    return inst;
+  };
+  const bg = new THREE.OctahedronGeometry(1, 0); bg.scale(1.3, 0.62, 1.3);   // простая форма: без видеокарты дорог каждый куст
+  const gg = new THREE.ConeGeometry(0.5, 1.6, 4, 1, true); gg.translate(0, 0.8, 0);
+  return [make(bg, bush, [0x7f8c55, 0x6f7c4a, 0x939d68, 0x8a8a5a, 0x76844c], 'steppe-bushes', 0.35),
+    make(gg, grass, [0xc9b77a, 0xb9a865, 0xd6c68e, 0xa99a5e], 'steppe-grass', 0)];
+}
+// ж/д ветка с запада к складу концентрата у сульфидной фабрики: насыпь, рельсы, шпалы, хопперы под концентрат
+function railSiding(THREE, dio, models, plant) {
+  if (!plant) return null;
+  const grp = new THREE.Group(); grp.name = 'rail-siding';
+  const z = -plant[1] + 330, xA = plant[0] - 1500, xB = plant[0] + 40;   // ветка южнее фабрики (схема: y на юг — минус)
+  const len = xB - xA, cx = (xA + xB) / 2, h = (x) => dio.surfaceAt(x, -z);
+  const ballast = new THREE.Mesh(new THREE.BoxGeometry(len, 1.2, 7), new THREE.MeshLambertMaterial({ color: 0x9b9384 }));
+  ballast.position.set(cx, h(cx) + 0.3, z); grp.add(ballast);
+  const railMat = new THREE.MeshLambertMaterial({ color: 0x5b5f66 });
+  for (const off of [-0.76, 0.76]) {
+    const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.3, 0.2), railMat); r.position.set(cx, h(cx) + 1.25, z + off); grp.add(r);
+  }
+  const nSl = Math.floor(len / 8);
+  const sl = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.2, 2.6), new THREE.MeshLambertMaterial({ color: 0x6a5a48 }), nSl);
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < nSl; i++) { const x = xA + 4 + i * 8; m.makeTranslation(x, h(cx) + 1.0, z); sl.setMatrixAt(i, m); }
+  grp.add(sl);
+  // хопперы-вагоны под концентрат у склада: корпус и крыша, 12 вагонов по 14 м
+  const nW = 12, wagons = new THREE.InstancedMesh(new THREE.BoxGeometry(13.2, 3.4, 3.1), new THREE.MeshLambertMaterial({ color: 0x5f6f62 }), nW);
+  const roofs = new THREE.InstancedMesh(new THREE.BoxGeometry(13.2, 0.5, 2.4), new THREE.MeshLambertMaterial({ color: 0x48524a }), nW);
+  for (let i = 0; i < nW; i++) {
+    const x = xB - 70 - i * 14.2;
+    m.makeTranslation(x, h(cx) + 3.4, z); wagons.setMatrixAt(i, m);
+    m.makeTranslation(x, h(cx) + 5.35, z); roofs.setMatrixAt(i, m);
+  }
+  grp.add(wagons, roofs);
+  // склад концентрата с погрузкой в вагоны (крытый склад у конца ветки)
+  const shed = models && models.building ? models.building('warehouse', { size: [70, 26, 16] }) : null;
+  const anchor = new THREE.Object3D();
+  if (shed) { shed.position.set(xB - 20, h(xB), z - 22); grp.add(shed); anchor.position.set(xB - 20, h(xB) + 24, z - 22); }
+  else anchor.position.set(xB - 20, h(xB) + 10, z);
+  grp.add(anchor);
+  grp.traverse((o) => { if (o.isMesh) o.raycast = () => {}; });
+  return { group: grp, anchor };
 }
 
 // ограждение: тонкие светлые столбики и полупрозрачная сетка между ними (забор 2,2 м, столбы через 15 м)
