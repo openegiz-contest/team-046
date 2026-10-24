@@ -1,8 +1,11 @@
 // Управление сценой с клавиатуры (дополняет мышь/OrbitControls, не заменяет её).
 //   W/A/S/D и стрелки — движение по карте относительно взгляда камеры (камера и цель OrbitControls идут вместе);
-//   Q/E — поворот вокруг цели; R/F — выше и дальше / ниже и ближе (как колесо мыши); Shift — втрое быстрее;
-//   1–5 — виды; Home — весь рудник; Пробел — следовать за выбранным самосвалом / отпустить;
+//   Пробел / Shift — полёт вверх / вниз (камера и цель вместе); скорость растёт с высотой над землёй;
+//   Q/E — поворот вокруг цели; R/F — дальше / ближе (как колесо мыши);
+//   1–5 — виды; Home — весь рудник («Наверх»); G — следовать за выбранным самосвалом / отпустить;
 //   Esc — снять выбор (и выйти из следования); ? или H — подсказка по клавишам.
+// Ограничение одно — снизу: камера не ниже земли + MIN_ABOVE (упёрлась — вверх идёт и цель, взгляд не меняется:
+// со дна карьера можно смотреть в небо и вылететь в любую сторону); стен и потолка нет.
 // В виде «Сверху» (ортокамера): W/A/S/D панорамируют карту, R/F меняют масштаб, Q/E не действуют.
 //
 // initKeyboard(opts) -> { update(dt), help }
@@ -24,9 +27,9 @@ const SPEED_PER_M = 0.6;   // м/с на каждый метр высоты на
 const ROT_SPEED = 1.2;     // рад/с: поворот Q/E
 const DOLLY_RATE = 0.9;    // 1/с: R/F — множитель расстояния до цели за секунду (e^0,9 ≈ ×2,5)
 const ZOOM_RATE = 0.9;     // 1/с: R/F в виде сверху
-const MIN_ABOVE = 15;      // м: камера не ниже земли + столько
-const TARGET_MARGIN = 500; // м: цель может выйти за bounds не дальше
-const CAMERA_MARGIN = 2000;// м: камера — не дальше 2 км за bounds
+const MIN_ABOVE = 8;       // м: камера не ниже земли + столько
+const TARGET_MARGIN = 20000; // м: за bounds — только чтобы не улететь в бесконечность (стен нет)
+const CAMERA_MARGIN = 20000;
 const VIEW_KEYS = { Digit1: 'all', Digit2: 'pit', Digit3: 'crusher', Digit4: 'plants', Digit5: 'top' };
 
 export function initKeyboard(opts) {
@@ -43,7 +46,7 @@ export function initKeyboard(opts) {
   const bnd = () => (typeof o.bounds === 'function' ? o.bounds() : o.bounds);
   const pressed = new Set();                          // зажатые клавиши (e.code)
   // сглаженные скорости: vx, vz — в сцене, м/с; rot — рад/с; dolly — 1/с
-  const vel = { x: 0, z: 0, rot: 0, dolly: 0 };
+  const vel = { x: 0, y: 0, z: 0, rot: 0, dolly: 0 };
   const help = makeHelp();
 
   function typingTarget(el) {
@@ -51,7 +54,7 @@ export function initKeyboard(opts) {
     const tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   }
-  const isMove = (code) => /^(Key[WASDQERF]|Arrow(Up|Down|Left|Right)|Shift(Left|Right))$/.test(code);
+  const isMove = (code) => /^(Key[WASDQERF]|Arrow(Up|Down|Left|Right)|Shift(Left|Right)|Space)$/.test(code);
 
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -60,14 +63,14 @@ export function initKeyboard(opts) {
     if (isMove(code)) {
       if (!pressed.has(code) && !code.startsWith('Shift')) o.stopFly();   // ручное движение прерывает перелёт
       pressed.add(code);
-      if (code.startsWith('Arrow')) e.preventDefault();   // стрелки не прокручивают страницу
+      if (code.startsWith('Arrow') || code === 'Space') e.preventDefault();   // стрелки и пробел не прокручивают страницу
       return;
     }
     // одноразовые команды: кнопка под фокусом не должна «нажаться» ещё раз пробелом
     if (e.target && e.target.tagName === 'BUTTON') e.target.blur();
     if (VIEW_KEYS[code]) { o.setView(VIEW_KEYS[code]); e.preventDefault(); return; }
     if (code === 'Home') { o.goHome(); e.preventDefault(); return; }
-    if (code === 'Space') { o.toggleFollow(); e.preventDefault(); return; }
+    if (code === 'KeyG') { o.toggleFollow(); e.preventDefault(); return; }
     if (code === 'Escape') { if (help.visible) help.hide(); o.clearSelection(); return; }
     if (e.key === '?' || code === 'KeyH') { help.toggle(); e.preventDefault(); }
   });
@@ -86,7 +89,8 @@ export function initKeyboard(opts) {
     const side = axis(has('KeyD', 'ArrowRight'), has('KeyA', 'ArrowLeft'));
     const rot = axis(has('KeyQ'), has('KeyE'));
     const upDown = axis(has('KeyR'), has('KeyF'));
-    const boost = has('ShiftLeft', 'ShiftRight') ? 3 : 1;
+    const lift = axis(has('Space'), has('ShiftLeft', 'ShiftRight'));   // полёт вверх / вниз
+    const boost = 1;
     const top = o.isTop();
     const pos = cam.position, tgt = ctl.target;
 
@@ -113,14 +117,15 @@ export function initKeyboard(opts) {
     const gl = Math.hypot(gx, gz);
     if (gl > 1e-6) { gx = gx / gl * speed; gz = gz / gl * speed; }
     vel.x = smooth(vel.x, gx, dt); vel.z = smooth(vel.z, gz, dt);
+    vel.y = smooth(vel.y, top ? 0 : lift * speed, dt);
     vel.rot = smooth(vel.rot, top ? 0 : rot * ROT_SPEED * boost, dt);
     vel.dolly = smooth(vel.dolly, upDown * (top ? ZOOM_RATE : DOLLY_RATE) * boost, dt);
-    const moving = Math.abs(vel.x) + Math.abs(vel.z) > 0.05 || Math.abs(vel.rot) > 1e-3 || Math.abs(vel.dolly) > 1e-3;
-    if (!moving) { vel.x = vel.z = vel.rot = vel.dolly = 0; return; }
+    const moving = Math.abs(vel.x) + Math.abs(vel.y) + Math.abs(vel.z) > 0.05 || Math.abs(vel.rot) > 1e-3 || Math.abs(vel.dolly) > 1e-3;
+    if (!moving) { vel.x = vel.y = vel.z = vel.rot = vel.dolly = 0; return; }
 
     // --- движение: камера и цель вместе
-    const dx = vel.x * dt, dz = vel.z * dt;
-    pos.x += dx; pos.z += dz; tgt.x += dx; tgt.z += dz;
+    const dx = vel.x * dt, dy = vel.y * dt, dz = vel.z * dt;
+    pos.x += dx; pos.y += dy; pos.z += dz; tgt.x += dx; tgt.y += dy; tgt.z += dz;
 
     if (top) {
       if (Math.abs(vel.dolly) > 1e-3) {
@@ -149,7 +154,7 @@ export function initKeyboard(opts) {
     ctl.update();
   }
 
-  // Границы: цель — в пределах bounds с запасом, камера — не дальше 2 км за bounds, не ниже земли + 15 м
+  // Границы: снизу — не ниже земли + MIN_ABOVE (упёрлась — вверх вместе с целью); по сторонам — только очень далеко
   function clamp(cam, ctl, top) {
     const b = bnd(), pos = cam.position, tgt = ctl.target, u = unit();
     // в сцене: x = x рудника, z = −y рудника
@@ -160,8 +165,8 @@ export function initKeyboard(opts) {
     sz = clampDelta(pos.z, -b.maxY - CAMERA_MARGIN * u, -b.minY + CAMERA_MARGIN * u);
     tgt.x += sx; tgt.z += sz; pos.x += sx; pos.z += sz;
     if (!top) {
-      const minY = groundY(pos.x, pos.z) + MIN_ABOVE * u;
-      if (pos.y < minY) pos.y = minY;
+      const up = groundY(pos.x, pos.z) + MIN_ABOVE * u - pos.y;
+      if (up > 0) { pos.y += up; tgt.y += up; }
     }
   }
   const clampDelta = (v, lo, hi) => (v < lo ? lo - v : v > hi ? hi - v : 0);

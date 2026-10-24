@@ -26,18 +26,18 @@
         <button id="help-close" type="button" title="Закрыть">×</button>
       </div>
       <table class="keys">
-        <tr><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> / стрелки</td><td>движение по карте (вперёд — куда смотрит камера)</td></tr>
+        <tr><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> / стрелки</td><td>движение (вперёд — куда смотрит камера)</td></tr>
+        <tr><td><kbd>Пробел</kbd> / <kbd>Shift</kbd></td><td>вверх / вниз (выше — быстрее)</td></tr>
         <tr><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>поворот вокруг точки, на которую смотрит камера</td></tr>
-        <tr><td><kbd>R</kbd> / <kbd>F</kbd></td><td>выше и дальше / ниже и ближе (как колесо мыши)</td></tr>
-        <tr><td><kbd>Shift</kbd></td><td>втрое быстрее</td></tr>
+        <tr><td><kbd>R</kbd> / <kbd>F</kbd></td><td>дальше / ближе (как колесо мыши)</td></tr>
         <tr><td><kbd>1</kbd>…<kbd>5</kbd></td><td>виды: весь рудник, карьер, дробилка, фабрики, сверху</td></tr>
-        <tr><td><kbd>Home</kbd></td><td>вид «Весь рудник»</td></tr>
-        <tr><td><kbd>Пробел</kbd></td><td>следовать за выбранным самосвалом / отпустить</td></tr>
+        <tr><td><kbd>Home</kbd> или «Наверх»</td><td>плавно к общему виду</td></tr>
+        <tr><td><kbd>G</kbd></td><td>следовать за выбранным самосвалом / отпустить</td></tr>
         <tr><td><kbd>Esc</kbd></td><td>снять выбор, закрыть карточку</td></tr>
         <tr><td><kbd>?</kbd> / <kbd>H</kbd></td><td>показать или скрыть эту подсказку</td></tr>
       </table>
-      <div class="muted">Скорость зависит от высоты камеры над землёй. Мышь работает как обычно:
-        левая кнопка — поворот, правая — сдвиг, колесо — приближение. В виде «Сверху» W/A/S/D сдвигают карту, R/F — масштаб.</div>
+      <div class="muted">Мышь: левая кнопка — поворот (можно смотреть и вниз, и в небо), правая — сдвиг, колесо — приближение.
+        Камера не опускается ниже земли, в остальном летайте куда угодно — и из карьера тоже.</div>
     </div>
   </div>
 
@@ -50,7 +50,8 @@
     <button type="button" data-view="plants" title="Сульфидная и глинистая фабрики">Фабрики</button>
     <button type="button" data-view="top" title="Карта сверху (ортографическая камера)">Сверху (карта)</button>
     <button id="btn-photo" type="button" title="Спутниковый снимок реального Бозшаколя (Sentinel-2) с подписями объектов">Фото местности</button>
-    <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним">Следовать за самосвалом</button>
+    <button id="btn-up" type="button" title="Плавно вернуться к общему виду рудника (Home)">Наверх</button>
+    <button id="btn-follow" type="button" disabled title="Выберите самосвал щелчком — камера пойдёт за ним (G)">Следовать за самосвалом</button>
     <button id="btn-reality" type="button" title="Насколько модель совпадает с реальным Бозшаколем: средние за последний модельный час против фактов 2025 года">Сверка с реальностью</button>
     <button id="btn-help" type="button" title="Клавиши управления (? или H)">?</button>
     <span id="load-status">загрузка…</span>

@@ -112,7 +112,8 @@ let camera = perspCam;
 
 const controls = new OrbitControls(perspCam, canvas);
 controls.target.set(-800, 0, 150);
-controls.maxPolarAngle = Math.PI * 0.49;
+// наклон взгляда — от −85° (почти отвесно вниз) до +80° (в небо): камера может быть ниже точки, вокруг которой вращается
+controls.minPolarAngle = Math.PI * 5 / 180; controls.maxPolarAngle = Math.PI * 170 / 180;
 controls.enableDamping = true; controls.dampingFactor = 0.12;   // плавное вращение
 controls.enableZoom = false;   // колесо и тачпад — свой плавный зум (wheelZoom): шаг ≈ 11 % расстояния, мягкое торможение
 controls.minDistance = 60;
@@ -880,7 +881,7 @@ function updateFollowButton() {
   btnFollow.classList.toggle('active', !!followId);
   btnFollow.textContent = followId ? 'Следую: ' + nameOf(followId) : 'Следовать за самосвалом';
 }
-// Следовать за выбранным самосвалом / отпустить (кнопка и Пробел)
+// Следовать за выбранным самосвалом / отпустить (кнопка и G)
 function toggleFollow() {
   if (followId) { followId = null; updateFollowButton(); return; }
   const obj = openedThing && byThing(openedThing);
@@ -893,6 +894,9 @@ function toggleFollow() {
   updateFollowButton();
 }
 btnFollow.addEventListener('click', toggleFollow);
+// «Наверх» (и Home): плавно к общему виду рудника — откуда угодно (со дна карьера, из неба, из вида сверху)
+const btnUp = document.getElementById('btn-up');
+if (btnUp) btnUp.addEventListener('click', () => { setView('all'); btnUp.blur(); });
 const _d = new THREE.Vector3();
 function updateCamera(dt) {
   if (tween) {
@@ -923,9 +927,10 @@ function updateCamera(dt) {
     const d = camera === orthoCam ? 1500 : perspCam.position.distanceTo(controls.target);
     scene.fog.near = Math.max(60, d * 0.55 - 150); scene.fog.far = d + 450 + d * 0.35;
   }
-  if (dio && camera === perspCam) {   // камера всегда над поверхностью (облёт вокруг техники в карьере уводил её в борт)
-    const g = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4;
-    if (perspCam.position.y < g) perspCam.position.y = g;
+  if (dio && camera === perspCam && !tween) {   // камера всегда над поверхностью; упёрлась — вверх вместе с целью
+    // (взгляд не меняется: поворот мышью ниже горизонта у земли поднимает взгляд в небо, а не упирает камеру в землю)
+    const up = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4 - perspCam.position.y;
+    if (up > 0) { perspCam.position.y += up; controls.target.y += up; }
   }
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
   markerScale = MACHINE_SCALE;
