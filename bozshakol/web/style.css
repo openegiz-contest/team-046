@@ -146,7 +146,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .scenario button { cursor: pointer; border: none; border-radius: 6px; padding: 4px 10px; color: #fff; font-size: 14px; font-weight: 600; }
 .scenario button.on { background: #b3261e; }
 .scenario button.off { background: #23735a; }
-.scenario button.show { background: transparent; color: var(--accent); border: 1px solid rgba(200, 120, 30, 0.45); padding: 3px 8px; font-weight: 600; }
+.scenario button.show { background: transparent; color: #9a5510; border: 1px solid rgba(154, 85, 16, 0.5); padding: 3px 8px; font-weight: 600; }
 .scenario button.show:hover { background: var(--accent-soft); }
 .scenario button:disabled { opacity: .5; cursor: wait; }
 
@@ -188,7 +188,7 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 .bar span { position: absolute; right: 8px; top: 0; font-size: 10.5px; line-height: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 #panel .bar { height: 20px; }
 #panel .bar span { font-size: 14px; line-height: 20px; }
-#transport-block.alert { box-shadow: 0 0 0 2px var(--bad); }
+#panel #transport-block.alert { box-shadow: 0 0 0 2px var(--bad); }   /* сильнее рамки свёрнутого раздела */
 .note.bad { color: var(--bad); font-weight: 600; margin-bottom: 4px; }
 #weather { margin-top: 6px; }
 #log { max-height: 170px; overflow-y: auto; }

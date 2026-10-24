@@ -1066,10 +1066,10 @@ function updateCamera(dt) {
     const d = camera === orthoCam ? 1500 : perspCam.position.distanceTo(controls.target);
     scene.fog.near = Math.max(60, d * 0.55 - 150); scene.fog.far = d + 450 + d * 0.35;
   }
-  if (dio && camera === perspCam && !tween) {   // камера всегда над поверхностью; упёрлась — вверх вместе с целью
-    // (взгляд не меняется: поворот мышью ниже горизонта у земли поднимает взгляд в небо, а не упирает камеру в землю)
+  if (dio && camera === perspCam) {   // камера всегда над поверхностью (и в перелёте — не сквозь борт);
+    // упёрлась вне перелёта — вверх вместе с целью: взгляд не меняется, поворот мышью у земли поднимает взгляд в небо
     const up = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4 - perspCam.position.y;
-    if (up > 0) { perspCam.position.y += up; controls.target.y += up; }
+    if (up > 0) { perspCam.position.y += up; if (!tween) controls.target.y += up; }
   }
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
   markerScale = MACHINE_SCALE;
@@ -1576,7 +1576,8 @@ function reachableOpen(a, b, closed) {
 function waitsForClosedRoad(id, closed) {
   const s = val(id, 'state', '');
   if ((s !== 'hauling' && s !== 'returning') || Math.abs(Number(val(id, 'speed', 0)) || 0) > 0.5) return false;
-  const goal = s === 'hauling' ? (geometry.dump_points || {})[val(id, 'destination', '')] : (geometry.load_points || {})[val(id, 'excavator', '')];
+  const d = val(id, 'destination', '');   // гружёный — пункт разгрузки, порожний — экскаватор, на заправку — fuel-station
+  const goal = (geometry.dump_points || {})[d] || (geometry.load_points || {})[d] || (geometry.nodes[d] ? d : null);
   const from = nearestNode(Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
   return !!(goal && from) && !reachableOpen(from, goal, closed);
 }
