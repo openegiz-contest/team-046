@@ -267,7 +267,7 @@ function updateLabels() {
   let shown = 0;
   for (const L of cand) {
     const t = L.warn || L.obj.userData.label === undefined ? L.text : L.obj.userData.label;
-    const txt = String(t);
+    const txt = L.warn ? String(t) : labelName(L.obj, String(t));
     const cw = L.small ? 5.6 : 6.3, ch = L.small ? 15 : 18;
     const bw = txt.length * cw + 14;
     const r = { x: L.sx - bw / 2, y: L.sy - ch, w: bw, h: ch };
@@ -294,6 +294,14 @@ function register(obj, thingId, opts = {}) {
 }
 const byThing = (thingId) => clickable.find((o) => o.userData.thingId === thingId) || null;
 function thingOf(obj) { let o = obj; while (o && !o.userData.thingId) o = o.parent; return o ? o.userData.thingId : null; }
+// Подписи, которые сцена уточняет поверх имени двойника (имя — в twins.json модуля): начало подписи заменяется
+const LABEL_NAMES = { 'dump-waste-1': 'Отвал вскрыши (пустая порода)' };
+function labelName(obj, text) {
+  const id = thingOf(obj), alias = id && LABEL_NAMES[id.split(':')[1]];
+  if (!alias) return text;
+  const n = nameOf(id);
+  return text.startsWith(n) ? alias + text.slice(n.length) : text;
+}
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 function pick(clientX, clientY) {
@@ -1420,6 +1428,7 @@ function frame(now) {
   if (motionLog.on) sampleMotion(now);
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
+  if (frameNo % 30 === 15) updateRoadWaitBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
   if (frameNo % 15 === 0) updateRoute();
   if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
@@ -1547,6 +1556,46 @@ function updateDownBadges() {
     if (b) b.enabled = down;
   }
 }
+// Самосвал ждёт из-за закрытого съезда: в рейсе (hauling / returning) стоит, а до цели (пункт разгрузки или свой
+// экскаватор) нет пути по открытым дорогам. Модель в этом случае ждёт на месте и пробует снова (travel_pending —
+// в Ditto его нет), поэтому сцена проверяет путь по графу дорог geometry.json сама. Значок «ждёт: съезд закрыт».
+const roadWaitBadges = {}, roadWaitSeen = {};
+function reachableOpen(a, b, closed) {
+  const seen = new Set([a]), todo = [a];
+  while (todo.length) {
+    const u = todo.pop();
+    if (u === b) return true;
+    for (const e of geometry.edges) {
+      if (closed.has(e.road)) continue;
+      const v = e.from === u ? e.to : (e.to === u ? e.from : null);
+      if (v !== null && !seen.has(v)) { seen.add(v); todo.push(v); }
+    }
+  }
+  return false;
+}
+function waitsForClosedRoad(id, closed) {
+  const s = val(id, 'state', '');
+  if ((s !== 'hauling' && s !== 'returning') || Math.abs(Number(val(id, 'speed', 0)) || 0) > 0.5) return false;
+  const goal = s === 'hauling' ? (geometry.dump_points || {})[val(id, 'destination', '')] : (geometry.load_points || {})[val(id, 'excavator', '')];
+  const from = nearestNode(Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
+  return !!(goal && from) && !reachableOpen(from, goal, closed);
+}
+function updateRoadWaitBadges() {
+  if (!geometry || !geometry.edges || !geometry.nodes) return;
+  const closed = new Set(Object.keys(geometry.roads || {}).filter((r) => val(NS + ':' + r, 'open', true) === false));
+  for (const o of clickable) {
+    const id = o.userData.thingId || '';
+    if (!id.includes(':truck-') || !o.isObject3D || o.isMesh) continue;
+    const waiting = closed.size > 0 && waitsForClosedRoad(id, closed);
+    roadWaitSeen[id] = waiting ? (roadWaitSeen[id] || 0) + 1 : 0;   // два замера подряд — не мигает при короткой остановке
+    let b = roadWaitBadges[id];
+    if (b && b.obj !== o) { b.el.remove(); const i = labels.indexOf(b); if (i >= 0) labels.splice(i, 1); b = roadWaitBadges[id] = null; }
+    const on = roadWaitSeen[id] >= 2;
+    if (on && !b) b = roadWaitBadges[id] = addLabel(o, 'ждёт: съезд закрыт', { importance: 3.5, cls: 'warn', dy: 9 });
+    if (b) b.enabled = on;
+  }
+}
+dbgWin.__roadWait = () => Object.keys(roadWaitBadges).filter((id) => roadWaitBadges[id] && roadWaitBadges[id].enabled);
 // Пыль за едущими самосвалами (только «Высокое»): пул мягких спрайтов, гаснут за ~1,5 с
 const dust = [];
 let dustMat = null, dustT = 0;
