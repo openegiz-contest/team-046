@@ -885,13 +885,17 @@ export function createModels(THREE, colors) {
 
   // ================================================================ ЛЕНТОЧНЫЙ КОНВЕЙЕР
   // points — массив THREE.Vector3 в сцене (уже через toScene); лента на opts.height (3 м) над точками.
-  // Вся трасса — 6 вызовов отрисовки независимо от длины: став, мостки, слой руды, опоры, роликоопоры, куски руды.
+  // opts.lifts — своя высота ленты над каждой точкой (эстакада над дорогой: там став в закрытой галерее на высоких
+  // стойках), opts.legOk(x, z) — можно ли ставить стойку (не на полотне дороги: стойка сдвигается вдоль трассы).
+  // Вся трасса — 7 вызовов отрисовки независимо от длины: став, мостки, слой руды, опоры, роликоопоры, куски руды, галерея.
   function conveyor(points, opts) {
     opts = opts || {};
     const g = new THREE.Group();
     const S = MODEL_SIZES.conveyor;
     const lift = opts.height ?? 3, step = opts.step ?? S.support_step, BW = S.belt_width;
-    const pts = points.map((p) => new THREE.Vector3(p.x, p.y + lift, p.z));
+    const lifts = opts.lifts || points.map(() => lift);
+    const pts = points.map((p, i) => new THREE.Vector3(p.x, p.y + lifts[i], p.z));
+    const gal = new Parts();
     const main = new Parts(), walk = new Parts(), oreBed = new Parts(), oreRnd = rng(5);
     const segs = []; let total = 0;
     const c30 = Math.cos(30 * DEG), s30 = Math.sin(30 * DEG), sw = BW * 0.32;
@@ -914,7 +918,17 @@ export function createModels(THREE, colors) {
       walk.add(box(0.8, 0.06, L2), C.grating, mul(M, T(BW / 2 + 0.85, -0.45, 0)));
       walk.add(box(0.05, 0.05, L2), C.safety, mul(M, T(BW / 2 + 1.22, 0.6, 0)));
       walk.add(box(0.04, 0.04, L2), C.safety, mul(M, T(BW / 2 + 1.22, 0.1, 0)));
-      segs.push({ a, b, len, start: total, dir, q });
+      // эстакада: закрытая галерея (пол, стены, кровля) и нижние пояса фермы — над дорогой лента поднята
+      if (Math.min(lifts[i], lifts[i + 1]) > lift + 2) {
+        const GW = BW + 3.0;
+        gal.add(box(GW, 0.15, L2), C.concreteDark, mul(M, T(0, -0.95, 0)));
+        for (const s of [-1, 1]) {
+          gal.add(box(0.12, 2.5, L2), C.wall, mul(M, T(s * GW / 2, 0.3, 0)));
+          gal.add(box(0.3, 0.45, L2), C.conveyor, mul(M, T(s * GW / 2, -1.2, 0)));
+        }
+        gal.add(box(GW + 0.3, 0.14, L2), C.roof, mul(M, T(0, 1.6, 0)));
+      }
+      segs.push({ a, b, len, start: total, dir, q, ga: points[i].y, gb: points[i + 1].y });
       total += len;
     }
     // приводной и натяжной барабаны на концах
@@ -927,9 +941,25 @@ export function createModels(THREE, colors) {
     }
     if (main.p.length) mk(g, main.build(), VC());
     if (walk.p.length) mk(g, walk.build(), VC(), { detail: true });
-    // опоры-рамы каждые step м (экземпляры): две стойки, ригель, раскос, башмаки
+    if (gal.p.length) mk(g, gal.build(), VC());
+    // опоры-рамы каждые step м (экземпляры): две стойки, ригель, раскос, башмаки; высота — от земли до става;
+    // место на полотне дороги (opts.legOk) — ближайшее свободное вдоль трассы (у края дороги)
+    const at = (d) => {
+      for (const s of segs) if (d <= s.start + s.len) { const t = (d - s.start) / s.len; return { p: s.a.clone().lerp(s.b, t), gy: s.ga + (s.gb - s.ga) * t, dir: s.dir }; }
+      return null;
+    };
     const legPos = [];
-    for (const s of segs) for (let d = step / 2; d < s.len; d += step) legPos.push([s.a.clone().addScaledVector(s.dir, d), Math.atan2(s.dir.x, s.dir.z)]);
+    for (let d = step / 2; d < total; d += step) {
+      let c = at(d);
+      if (c && opts.legOk && !opts.legOk(c.p.x, c.p.z)) {
+        c = null;
+        for (let o = 1; o <= step * 0.75 && !c; o += 1) for (const dd of [d + o, d - o]) {
+          const q = dd > 0 && dd < total && at(dd);
+          if (q && opts.legOk(q.p.x, q.p.z)) { c = q; break; }
+        }
+      }
+      if (c && c.p.y - c.gy > 1 && !legPos.some(([p]) => p.distanceTo(c.p) < 6)) legPos.push([c.p, Math.atan2(c.dir.x, c.dir.z), c.gy]);
+    }
     if (legPos.length) {
       // A-образная рама: стойки расходятся к низу, распорка на трети высоты, ригель под ставом
       const fr = new Parts(), lx = BW / 2 + 0.3, hLeg = Math.max(0.5, lift - 0.15), lb = lx + Math.min(1.4, hLeg * 0.22);
@@ -945,14 +975,17 @@ export function createModels(THREE, colors) {
         fr.add(box(0.1, 1, 0.1), C.conveyor, BM(V(xb, yb, 0), V(0, hLeg - 0.2, 0)));
       }
       const legs = new THREE.InstancedMesh(fr.build(), VC(), legPos.length);
-      legPos.forEach(([p, yaw], i) => {
-        _m.compose(_v.set(p.x, p.y - lift - 0.3, p.z), _q.setFromAxisAngle(UP, yaw), _s.set(1, 1, 1));
+      legPos.forEach(([p, yaw, gy], i) => {
+        _m.compose(_v.set(p.x, gy - 0.3, p.z), _q.setFromAxisAngle(UP, yaw), _s.set(1, Math.max(0.3, p.y - 0.45 - (gy - 0.3)) / hLeg, 1));
         legs.setMatrixAt(i, _m);
       });
       legs.instanceMatrix.needsUpdate = true;
       legs.computeBoundingSphere();
       g.add(legs);
     }
+    // лента и стойки — для проверки наездов (motion_check): точки ленты, полуширина става с мостиком, стойки
+    g.userData.statics = { belt: pts.map((p) => [p.x, p.y, p.z]), beltHalf: BW / 2 + 1.6,
+      legs: legPos.map(([p, yaw]) => [p.x, p.z, yaw]), legHalf: BW / 2 + 0.3 + 1.6 };
     // роликоопоры каждые 4 м (экземпляры, только вблизи)
     const idl = [];
     for (const s of segs) for (let d = 2; d < s.len && idl.length < 5000; d += 4) idl.push([s.a.clone().addScaledVector(s.dir, d), s.q]);
@@ -1442,6 +1475,7 @@ export function createModels(THREE, colors) {
         }
       }
     }
+    g.userData.poles = points.map((p) => [p.x, p.z]);   // места опор (для проверки наездов, motion_check)
     if (wirePts.length) {
       const wires = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wirePts), lineMat(C.wire));
       wires.userData.detail = true;

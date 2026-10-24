@@ -5,6 +5,7 @@
 //
 //   node motion_check.mjs measure [минут=10] [папка=.]     замер: samples.jsonl, meta.json, summary.json, summary.txt
 //   node motion_check.mjs analyze <папка>                   пересчитать итог по уже снятому замеру
+//   node motion_check.mjs holes <папка>                     только дыры в рельефе (holes.json), без замера движения
 //   node motion_check.mjs video <points.json> <папка> [с=45] ролики с заранее заданных точек камеры (*.webm)
 //
 // Переменные: URL (по умолчанию http://localhost:8095/), CHROME — путь к Chromium (иначе — из Playwright),
@@ -19,7 +20,18 @@
 //   резкий поворот — курс меняется больше чем на 45° меньше чем за 1 модельную секунду на скорости больше 2 м/с
 //                   (машина так повернуть не может); для сведения — то же за 1 с реального времени;
 //   колёса        — угол корпуса над или под поверхностью больше 0,5 м; ковш — ниже поверхности больше 0,5 м вне развала;
-//   стоит без причины — самосвал не двигается больше 3 мин не в очереди, погрузке, разгрузке, заправке, резерве.
+//   стоит без причины — самосвал не двигается больше 3 мин не в очереди, погрузке, разгрузке, заправке, резерве;
+//   вне дороги    — центр самосвала не на полотне дороги (ось ± полуширина), не на площадке забоя, не на стоянке и
+//                   не у места разгрузки или заправки;
+//   наезд на неподвижное — контур самосвала пересекает стойку конвейера, опору ЛЭП, мачту освещения, «твёрдую» клетку
+//                   здания (верх выше поверхности больше 2,5 единицы) или ленту конвейера ниже верха самосвала;
+//   лишний разворот — за один заезд на разгрузку (дробилка, склад глинистой руды, отвал: ближе 70 единиц к месту)
+//                   поворот корпуса больше чем на 150° в одну сторону случился больше одного раза;
+//   круг          — на ровной дороге (перепад высоты меньше 4 единиц) без езды задом суммарный поворот корпуса
+//                   больше 300° на 150 м пути;
+//   дыры в рельефе — сквозные щели, через которые видно фон: сцена с фиолетовым фоном без тумана, фиолетовые пиксели,
+//                   луч которых входит в карьер, — с ортокамер над карьером (каждый пиксель — луч сетки: сверху и под
+//                   углом) и с 12 заранее заданных точек камеры у бровки; в «Обычном» и «Высоком» качестве (holes.json).
 // Нарушение считается один раз на эпизод: подряд идущие замеры с тем же нарушением — один случай.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,7 +46,9 @@ const DUMP_NODE = { 'crusher-01': 'crusher', 'stockpile-clay': 'stockpile-clay',
 const PLACES = ['забой 01', 'забой 02', 'забой 03', 'забой 04', 'забой 05', 'забой 06', 'дробилка', 'склад глинистой руды',
   'отвал', 'заправка', 'съезд 1', 'съезд 2', 'прочие дороги'];
 const METRICS = [['teleport', 'телепорты'], ['overlap', 'наезды'], ['reverse', 'езда задом'], ['turn', 'резкие повороты'],
-  ['wheels', 'колёса над/под поверхностью'], ['bucket', 'ковш в земле'], ['idle', 'стоит без причины']];
+  ['wheels', 'колёса над/под поверхностью'], ['bucket', 'ковш в земле'], ['idle', 'стоит без причины'],
+  ['offroad', 'вне дороги'], ['static', 'наезд на неподвижное'], ['uturn', 'лишний разворот'], ['loop', 'круг']];
+const DEG = Math.PI / 180;
 
 async function browser() {
   const pw = process.env.PLAYWRIGHT_CORE;
@@ -76,8 +90,22 @@ async function measure(minutes, dir) {
   }
   await page.evaluate(() => window.__motion.stop());
   await new Promise((res) => out.end(res));
+  fs.writeFileSync(path.join(dir, 'holes.json'), JSON.stringify(await holes(page), null, 1));
   await b.close();
   return analyze(dir);
+}
+
+// дыры в рельефе: 12 точек камеры у бровки (через 30° по кругу, высота 140, взгляд на противоположный борт) — заданы
+// заранее от размеров карьера; в «Обычном» и «Высоком» качестве (у них разные сетки карьера)
+async function holes(page) {
+  const out = {};
+  for (const q of ['normal', 'high']) {
+    await page.evaluate((q) => { const el = document.getElementById('quality'); el.value = q; el.dispatchEvent(new Event('change', { bubbles: true })); }, q);   // список — в свёрнутых «Настройках»
+    await page.waitForTimeout(3000);
+    out[q] = await page.evaluate(() => window.__motion.holes({ ring12: true }));
+  }
+  await page.evaluate(() => { const el = document.getElementById('quality'); el.value = 'normal'; el.dispatchEvent(new Event('change', { bubbles: true })); });
+  return out;
 }
 
 // ---------------------------------------------------------------- разбор
@@ -150,6 +178,57 @@ function analyze(dir) {
     counts[pl][metric]++;
     if (examples[metric].length < 12) examples[metric].push({ t: +((S[i].t - S[0].t) / 1000).toFixed(1), place: pl, what });
   };
+  // --- вне дороги: отрезки дорог (схема), площадки забоев, места разгрузки и заправки, стоянка — сетка 50 единиц
+  const HALF = meta.roadHalf || 16, GRID = 50, grid = new Map();
+  const cellsOf = (x0, y0, x1, y1, f) => { for (let gx = Math.floor(x0 / GRID); gx <= Math.floor(x1 / GRID); gx++) for (let gy = Math.floor(y0 / GRID); gy <= Math.floor(y1 / GRID); gy++) f(gx + ',' + gy); };
+  const put = (item, x0, y0, x1, y1) => cellsOf(x0, y0, x1, y1, (k) => { if (!grid.has(k)) grid.set(k, []); grid.get(k).push(item); });
+  for (const r of meta.roads || []) for (let k = 0; k + 1 < r.pts.length; k++) {
+    const [a, b] = [r.pts[k], r.pts[k + 1]];
+    put({ seg: [a, b] }, Math.min(a[0], b[0]) - HALF - 2, Math.min(a[1], b[1]) - HALF - 2, Math.max(a[0], b[0]) + HALF + 2, Math.max(a[1], b[1]) + HALF + 2);
+  }
+  const benchPads = (meta.extra && meta.extra.face_pads) || [];
+  for (const [n, p] of Object.entries(meta.nodes)) {
+    if (!n.startsWith('face-') || benchPads.some((b) => b.face === n)) continue;
+    const r = (p[2] > -(meta.pitDepth || 1e9) + 1 ? 16 : 30) + 2;
+    put({ circle: [p[0], p[1], r] }, p[0] - r, p[1] - r, p[0] + r, p[1] + r);
+  }
+  for (const b of benchPads) { const r = Math.hypot(b.hl, b.hd) + 2; put({ pad: b }, b.c[0] - r, b.c[1] - r, b.c[0] + r, b.c[1] + r); }
+  for (const [n, r] of [['crusher', 60], ['stockpile-clay', 60], ['dump-waste-1', 70], ['fuel-station', 70]]) {
+    const p = meta.nodes[n]; if (p) put({ circle: [p[0], p[1], r] }, p[0] - r, p[1] - r, p[0] + r, p[1] + r);
+  }
+  for (const [x, y] of meta.parks || []) put({ circle: [x, y, 14] }, x - 14, y - 14, x + 14, y + 14);
+  for (const [x, y, r, , z = 0] of meta.junctions || []) put({ circle: [x, y, r + 1], z }, x - r - 1, y - r - 1, x + r + 1, y + r + 1);   // площадки развилок (на высоте узла)
+  const onRoad = (xs, ys, h) => (grid.get(Math.floor(xs / GRID) + ',' + Math.floor(ys / GRID)) || []).some((it) => {
+    if (it.seg) return segDist(xs, ys, it.seg) <= HALF + 1;
+    if (it.circle) return (it.z === undefined || Math.abs(h - it.z) < 3) && Math.hypot(xs - it.circle[0], ys - it.circle[1]) <= it.circle[2];
+    const b = it.pad, dx = xs - b.c[0], dy = ys - b.c[1];
+    return Math.abs(dx * b.t[0] + dy * b.t[1]) <= b.hl + 2 && Math.abs(-dx * b.t[1] + dy * b.t[0]) <= b.hd + 2;
+  });
+  // --- неподвижные препятствия (координаты сцены), сетка 40 единиц
+  const ST = meta.statics || { belt: [], legs: [], poles: [], cells: [] }, TH = meta.truckH || 5, sgrid = new Map();
+  const sput = (item, x0, z0, x1, z1) => { for (let gx = Math.floor(x0 / 40); gx <= Math.floor(x1 / 40); gx++) for (let gz = Math.floor(z0 / 40); gz <= Math.floor(z1 / 40); gz++) { const k = gx + ',' + gz; if (!sgrid.has(k)) sgrid.set(k, []); sgrid.get(k).push(item); } };
+  for (const b of ST.belt) for (let k = 0; k + 1 < b.pts.length; k++) {
+    const [ax, ay, az] = b.pts[k], [bx, by, bz] = b.pts[k + 1], L = Math.hypot(bx - ax, bz - az);
+    if (L < 0.01) continue;
+    sput({ o: obb((ax + bx) / 2, (az + bz) / 2, Math.atan2(bx - ax, bz - az), L / 2, b.half), bottom: Math.min(ay, by) - 1.6, top: Math.max(ay, by) + 1.8, what: 'лента конвейера' },
+      Math.min(ax, bx) - b.half, Math.min(az, bz) - b.half, Math.max(ax, bx) + b.half, Math.max(az, bz) + b.half);
+  }
+  for (const [x, z, yaw, h] of ST.legs) sput({ o: obb(x, z, yaw, 0.6, h), what: 'стойка конвейера' }, x - h, z - h, x + h, z + h);
+  for (const [x, z, r, what] of ST.poles) sput({ p: [x, z, r], what }, x - r, z - r, x + r, z + r);
+  for (const [x, z, yaw, hl, hw, what] of ST.boxes || []) { const r = Math.hypot(hl, hw); sput({ o: obb(x, z, yaw, hl, hw), what }, x - r, z - r, x + r, z + r); }
+  for (const [x, z, id] of ST.cells) sput({ o: obb(x, z, 0, (ST.cell || 2) / 2, (ST.cell || 2) / 2), what: 'здание ' + id }, x - 1, z - 1, x + 1, z + 1);
+  const staticHit = (A, oa) => {
+    for (const it of sgrid.get(Math.floor(A.x / 40) + ',' + Math.floor(A.z / 40)) || []) {
+      if (it.p) {
+        const dx = it.p[0] - A.x, dz = it.p[1] - A.z, al = dx * oa.ux + dz * oa.uz, ac = -dx * oa.uz + dz * oa.ux;
+        if (Math.hypot(Math.max(0, Math.abs(al) - oa.hl), Math.max(0, Math.abs(ac) - oa.hw)) < it.p[2]) return it.what;
+      } else if (obbOverlap(oa, it.o) && (it.bottom === undefined || (A.y + TH > it.bottom && A.y < it.top))) return it.what + (it.bottom !== undefined ? ` (низ ${(it.bottom - A.y).toFixed(1)} над самосвалом высотой ${TH.toFixed(1)})` : '');
+    }
+    return null;
+  };
+  // --- заезды на разгрузку и окна пути для «круга»
+  const visit = {}, loopWin = {}, visitRot = [];
+  const turnsOf = (run) => (Math.abs(run) >= 150 * DEG ? 1 + Math.floor((Math.abs(run) - 150 * DEG) / Math.PI) : 0);
   let piles = [];
   const hist = {};                                 // id → [{t, x, z, yaw, st}]
   const idle = {};                                 // id → {since, x, z}
@@ -185,6 +264,9 @@ function analyze(dir) {
         if (obbOverlap(oa, obb(E.x, E.z, E.yaw, E.hl, E.hw))) hit('o' + A.id + E.id, 'overlap', i, pl, `${A.id} (${A.st}) × ${E.id}`);
       }
       for (const p of piles) if (quadOverlap(oa, p.corners)) hit('o' + A.id + p.face, 'overlap', i, pl, `${A.id} (${A.st}) × развал ${p.face}`);
+      if (!onRoad(A.x, -A.z, A.y)) hit('f' + A.id, 'offroad', i, pl, `${A.id} (${A.st}) в (${A.x.toFixed(0)}, ${A.z.toFixed(0)}), высота ${A.y.toFixed(1)}`);
+      const sh = staticHit(A, oa);
+      if (sh) hit('s' + A.id + sh.slice(0, 12), 'static', i, pl, `${A.id} (${A.st}) × ${sh}`);
     }
     // по истории каждой машины: шаг, ход назад, поворот, простой
     for (const A of [...trucks, ...service]) {
@@ -222,6 +304,44 @@ function analyze(dir) {
         const span = (rec.t - q.t) / 1000, dist = Math.hypot(A.x - q.x, A.z - q.z);
         if (span > 0.15 && dist / span > 2 * unitsPerMps && Math.abs(unwrap(A.yaw - q.yaw)) > Math.PI / 4) hit('U' + A.id, 'turnReal', i, pl, '');
       }
+      if (A.id.startsWith('truck-')) {
+        // лишний разворот: заезд на разгрузку — от подъезда ближе 70 единиц к месту до отъезда дальше 80 после разгрузки
+        let vs = visit[A.id];
+        const dn = meta.nodes[DUMP_NODE[A.dest]];
+        if (!vs && dn && (A.st === 'hauling' || DUMP_STATES.has(A.st)) && Math.hypot(A.x - dn[0], A.z + dn[1]) < 70)
+          vs = visit[A.id] = { node: dn, dest: A.dest, run: 0, back: 0, n: 0, yaw: A.yaw, dumped: false, runs: [] };
+        if (vs) {
+          const dy = unwrap(A.yaw - vs.yaw); vs.yaw = A.yaw;
+          if (dy * vs.run >= 0) { vs.run += dy; vs.back = 0; } else { vs.back += dy; if (Math.abs(vs.back) > 15 * DEG) { vs.n += turnsOf(vs.run); vs.runs.push(Math.round(vs.run / DEG)); vs.run = vs.back; vs.back = 0; } }
+          if (DUMP_STATES.has(A.st)) vs.dumped = true;
+          const dd = Math.hypot(A.x - vs.node[0], A.z + vs.node[1]);
+          if (dd > 80 || (vs.dumped && !DUMP_STATES.has(A.st) && A.st !== 'hauling' && dd > 70)) {
+            vs.n += turnsOf(vs.run); vs.runs.push(Math.round(vs.run / DEG));
+            if (process.env.MC_DEBUG) console.log('заезд', A.id, vs.dest, 'разворотов', vs.n, 'повороты', vs.runs.join(','));
+            visitRot.push(vs.runs.reduce((s, r) => s + Math.abs(r), 0));
+            if (vs.n > 1) hit('v' + A.id + i, 'uturn', i, pl, `${A.id} у ${vs.dest}: разворотов ${vs.n} (повороты корпуса, °: ${vs.runs.filter((r) => Math.abs(r) >= 20).join(', ')})`);
+            delete visit[A.id];
+          }
+        }
+        // круг: окно 75 единиц пути (150 м) — без езды задом, перепад высоты меньше 4, суммарный поворот больше 300°
+        const lw = loopWin[A.id] || (loopWin[A.id] = { s: 0, yaw: 0, prev: null, pts: [] });
+        if (lw.prev) {
+          const dx = A.x - lw.prev.x, dz = A.z - lw.prev.z, st = Math.hypot(dx, dz);
+          lw.yaw += unwrap(A.yaw - lw.prev.yaw);
+          if (st > 0.05) {
+            const rev = (dx * Math.sin(A.yaw) + dz * Math.cos(A.yaw)) / st < -0.5;
+            lw.s += st;
+            lw.pts.push({ s: lw.s, yaw: lw.yaw, y: A.y, rev });
+            while (lw.pts.length && lw.s - lw.pts[0].s > 75) lw.pts.shift();
+            const w = lw.pts;
+            if (w.length > 5 && w[w.length - 1].s - w[0].s > 60 && !w.some((q) => q.rev)) {
+              const ys = w.map((q) => q.y), net = w[w.length - 1].yaw - w[0].yaw;
+              if (Math.max(...ys) - Math.min(...ys) < 4 && Math.abs(net) > 300 * DEG) hit('l' + A.id, 'loop', i, pl, `${A.id} (${A.st}): ${Math.round(Math.abs(net) / DEG)}° за ${((w[w.length - 1].s - w[0].s) * K).toFixed(0)} м пути, ${net > 0 ? 'против' : 'по'} часовой`);
+            }
+          }
+        }
+        lw.prev = { x: A.x, z: A.z, yaw: A.yaw };
+      }
       const d = idle[A.id];
       if (!d || Math.hypot(A.x - d.x, A.z - d.z) > 3 || WAIT_STATES.has(A.st)) idle[A.id] = { since: rec.t, x: A.x, z: A.z };
       else if (rec.t - d.since > 180000) hit('i' + A.id, 'idle', i, pl, `${A.id} (${A.st}) стоит ${((rec.t - d.since) / 60000).toFixed(1)} мин`);
@@ -229,7 +349,12 @@ function analyze(dir) {
   }
   const dur = S.length > 1 ? (S[S.length - 1].t - S[0].t) / 1000 : 0;
   const totals = Object.fromEntries(METRICS.map(([k]) => [k, PLACES.reduce((s, p) => s + counts[p][k], 0)]));
-  const summary = { samples: S.length, seconds: +dur.toFixed(1), perSecond: +(S.length / (dur || 1)).toFixed(1), speedup: +speedup.toFixed(2), totals, byPlace: counts, examples };
+  let holes = null;
+  try { holes = JSON.parse(fs.readFileSync(path.join(dir, 'holes.json'), 'utf8')); } catch (e) { /* замер без проверки дыр */ }
+  const holeSum = holes ? Object.fromEntries(Object.entries(holes).map(([q, vs]) => [q, vs.reduce((s, v) => s + v.holes, 0)])) : null;
+  visitRot.sort((a, b) => a - b);
+  const rot = visitRot.length ? { visits: visitRot.length, median: visitRot[visitRot.length >> 1], over270: visitRot.filter((r) => r > 270).length } : null;
+  const summary = { unloadRotation: rot, samples: S.length, seconds: +dur.toFixed(1), perSecond: +(S.length / (dur || 1)).toFixed(1), speedup: +speedup.toFixed(2), totals, holes: holeSum, byPlace: counts, examples };
   fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify(summary, null, 1));
   const w = [18, ...METRICS.map(([, n]) => Math.max(8, n.length))];
   const row = (cells) => cells.map((c, j) => String(c).padEnd(w[j])).join(' | ');
@@ -237,7 +362,11 @@ function analyze(dir) {
     row(['место', ...METRICS.map(([, n]) => n)]),
     ...PLACES.map((p) => row([p, ...METRICS.map(([k]) => counts[p][k])])),
     row(['ВСЕГО', ...METRICS.map(([k]) => totals[k])]),
-    `для сведения: поворотов больше 45° за 1 с реального времени — ${PLACES.reduce((s, p) => s + counts[p].turnReal, 0)}`, '', 'примеры:',
+    `для сведения: поворотов больше 45° за 1 с реального времени — ${PLACES.reduce((s, p) => s + counts[p].turnReal, 0)}`,
+    rot ? `для сведения: заездов на разгрузку ${rot.visits}, поворот корпуса за заезд (сумма по модулю) — медиана ${rot.median}°, больше 270° — ${rot.over270}` : 'заездов на разгрузку нет',
+    holes ? `дыры в рельефе (пикселей фона внутри карьера): ${Object.entries(holeSum).map(([q, n]) => (q === 'high' ? 'Высокое' : 'Обычное') + ' ' + n).join(', ')}` +
+      Object.entries(holes).flatMap(([q, vs]) => vs.filter((v) => v.holes).map((v) => `\n  ${q === 'high' ? 'Высокое' : 'Обычное'}, ${v.view}: ${v.holes} (места x,z: ${v.spots.map(([k, n]) => k + '×' + n).join('; ')})`)).join('') : 'дыры в рельефе: не проверялись',
+    '', 'примеры:',
     ...METRICS.flatMap(([k, n]) => examples[k].slice(0, 6).map((e) => `  ${n}: ${e.t} с, ${e.place}: ${e.what}`))].join('\n');
   fs.writeFileSync(path.join(dir, 'summary.txt'), txt + '\n');
   console.log(txt);
@@ -301,4 +430,14 @@ const [cmd, a1, a2, a3] = process.argv.slice(2);
 if (cmd === 'measure') await measure(Number(a1) || 10, a2 || '.');
 else if (cmd === 'analyze') analyze(a1 || '.');
 else if (cmd === 'video') await video(a1, a2 || '.', Number(a3) || 45);
-else console.log('node motion_check.mjs measure [минут] [папка] | analyze <папка> | video <points.json> <папка> [секунд]');
+else if (cmd === 'holes') {
+  const dir = a1 || '.', b = await browser();
+  const page = await openScene(await b.newContext({ viewport: { width: 1280, height: 800 } }));
+  await page.waitForTimeout(3000);
+  fs.mkdirSync(dir, { recursive: true });
+  const h = await holes(page);
+  fs.writeFileSync(path.join(dir, 'holes.json'), JSON.stringify(h, null, 1));
+  await b.close();
+  for (const [q, vs] of Object.entries(h)) for (const v of vs) console.log(q, '|', v.view, '|', v.holes, v.spots.map(([k, n]) => k + '×' + n).join('; '));
+  if (fs.existsSync(path.join(dir, 'samples.jsonl'))) analyze(dir);
+} else console.log('node motion_check.mjs measure [минут] [папка] | analyze <папка> | holes <папка> | video <points.json> <папка> [секунд]');

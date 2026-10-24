@@ -220,7 +220,21 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   const nearRim = (p) => ((p[0] - cx) / (a + ROAD_W / 2 + 6)) ** 2 + ((p[1] - cy) / (b + ROAD_W / 2 + 6)) ** 2 < 1;
   const rimEdges = edges.filter((e) => !e.pit && Array.from({ length: 41 }, (_, i) => edgeAt(e, i / 40)).some(nearRim));
   // площадки забоев: на дне — круг у узла забоя; на уступе — ровный прямоугольник вдоль уступа (diorama.json extra.face_pads)
+  // Площадка забоя на уступе (diorama.json extra.face_pads) — внутрь карьера шире на PAD_IN: место погрузки сбоку от
+  // экскаватора и разворот самосвала (к съезду) — на площадке, а не над нижним уступом. У самой кромки карьера площадка
+  // сходит на нет (surfaceAt), иначе там сетка карьера проваливалась до уровня площадки, а земля оставалась на нуле —
+  // сквозная щель. Площадки меняются на месте: их же видят сцена и проверки.
+  const PAD_IN = 12;
   const benchPads = (D.extra && D.extra.face_pads) || [];
+  for (const b of benchPads) {
+    if (b.fitted) continue;
+    let nx = -b.t[1], ny = b.t[0];
+    if (nx * (cx - b.c[0]) + ny * (cy - b.c[1]) < 0) { nx = -nx; ny = -ny; }            // поперёк — к середине карьера
+    const out = b.hd, inn = b.hd + PAD_IN;   // к борту — как была (у кромки площадка сходит на нет, см. surfaceAt)
+    b.c = [b.c[0] + nx * (inn - out) / 2, b.c[1] + ny * (inn - out) / 2];
+    b.hd = (inn + out) / 2;
+    b.fitted = true;
+  }
   const facePads = Object.entries(D.nodes).filter(([n]) => n.startsWith('face-') && !benchPads.some((b) => b.face === n)).map(([, p]) => p);
   // Внутри карьера: полотно (±HW от оси) и площадка забоя — ровно на своей высоте; между двумя близкими полосами
   // (витки съезда, съезд и площадка) — ровный откос от края одной до края другой, без обрыва посередине;
@@ -260,6 +274,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     const z = zAvg + (zStep - zAvg) * smooth((aRamp - span - RAMP_GAP) / rampSmooth(ds));
     // рабочие площадки у забоев: ровный круг на уровне забоя (там стоят экскаватор и самосвал под погрузкой);
     // забой на уступе — у площадки на съезде, круг меньше (уступ узкий)
+    const aminRoad = amin;   // до площадок: только полотно дорог карьера
     for (const [fx, fy, fz] of facePads) take(Math.hypot(xs - fx, ys - fy) - (fz > -depthS + 1 ? FACE_PAD_BENCH : FACE_PAD), fz);
     for (const b of benchPads) {   // до прямоугольника площадки (0 — на ней)
       const dx = xs - b.c[0], dy = ys - b.c[1], along = dx * b.t[0] + dy * b.t[1], across = -dx * b.t[1] + dy * b.t[0];
@@ -269,7 +284,8 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
     // у самого борта врезка сходит на нет: на кромке поверхность всегда на уровне степи (без обрыва у края)
     const rim = smooth(ds / RIM_FADE);
     const zr = z + (num / den - z) * rim;
-    if (amin <= 0) return num / den;   // на полотне и площадке — их высота (у борта тоже: съезд врезан в борт)
+    // на полотне и площадке — их высота (у борта тоже: съезд врезан в борт); площадка у самой кромки — сходит на нет
+    if (amin <= 0 && (aminRoad <= 0 || ds >= RIM_FADE)) return num / den;
     return amin < span ? zr + (z - zr) * smooth(amin / span) : z;
   }
 
