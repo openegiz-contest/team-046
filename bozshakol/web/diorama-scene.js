@@ -117,10 +117,10 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
 
   // --- сгустители у фабрик (круглые резервуары с мостом, ≈ 60 м) — окружение схемы, не двойники
   if (models && models.building) {
-    const tk = (xs, ys, d) => { const g = models.building('thickener', { size: [d, d, 6] }); g.position.copy(S(xs, ys, 0)); group.add(g); };
+    const tk = (xs, ys, d, name) => { const g = models.building('thickener', { size: [d, d, 6] }); g.position.copy(S(xs, ys, 0)); if (name) g.name = name; group.add(g); };
     if (plant) { tk(plant[0] - 90, plant[1] - 150, 60); tk(plant[0] + 10, plant[1] - 150, 60); }
     const pc = D.objects['plant-clay'] && D.objects['plant-clay'].position;
-    if (pc) tk(pc[0] + 125, pc[1] - 10, 50);
+    if (pc) tk(pc[0] + 125, pc[1] - 10, 50, 'clay-thickener');
   }
 
   // --- мачты освещения по борту карьера (прожекторы — ореолы); мачта 30 м
@@ -157,15 +157,25 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
         for (let i = k ? 1 : 0; i <= n; i++) {
           const x = a[0] + (b[0] - a[0]) * i / n, y = a[1] + (b[1] - a[1]) * i / n;
           const end = (k === 0 && i === 0) || (k === pts.length - 2 && i === n);
-          if (end || free(x, y)) out.push(S(x, y, 0));
+          const first = k === 0 && i === 0, last = k === pts.length - 2 && i === n;
+          if (last || (first && pts[0] !== sub)) { const f = nearFree(x, y); out.push(S(f[0], f[1], 0)); }   // концы линии — тоже не на дороге
+          else if (end || free(x, y)) out.push(S(x, y, 0));
         }
       }
       if (out.length >= 2) group.add(models.powerLine(out, { height: 20 }));
     };
     const cr = D.objects['crusher-01'] && D.objects['crusher-01'].position, pc = D.objects['plant-clay'] && D.objects['plant-clay'].position;
-    const mid = [sub[0] + 70, sub[1] + 150], east = [-400, sub[1] + 150];
-    if (cr) route([sub, mid, east, [cr[0] - 40, cr[1] - 40]], 90);
-    if (pc) route([east, [pc[0] - 95, pc[1] - 75]], 90);
+    const nearFree = (x, y) => {   // ближайшее свободное место по спирали (до 60 единиц)
+      for (let r = 0; r <= 60; r += 6) for (let a = 0; a < 12; a++) {
+        const qx = x + Math.cos(a * Math.PI / 6) * r, qy = y + Math.sin(a * Math.PI / 6) * r;
+        if (free(qx, qy)) return [qx, qy];
+      }
+      return [x, y];
+    };
+    // южнее заправки и стоянки (провода не над ними), к восточному краю дробилки
+    const w1 = [sub[0] + 70, sub[1] + 100], w2 = [-330, -470], w3 = [-60, -470];
+    if (cr) route([sub, w1, w2, w3, [cr[0] + 60, cr[1] - 35]], 90);
+    if (pc) route([w2, [pc[0] - 95, pc[1] - 75]], 90);
   }
 
   // --- ж/д ветка к складу концентрата у сульфидной фабрики: концентрат вывозят по железной дороге
@@ -642,8 +652,12 @@ function steppeFree(dio, roadGap, busyR) {
     return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t);
   };
   const tl = D.extra && D.extra.tailings;
+  const round = Object.values(D.objects).filter((o) => o.position && o.radius).map((o) => [o.position, o.radius + 60]);
+  const cv = Object.values(D.objects).find((o) => o.kind === 'conveyor' && o.path);
   return (x, y) => {
     if (((x - pit.cx) / (pit.a + 25)) ** 2 + ((y - pit.cy) / (pit.b + 25)) ** 2 < 1) return false;
+    for (const [p, r] of round) if (Math.hypot(x - p[0], y - p[1]) < r) return false;
+    if (cv) for (let i = 0; i + 1 < cv.path.length; i++) if (segDist(x, y, cv.path[i], cv.path[i + 1]) < 25) return false;
     for (const ed of dio.edges) if ((ed.path ? dio.edgeNearest(ed, x, y, roadGap + 1).d : segDist(x, y, ed.sa, ed.sb)) < roadGap) return false;
     for (const p of busy) if (Math.hypot(x - p[0], y - p[1]) < busyR) return false;
     if (tl && ((x - tl.center[0]) / (tl.radii[0] + 90)) ** 2 + ((y - tl.center[1]) / (tl.radii[1] + 90)) ** 2 < 1) return false;
@@ -747,7 +761,7 @@ function railSiding(THREE, dio, models, plant) {
 }
 
 // ограждение: тонкие светлые столбики и полупрозрачная сетка между ними (забор 2,2 м, столбы через 15 м)
-function fence(THREE, S, corners) {
+export function fence(THREE, S, corners) {
   const grp = new THREE.Group(); grp.name = 'fence';
   const postMat = new THREE.MeshLambertMaterial({ color: 0xd9dde0 });
   const netMat = new THREE.MeshBasicMaterial({ color: 0xc9ced2, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
