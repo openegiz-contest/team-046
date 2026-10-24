@@ -184,7 +184,7 @@ function analyze(dir) {
     // по истории каждой машины: шаг, ход назад, поворот, простой
     for (const A of trucks) {
       const h = hist[A.id] || (hist[A.id] = []);
-      h.push({ t: rec.t, x: A.x, z: A.z, yaw: A.yaw, st: A.st, i });
+      h.push({ t: rec.t, x: A.x, z: A.z, yaw: A.yaw, st: A.st, dest: A.dest, exc: A.exc, i });
       while (h.length && rec.t - h[0].t > 1500) h.shift();
       const pl = place(A.x, A.z);
       if (h.length >= 2) {
@@ -196,12 +196,14 @@ function analyze(dir) {
           const back = (dx * Math.sin(A.yaw) + dz * Math.cos(A.yaw)) / step < -0.5;
           if (back) {
             let ok = false;
+            // ход между замерами — по состоянию в начале отрезка (модель могла закончить разгрузку посреди заезда задом)
+            const st = p.st;
             if (v <= 2 * unitsPerMps) {
-              const ex = A.exc && byId[A.exc];
-              if (LOAD_STATES.has(A.st) && ex && Math.hypot(A.x - ex.x, A.z - ex.z) < 45) ok = true;
-              const dn = meta.nodes[DUMP_NODE[A.dest]];
-              if ((DUMP_STATES.has(A.st) || A.st === 'hauling') && dn && Math.hypot(A.x - dn[0], A.z + dn[1]) < 40) ok = true;
-              if (A.st === 'refueling' || A.st === 'reserve') ok = true;   // заезд задом на место стоянки у заправки
+              const ex = p.exc && byId[p.exc];
+              if (LOAD_STATES.has(st) && ex && Math.hypot(A.x - ex.x, A.z - ex.z) < 45) ok = true;
+              const dn = meta.nodes[DUMP_NODE[p.dest]];
+              if ((DUMP_STATES.has(st) || st === 'hauling') && dn && Math.hypot(A.x - dn[0], A.z + dn[1]) < 40) ok = true;
+              if (st === 'refueling' || st === 'reserve') ok = true;   // заезд задом на место стоянки у заправки
             }
             if (!ok) hit('r' + A.id, 'reverse', i, pl, `${A.id} (${A.st}): задом ${(v / unitsPerMps).toFixed(1)} м/с`);
           }
