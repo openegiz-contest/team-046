@@ -16,6 +16,7 @@ const dbgWin = new URLSearchParams(location.search).has('debug') ? window : {};
 const colors = {
   sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff,
   down: 0xd1236a,                         // авария / остановка / закрыто — красно-пурпурный (виден и при дальтонизме)
+  stateOk: 0x22b8a6, stateWarn: 0xffb526, // норма — спокойный бирюзовый, внимание — янтарный (лампы фабрик, как маячки техники)
   steppe: 0xe6d9a8,
   bench: [0xdcc08e, 0xcfae78],            // бермы (площадки) — два чередующихся светлых тона
   wall: [0x8f6a44, 0x7f5c3a],             // стенки уступов — заметно темнее берм
@@ -1032,6 +1033,23 @@ btnFollow.addEventListener('click', toggleFollow);
 const btnUp = document.getElementById('btn-up');
 if (btnUp) btnUp.addEventListener('click', () => { setView('all'); btnUp.blur(); });
 const _d = new THREE.Vector3();
+// Выбранная (или ведомая) машина в центре взгляда: если склон между камерой и ней выше линии взгляда (камера за
+// бортом или уступом), камера поднимается — машина видна, а не борт карьера
+function keepSight() {
+  const id = followId || openedThing;
+  if (!id || !MACHINE_RE.test(id)) return;
+  const obj = byThing(id); if (!obj) return;
+  obj.getWorldPosition(_v);
+  const t = controls.target, cp = perspCam.position;
+  if (_v.distanceTo(t) > 40) return;                  // смотрим не на неё
+  let need = 0;
+  for (let k = 1; k <= 12; k++) {
+    const f = k / 12, x = t.x + (cp.x - t.x) * f, z = t.z + (cp.z - t.z) * f;
+    const g = dio.surfaceAt(x, -z) + 3, y = t.y + (cp.y - t.y) * f;
+    if (g > y) need = Math.max(need, t.y + (g - t.y) / f - cp.y);
+  }
+  if (need > 0) cp.y += Math.min(need, 400);
+}
 function updateCamera(dt) {
   if (tween) {
     tween.t = Math.min(1, tween.t + dt / 1.0);
@@ -1062,9 +1080,14 @@ function updateCamera(dt) {
     scene.fog.near = Math.max(60, d * 0.55 - 150); scene.fog.far = d + 450 + d * 0.35;
   }
   if (dio && camera === perspCam) {   // камера всегда над поверхностью (и в перелёте — не сквозь борт);
-    // упёрлась вне перелёта — вверх вместе с целью: взгляд не меняется, поворот мышью у земли поднимает взгляд в небо
+    // упёрлась вне перелёта: смотрим вверх или вдоль земли — вверх вместе с целью (у земли можно смотреть в небо),
+    // смотрим вниз (на машину, объект) — поднимается только камера, цель остаётся на месте
     const up = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4 - perspCam.position.y;
-    if (up > 0) { perspCam.position.y += up; if (!tween) controls.target.y += up; }
+    if (up > 0) {
+      const lookingDown = controls.target.y < perspCam.position.y - 2;
+      perspCam.position.y += up; if (!tween && !lookingDown) controls.target.y += up;
+    }
+    if (!tween) keepSight();
   }
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
   markerScale = MACHINE_SCALE;

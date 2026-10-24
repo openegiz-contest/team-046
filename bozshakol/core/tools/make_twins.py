@@ -137,7 +137,7 @@ for rid, name in [("road-ramp-1", "Съезд 1 (северный борт)"), (
         "open": feat(True), "speed_limit": feat(30 if "ramp" in rid else 40, "км/ч"),
         "trucks_on_road": feat(0, "шт"),
     })
-haul[tid("dump-waste-1")] = twin("Отвал вскрыши 1", "dump", "pit-central", features={
+haul[tid("dump-waste-1")] = twin("Отвал вскрыши (пустая порода)", "dump", "pit-central", features={
     "received_total": feat(0.0, "т"), "accepting": feat(True), "trucks_queued": feat(0, "шт"),
 })
 
@@ -195,7 +195,7 @@ proc[tid("power-grid")] = twin("Электроснабжение", "power", "min
     "crusher": feat(0.0, "МВт"), "other": feat(6.0, "МВт"), "energy_shift": feat(0.0, "МВт·ч"),
 })
 proc[tid("crusher-01")] = twin("Гирационная дробилка", "crusher", "plant-sulphide", attrs={
-    "type": "гирационная", "rated_tph": 4000, "bunker_t": 3000, "downstream": tid("conveyor-01"),
+    "crusher_type": "гирационная", "rated_tph": 4000, "bunker_t": 3000, "downstream": tid("conveyor-01"),
 }, features={
     "state": feat("running"), "accepting": feat(True), "throughput": feat(0.0, "т/ч"),
     "bunker": feat(0.0, "т"), "received_total": feat(0.0, "т"), "trucks_queued": feat(0, "шт"),
