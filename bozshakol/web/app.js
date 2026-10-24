@@ -1842,7 +1842,13 @@ function truckTargets() {
       if (!ud.man || ud.man.key !== sta.key) ud.man = null, ud.station = sta;
       continue;
     }
-    if (ud.man) { ud.depart = { S: ud.man.S, u: ud.man.u, yaw: ud.man.yaw, E: ud.man.E }; ud.man = null; }
+    // уехал от пункта; если модель закончила раньше, чем манёвр дошёл до места, — уезжает от того места, где стоит
+    // (не сдаёт дальше назад к месту)
+    if (ud.man) {
+      const f = ud.follow, whole = ud.man.done || !f;
+      ud.depart = { S: whole ? ud.man.S : [f.x, -f.z], u: ud.man.u, yaw: whole ? ud.man.yaw : f.yaw, E: ud.man.E };
+      ud.man = null;
+    }
     // очередь к забою на уступе: подъезд в схеме короткий — стоят на площадке забоя вдоль уступа, за местом погрузки
     // (дальше от экскаватора), бортом к полотну (не на полосе съезда)
     if (st === 'queued_load') {
