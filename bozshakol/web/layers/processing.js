@@ -29,8 +29,11 @@ const STATE_RU = { running: '', idle: ' · простой', stopped: ' · сто
 
 export function init(ctx) {
   const THREE = ctx.THREE, M = ctx.models;
-  const lam = (col) => new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: 0.6 });
-  lampMats = { green: lam(0x43b36a), amber: lam(0xf2c94c), red: lam(ctx.colors.down || 0xd32f2f) };
+  const lam = (col, k = 0.6) => new THREE.MeshLambertMaterial({ color: col, emissive: col, emissiveIntensity: k });
+  // общая палитра состояний сцены (как у техники): норма — спокойный бирюзовый, внимание — янтарный,
+  // тревога — красно-пурпурный (отличим при дальтонизме); при тревоге над объектом — значок ⚠ с пульсом
+  const C = ctx.colors;
+  lampMats = { green: lam(C.stateOk ?? 0x22b8a6, 0.35), amber: lam(C.stateWarn ?? 0xffb526), red: lam(C.down ?? 0xd1236a, 0.8) };
   lampGeo = new THREE.CylinderGeometry(1.2, 1.2, 1.6, 12);   // сигнальная лампа: Ø 2,4 м, высота 1,6 м
   // высота объекта: своя из geometry.json, иначе — земля сцены
   const zOf = (o) => (o.position.length > 2 && typeof o.position[2] === 'number' ? o.position[2] : ctx.groundAt(o.position[0], o.position[1]));
@@ -209,6 +212,14 @@ export function update(ctx, twins) {
       text += ' · ' + fmtNum(Number(fv(twin, 'received_total', 0)) / 1000, 1) + ' тыс. т';
     }
     if (rec.lamp) { const m = lampMats[lamp]; if (rec.lamp.material !== m) rec.lamp.material = m; }
+    // тревога — не только цветом: значок ⚠ с коротким текстом причины, рамка пульсирует (CSS .label.alarm)
+    if (lamp === 'red' && rec.lamp) {
+      const why = rec.kind === 'stockpile' ? (fv(twin, 'full', false) === true ? 'склад полон' : 'не принимает')
+        : rec.kind === 'substation' ? 'перегрузка сети' : 'стоит';
+      // важность 4 — не прячется за другими подписями; выше значка сценария над тем же объектом
+      if (!rec.alarm) rec.alarm = ctx.label(rec.anchor || rec.g, '⚠ ' + why, { importance: 4, cls: 'warn alarm', dy: ((rec.label && rec.label.dy) || 10) + 40 });
+      rec.alarm.text = '⚠ ' + why; rec.alarm.enabled = true;
+    } else if (rec.alarm) rec.alarm.enabled = false;
     obj.userData.label = text;
   }
 }
