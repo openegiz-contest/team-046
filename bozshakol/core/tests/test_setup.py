@@ -32,6 +32,14 @@ class FakeDitto:
             raise urllib.error.HTTPError("u", 404, "not found", {}, None)
         return json.loads(json.dumps(self.store[thing_id]))
 
+    def put_type(self, thing_id, body):
+        """Extended API: PUT /api/types/<id> — тип с _isType=true (ставит платформа)."""
+        self.calls.append(("type", thing_id))
+        status = 204 if thing_id in self.store else 201
+        self.store[thing_id] = dict(json.loads(json.dumps(body)), thingId=thing_id)
+        self.store[thing_id]["attributes"]["_isType"] = True
+        return status
+
     def put_thing(self, thing_id, body):
         self.calls.append(("thing", thing_id))
         status = 204 if thing_id in self.store else 201
@@ -64,6 +72,7 @@ class SetupKeepsStateTest(unittest.TestCase):
     def run_setup(self, store, core_twins):
         fake = FakeDitto(store)
         setup.DittoClient = lambda: fake
+        setup.ExtendedApi = lambda: fake   # Extended API — тот же подменный Ditto
         os.environ["TWINS_DIR"] = twins_dir(core_twins)
         setup.main()
         return fake
@@ -120,6 +129,42 @@ class SetupKeepsStateTest(unittest.TestCase):
         self.assertTrue(f["bad_blast"]["properties"]["value"])          # включён — так и остаётся
         self.assertEqual(f["bad_blast"]["properties"]["p80_mm"], 900)   # параметр — из twins.json
         self.assertIn("old_scenario", f)
+
+
+    def test_types_created_linked_and_kept_on_rerun(self):
+        twins = {
+            "kz.bozshakol:truck-01": {"policyId": "default:basic_policy", "attributes": {"name": "Самосвал 01", "kind": "truck"},
+                                      "features": {"speed": {"properties": {"value": 0, "unit": "км/ч"}}}},
+            "kz.bozshakol:truck-02": {"policyId": "default:basic_policy", "attributes": {"name": "Самосвал 02", "kind": "truck"},
+                                      "features": {"speed": {"properties": {"value": 0, "unit": "км/ч"}},
+                                                   "fuel": {"properties": {"value": 100, "unit": "%"}}}},
+            "kz.bozshakol:crusher-01": {"policyId": "default:basic_policy",
+                                        "attributes": {"name": "Дробилка", "kind": "crusher", "type": "гирационная"},
+                                        "features": {"bunker": {"properties": {"value": 0, "unit": "т"}}}},
+        }
+        store = {"kz.bozshakol:crusher-01": {"attributes": {"name": "Дробилка", "kind": "crusher", "type": "гирационная"},
+                                             "features": {"bunker": {"properties": {"value": 640, "unit": "т"}}}}}
+        fake = self.run_setup(store, twins)
+        truck_t, crusher_t = store["kz.bozshakol.types:truck"], store["kz.bozshakol.types:crusher"]
+        # типы созданы через Extended API, один на вид; признаки — объединение, значения пустые, единицы сохранены
+        self.assertEqual(sorted(c for c in fake.calls if c[0] == "type"),
+                         [("type", "kz.bozshakol.types:crusher"), ("type", "kz.bozshakol.types:truck")])
+        self.assertTrue(truck_t["attributes"]["_isType"])
+        self.assertEqual(truck_t["attributes"]["name"], "Самосвал")
+        self.assertEqual(truck_t["features"]["speed"]["properties"], {"value": None, "unit": "км/ч"})
+        self.assertIn("fuel", truck_t["features"])
+        # двойники ссылаются на тип; своё значение type у дробилки — в crusher_type; живой признак не тронут
+        self.assertEqual(store["kz.bozshakol:truck-02"]["attributes"]["type"], "kz.bozshakol.types:truck")
+        c = store["kz.bozshakol:crusher-01"]
+        self.assertEqual(c["attributes"]["type"], "kz.bozshakol.types:crusher")
+        self.assertEqual(c["attributes"]["crusher_type"], "гирационная")
+        self.assertEqual(c["features"]["bunker"]["properties"]["value"], 640)
+        # повторный запуск: те же id, ничего не создаётся и не пишется
+        crusher_t["features"]["note"] = {"properties": {"value": None}}   # дописано вручную в OpenEgiz — не стирается
+        again = self.run_setup(store, twins)
+        self.assertEqual(again.calls, [])
+        self.assertEqual(len([k for k in store if k.startswith("kz.bozshakol.types:")]), 2)
+        self.assertIn("note", store["kz.bozshakol.types:crusher"]["features"])
 
 
 if __name__ == "__main__":
