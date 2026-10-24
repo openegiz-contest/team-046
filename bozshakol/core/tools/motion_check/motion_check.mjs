@@ -197,10 +197,10 @@ function analyze(dir) {
     const p = meta.nodes[n]; if (p) put({ circle: [p[0], p[1], r] }, p[0] - r, p[1] - r, p[0] + r, p[1] + r);
   }
   for (const [x, y] of meta.parks || []) put({ circle: [x, y, 14] }, x - 14, y - 14, x + 14, y + 14);
-  for (const [x, y, r] of meta.junctions || []) put({ circle: [x, y, r + 1], top: true }, x - r - 1, y - r - 1, x + r + 1, y + r + 1);   // площадки развилок (вне карьера)
+  for (const [x, y, r, , z = 0] of meta.junctions || []) put({ circle: [x, y, r + 1], z }, x - r - 1, y - r - 1, x + r + 1, y + r + 1);   // площадки развилок (на высоте узла)
   const onRoad = (xs, ys, h) => (grid.get(Math.floor(xs / GRID) + ',' + Math.floor(ys / GRID)) || []).some((it) => {
     if (it.seg) return segDist(xs, ys, it.seg) <= HALF + 1;
-    if (it.circle) return (!it.top || h > -2) && Math.hypot(xs - it.circle[0], ys - it.circle[1]) <= it.circle[2];
+    if (it.circle) return (it.z === undefined || Math.abs(h - it.z) < 3) && Math.hypot(xs - it.circle[0], ys - it.circle[1]) <= it.circle[2];
     const b = it.pad, dx = xs - b.c[0], dy = ys - b.c[1];
     return Math.abs(dx * b.t[0] + dy * b.t[1]) <= b.hl + 2 && Math.abs(-dx * b.t[1] + dy * b.t[0]) <= b.hd + 2;
   });

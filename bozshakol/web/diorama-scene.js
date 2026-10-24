@@ -461,14 +461,16 @@ function rampBands(THREE, dio, colorAt) {
 
 // Полотно дорог — лента по поверхности: точки через ≈ 4 единицы, высота каждой поперечины — dio.surfaceAt
 // (максимум по оси и краям) + подъём; обочина — шире и чуть ниже. Ключ результата — 'дорога|материал'
-// Площадки развилок у бровки и у пунктов: где сходятся три дороги или две под углом меньше 100°, самосвал на
-// повороте выходит за край полотна — там ровная площадка радиусом JUNCTION_R (полотно с обочиной), только вне карьера.
-// Те же площадки видит проверка движения (motion_check, «вне дороги»).
+// Площадки развилок у бровки, у пунктов и на дне карьера: где сходятся три дороги или две под углом меньше 100°,
+// самосвал на повороте выходит за край полотна — там ровная площадка радиусом JUNCTION_R (полотно с обочиной): вне
+// карьера — до бровки, в карьере — только по ровному месту на высоте узла (дно). Те же площадки видит проверка
+// движения (motion_check, «вне дороги»).
 export const JUNCTION_R = 34;
 export function junctionPads(dio) {
   const out = [];
   for (const [node, p] of Object.entries(dio.D.nodes)) {
-    if (dio.schemaInset(p[0], p[1]) >= 0) continue;   // в карьере — нет
+    const inside = dio.schemaInset(p[0], p[1]) >= 0;
+    if (inside && (p[2] || 0) > -dio.pit.depth + 1) continue;   // в карьере — только на дне
     const dirs = [];
     for (const e of dio.edges) {
       if (e.from !== node && e.to !== node) continue;
@@ -482,7 +484,7 @@ export function junctionPads(dio) {
       let d = Math.abs(dirs[i] - dirs[j]); if (d > Math.PI) d = 2 * Math.PI - d;
       if (d < 100 * Math.PI / 180) acute = true;
     }
-    if (dirs.length >= 3 || (dirs.length === 2 && acute)) out.push([p[0], p[1], JUNCTION_R, node]);
+    if (dirs.length >= 3 || (dirs.length === 2 && acute)) out.push([p[0], p[1], JUNCTION_R, node, inside ? (p[2] || 0) : 0, inside]);
   }
   return out;
 }
@@ -523,13 +525,14 @@ export function roadRibbons(THREE, dio) {
     }
   }
   // площадки развилок: веер треугольников по поверхности (полотно чуть выше обочины), до бровки карьера
-  for (const [cx, cy, R] of junctionPads(dio)) {
+  for (const [cx, cy, R, , z0, inside] of junctionPads(dio)) {
     for (const [mat, rad, lift] of [['open', R, 0.45], ['shoulder', R + 3, 0.2]]) {
       const tri = [], N = 40, rim = [];
       for (let k = 0; k <= N; k++) {
         const a = k / N * Math.PI * 2, dx = Math.sin(a), dy = Math.cos(a);
         let r = rad;
-        while (r > 2 && dio.schemaInset(cx + dx * r, cy + dy * r) >= -2) r -= 2;   // не заходит в карьер
+        const off = (x, y) => (inside ? Math.abs(dio.surfaceAt(x, y) - z0) > 0.8 : dio.schemaInset(x, y) >= -2);
+        while (r > 2 && off(cx + dx * r, cy + dy * r)) r -= 2;   // вне карьера — до бровки, на дне — по ровному
         const x = cx + dx * r, y = cy + dy * r;
         rim.push([x, dio.surfaceAt(x, y) + lift, -y]);
       }
