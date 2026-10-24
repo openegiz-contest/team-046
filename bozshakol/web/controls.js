@@ -1,12 +1,13 @@
 // Управление сценой с клавиатуры (дополняет мышь/OrbitControls, не заменяет её).
-//   W/A/S/D и стрелки — движение по карте относительно взгляда камеры (камера и цель OrbitControls идут вместе);
-//   Пробел / Shift — полёт вверх / вниз (камера и цель вместе); скорость растёт с высотой над землёй;
-//   Q/E — поворот вокруг цели; R/F — дальше / ближе (как колесо мыши);
+//   как в играх: W/A/S/D и стрелки — движение относительно взгляда камеры (камера и цель OrbitControls вместе);
+//   Shift (удерживать) — втрое быстрее; Пробел или E — вверх, C или Q — вниз (камера и цель вместе);
+//   скорость растёт с высотой над землёй; поворот камеры — мышью; R/F — дальше / ближе (как колесо мыши);
+//   Ctrl не используется (Ctrl+W закрыл бы вкладку браузера);
 //   1–5 — виды; Home — весь рудник («Наверх»); G — следовать за выбранным самосвалом / отпустить;
 //   Esc — снять выбор (и выйти из следования); ? или H — подсказка по клавишам.
 // Ограничение одно — снизу: камера не ниже земли + MIN_ABOVE (упёрлась — вверх идёт и цель, взгляд не меняется:
 // со дна карьера можно смотреть в небо и вылететь в любую сторону); стен и потолка нет.
-// В виде «Сверху» (ортокамера): W/A/S/D панорамируют карту, R/F меняют масштаб, Q/E не действуют.
+// В виде «Сверху» (ортокамера): W/A/S/D панорамируют карту, R/F меняют масштаб, вверх/вниз не действуют.
 //
 // initKeyboard(opts) -> { update(dt), help }
 //   opts: camera()         — текущая камера (THREE.Camera)
@@ -54,7 +55,7 @@ export function initKeyboard(opts) {
     const tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
   }
-  const isMove = (code) => /^(Key[WASDQERF]|Arrow(Up|Down|Left|Right)|Shift(Left|Right)|Space)$/.test(code);
+  const isMove = (code) => /^(Key[WASDQERFC]|Arrow(Up|Down|Left|Right)|Shift(Left|Right)|Space)$/.test(code);
 
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -87,10 +88,10 @@ export function initKeyboard(opts) {
     if (!cam || !ctl) return;
     const fwd = axis(has('KeyW', 'ArrowUp'), has('KeyS', 'ArrowDown'));
     const side = axis(has('KeyD', 'ArrowRight'), has('KeyA', 'ArrowLeft'));
-    const rot = axis(has('KeyQ'), has('KeyE'));
+    const rot = 0;                                                     // поворот — мышью
     const upDown = axis(has('KeyR'), has('KeyF'));
-    const lift = axis(has('Space'), has('ShiftLeft', 'ShiftRight'));   // полёт вверх / вниз
-    const boost = 1;
+    const lift = axis(has('Space', 'KeyE'), has('KeyC', 'KeyQ'));      // полёт вверх / вниз
+    const boost = has('ShiftLeft', 'ShiftRight') ? 3 : 1;               // Shift удерживать — втрое быстрее
     const top = o.isTop();
     const pos = cam.position, tgt = ctl.target;
 

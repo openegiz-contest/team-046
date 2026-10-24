@@ -227,7 +227,8 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
 #guide-open { bottom: 82px; font-weight: 600; color: var(--accent); }
 #help-hint:hover, #guide-open:hover { background: #fff; }
 #help {
-  position: absolute; right: 14px; top: 70px; width: 410px; max-width: calc(100% - 28px); max-height: calc(100% - 100px);
+  position: absolute; right: 14px; top: calc(var(--top-h, 58px) + 10px); width: 410px; max-width: calc(100% - 28px);
+  max-height: calc(100% - var(--top-h, 58px) - 40px);   /* ниже верхнего меню: оно бывает в 2–3 строки */
   overflow-y: auto; box-sizing: border-box; padding: 12px 14px;
   background: var(--panel-bg); backdrop-filter: blur(8px); border-radius: var(--radius); box-shadow: var(--shadow);
 }
@@ -240,10 +241,10 @@ table.kv td.val { text-align: right; font-variant-numeric: tabular-nums; font-we
   color: var(--ink); background: #fff; border: 1px solid #c9ccd2; border-bottom-width: 2px; border-radius: 4px;
 }
 /* --- сверка с реальностью --- */
-#reality { position: fixed; top: 92px; right: 14px; z-index: 15; }
+#reality { position: fixed; top: calc(var(--top-h, 80px) + 10px); right: 14px; z-index: 15; }   /* ниже верхнего меню */
 #reality[hidden] { display: none; }
 #reality .reality-card {
-  width: 600px; max-width: calc(100vw - 340px); max-height: calc(100vh - 120px); overflow-y: auto; box-sizing: border-box;
+  width: 600px; max-width: calc(100vw - 340px); max-height: calc(100vh - var(--top-h, 80px) - 30px); overflow-y: auto; box-sizing: border-box;
   background: rgba(252, 251, 248, 0.97); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 16px; line-height: 1.4;
 }
 #reality .card-head b { font-size: 15px; }

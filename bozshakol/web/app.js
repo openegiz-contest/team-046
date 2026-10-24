@@ -175,6 +175,12 @@ resize();
 const labelRoot = document.getElementById('labels');
 const panelEl = document.getElementById('panel'), topbarEl = document.getElementById('topbar'), bannerEl = document.getElementById('scenario-banner');
 const notesEl = document.getElementById('scene-notes'), helpHintEl = document.getElementById('help-hint'), guideOpenEl = document.getElementById('guide-open');
+// окна справа («?», «Сверка с реальностью») открываются ниже верхнего меню: в узком окне оно в 2–3 строки, с плашками сценариев — выше
+{
+  const topwrap = document.getElementById('topwrap');
+  const setTopH = () => document.documentElement.style.setProperty('--top-h', Math.round(topwrap.getBoundingClientRect().bottom) + 'px');
+  new ResizeObserver(setTopH).observe(topwrap); setTopH();
+}
 // Важность по умолчанию (если слой её не передал) — по виду двойника: крупные объекты 3, самосвалы 1, остальное 2
 function defaultImportance(obj) {
   const id = thingOf(obj) || '';
@@ -354,11 +360,14 @@ function renderCard() {
   document.getElementById('card-id').textContent = openedThing;
   const rows = [];
   if (t && t.features) {
+    const kind = (t.attributes && t.attributes.kind) || '';
     for (const [f, feat] of Object.entries(t.features)) {
       const p = feat.properties || {};
-      const ru = FEATURE_RU[f];
+      const ru = FEATURE_RU_KIND[kind + '.' + f] || FEATURE_RU[f] || (/^scenario_/.test(f) && 'сценарий «' + (SCENARIO_RU[f.slice(9)] || f.slice(9)) + '»');
       const name = ru ? esc(ru) + '<div class="tech">' + esc(f) + '</div>' : esc(f);
-      rows.push('<tr><td>' + name + '</td><td class="val">' + esc(fmt(p.value)) + '</td><td>' + esc(p.unit || '') + '</td></tr>');
+      const [value, unitOk] = cardValue(f, p.value);
+      const unit = unitOk ? (p.unit in UNIT_RU ? UNIT_RU[p.unit] : (p.unit || UNIT_FALLBACK[f] || '')) : '';
+      rows.push('<tr><td>' + name + '</td><td class="val">' + esc(value) + '</td><td>' + esc(unit) + '</td></tr>');
     }
   }
   cardBody.innerHTML = rows.join('') || '<tr><td colspan="3">нет данных</td></tr>';
@@ -368,7 +377,7 @@ setInterval(() => { if (openedThing && !card.hidden) renderCard(); }, 1000);
 // Русские названия признаков двойников в карточке (техническое имя — рядом мелко)
 const FEATURE_RU = {
   state: 'состояние', payload: 'груз', load: 'груз', load_type: 'тип груза', cargo: 'груз', speed: 'скорость',
-  fuel: 'топливо', fuel_pct: 'топливо', fuel_l: 'топливо', x: 'место: x', y: 'место: y', z: 'высота', heading: 'курс',
+  fuel: 'топливо', fuel_pct: 'топливо', fuel_l: 'топливо', x: 'к востоку от центра карьера', y: 'к северу от центра карьера', z: 'высота', heading: 'курс',
   destination: 'куда едет', source: 'откуда', assigned_excavator: 'закреплён за экскаватором', trips: 'рейсы',
   trips_total: 'рейсы всего', odometer_km: 'пробег', engine_hours: 'моточасы', accepting: 'принимает руду',
   throughput: 'производительность', bunker_t: 'бункер', bunker: 'бункер', stop_reason: 'причина остановки',
@@ -387,7 +396,105 @@ const FEATURE_RU = {
   sim_time: 'модельное время', shift: 'смена', shift_hour: 'час смены', temperature: 'температура', wind: 'ветер',
   visibility: 'видимость', speed_limit: 'ограничение скорости', active_scenarios: 'включённые сценарии', advice: 'советы',
   drilled_m: 'пробурено', penetration_rate: 'скорость бурения', utilization: 'загрузка', value: 'значение',
+  // самосвалы и диспетчер
+  cargo_type: 'вид груза', cargo_cu: 'медь в грузе', cargo_clay: 'глина в грузе', excavator: 'экскаватор',
+  assignments: 'закрепление самосвалов', clay_limit: 'предел глины на дробилку', clay_share_crusher: 'доля глины на дробилку',
+  delivered_crusher_cu_t: 'медь, привезённая на дробилку', delivered_clay_cu_t: 'медь, привезённая на склад глины',
+  fleet_utilization: 'загрузка парка', fuel_saved_l_shift: 'сэкономлено топлива за смену', fuel_used_l: 'израсходовано топлива',
+  plan_crusher_tph: 'план на дробилку', plan_clay_tph: 'план на склад глины', queue_dump: 'очередь у отвала',
+  refuels_total: 'заправок всего', tph_crusher: 'на дробилку', tph_clay: 'на склад глины', tph_dump: 'в отвал',
+  trips_per_hour: 'рейсов в час', trucks_down: 'самосвалов в аварии', time_hauling_pct: 'время в рейсе с грузом',
+  time_returning_pct: 'время порожнего пробега', time_loading_pct: 'время на погрузке', time_dumping_pct: 'время на разгрузке',
+  time_queue_pct: 'время в очереди', time_refueling_pct: 'время на заправке', time_reserve_pct: 'время в резерве',
+  time_down_pct: 'время в аварии', face: 'забой', queue: 'очередь', loaded_total: 'погружено всего', passes_total: 'ковшей всего',
+  // геология и буровзрывные работы
+  active_faces: 'забоев в работе', bench_height: 'высота уступа', depth: 'глубина карьера', face_role: 'назначение забоя',
+  drilling_ahead_status: 'запас бурения', panel_no: 'панель', panel_progress: 'отработка панели', panel_extracted: 'вынуто из панели',
+  powder_factor: 'удельный расход ВВ', reserve_blocks: 'блоков в запасе', role_mismatch: 'руда не по назначению',
+  block_preview: 'блок: содержание меди по точкам', block: 'блок', block_ready: 'блок пробурен', hole_depth_m: 'глубина скважины',
+  holes_in_block: 'скважин в блоке', holes_total: 'скважин всего', meters_total: 'пробурено всего', rock_hardness_mwd: 'крепость по бурению',
+  blasting_demand_tph: 'нужно взорванной руды', drilling_capacity_tph: 'возможности бурения', drill_busy_pct: 'занятость станков',
+  drill_utilisation_pct: 'загрузка станков', drills_needed: 'нужно станков', drills_working: 'станков в работе',
+  feed_cu_actual: 'медь в питании, факт', feed_cu_target: 'медь в питании, цель',
+  // переработка: дробилка, конвейер, склады, фабрики, мельницы, флотация
+  intake: 'приём руды', length: 'длина', transit_time: 'время в пути руды по ленте', idle_power: 'мощность холостого хода',
+  auto_stopped: 'остановлен автоматически', bunker_fill: 'заполнение бункера', capacity: 'пропускная способность',
+  alarm: 'тревога', fill_pct: 'заполнение', full: 'полон', volume: 'объём', declining_min: 'запас убывает', rising_min: 'запас растёт',
+  hours_to_full: 'до заполнения', overflow_expected: 'ожидается переполнение', overflow_forecast: 'прогноз переполнения',
+  stop_expected: 'ожидается остановка фабрики', received_total: 'принято всего', reclaimed_total: 'отгружено всего',
+  ball_mills_power: 'мощность шаровых мельниц', mills_power: 'мощность мельниц', p80_product: 'крупность продукта P80',
+  concentrate_cu: 'медь в концентрате', concentrate_tph: 'выход концентрата', cu_in_concentrate_total: 'медь в концентрате всего',
+  power_limited: 'мощность ограничена', power_limit_lost_ore: 'недоподача руды из-за ограничения',
+  power_limit_lost_ore_shift: 'недоподано руды из-за ограничения за смену', power_limit_lost_cu_shift: 'недополучено меди из-за ограничения за смену',
+  shift_counted_from: 'смена считается с', shift_hours_counted: 'учтено часов смены',
+  // энергия
+  supply_mw: 'доступная мощность', limit_mw: 'ограничение мощности', limit_on: 'ограничение включено',
+  sulphide_plant: 'сульфидная фабрика', clay_plant: 'глинистая фабрика', mills: 'мельницы', mills_share: 'доля мельниц',
+  ball_mills: 'шаровые мельницы', sag_mill: 'мельница ПСИ', crusher: 'дробилка', conveyor: 'конвейер', crushing_conveyor: 'дробление и конвейер',
+  flotation_other: 'флотация и прочее', heating: 'отопление', other: 'прочие потребители', outside_temp: 'температура воздуха',
+  energy_shift: 'энергия за смену', energy_sulphide_shift: 'энергия сульфидной фабрики за смену',
+  energy_clay_shift: 'энергия глинистой фабрики за смену', energy_total: 'энергия всего', idle_loss_shift: 'потери холостого хода за смену',
+  peak_15min: 'пик за 15 минут', peak_15min_shift: 'пик за 15 минут в смене',
+  specific_sulphide: 'удельная энергия, сульфидная фабрика', specific_clay: 'удельная энергия, глинистая фабрика',
+  ore_to_plants: 'руда на фабрики',
+  // советник и сверка с реальностью
+  advice_count: 'советов', advice_ids: 'темы советов', top_advice: 'главный совет', level: 'важность главного совета',
+  reality: 'сверка с реальностью', reality_warmup: 'сверка: рудник разгоняется', real_window_min: 'окно сверки',
+  real_feed_sulphide: 'питание сульфидной фабрики (сверка)', real_feed_clay: 'питание глинистой фабрики (сверка)',
+  real_cu_grade: 'медь в руде (сверка)', real_recovery: 'извлечение (сверка)', real_cu_kt_year: 'медь за год (сверка)',
+  real_energy_kwh_t: 'удельная энергия (сверка)', real_wait_excavator: 'ожидание у экскаватора (сверка)',
+  // сценарии (двойник «Сценарии»)
+  blizzard: 'метель', dispatch_off: 'сценарий «диспетчеризация отключена»', road_closed: 'сценарий «дорога закрыта»',
+  excavator_down: 'сценарий «экскаватор сломан»', clay_face: 'сценарий «глинистый забой»', bad_blast: 'сценарий «неудачный взрыв»',
+  crusher_stop: 'сценарий «остановка дробилки»', sag_maintenance: 'сценарий «мельница на ТО»',
 };
+// тот же признак у разных видов двойников значит разное
+const FEATURE_RU_KIND = {
+  'power.load': 'нагрузка сети', 'conveyor.load': 'руды на ленте', 'conveyor.speed': 'скорость ленты',
+  'scenarios.blizzard': 'сценарий «метель»',
+};
+const SCENARIO_RU = {   // как в mine.active_scenarios (core/main.py)
+  blizzard: 'метель', dispatch_off: 'диспетчеризация отключена', road_closed: 'дорога закрыта', excavator_down: 'экскаватор сломан',
+  clay_face: 'глинистый забой', bad_blast: 'неудачный взрыв', crusher_stop: 'остановка дробилки', sag_maintenance: 'мельница на ТО',
+};
+// значения-слова по-русски (состояния машин, вид руды, режимы, уровни)
+const VALUE_RU = {
+  running: 'работает', working: 'работает', idle: 'простой', stopped: 'остановлено', stop: 'остановлено', down: 'авария',
+  maintenance: 'ТО', off: 'выключено', failed: 'авария', hauling: 'везёт груз', returning: 'едет порожним',
+  queued_load: 'ждёт погрузки', loading: 'погрузка', queued_dump: 'ждёт разгрузки', dumping: 'разгрузка',
+  refueling: 'заправка', reserve: 'в резерве', drilling: 'бурит', moving: 'переезжает',
+  sulphide: 'сульфидная руда', clay: 'глинистая руда', waste: 'вскрыша', none: 'нет',
+  auto: 'автоматический', fixed: 'закреплённый', manual: 'ручной', normal: 'норма', near: 'близко к пределу', over: 'превышение',
+  ok: 'в норме', low: 'мало', critical: 'критично', important: 'важно', info: 'к сведению', 'fuel-station': 'заправка',
+};
+const ADVICE_RU = {   // коды советов советника (core/advisor_rules.py)
+  blizzard: 'метель', clay: 'глина в питании', crusher: 'дробилка', fleet: 'лишние самосвалы', inflow: 'привоз руды',
+  plan: 'план фабрики', warmup: 'рудник разгоняется',
+};
+const JSON_RU = { advice: 'советов: ', assignments: 'закреплено самосвалов: ', reality: 'строк сверки: ', block_preview: 'точек: ' };
+const UNIT_RU = { json: '', ISO: '' };          // служебные обозначения формата — не единицы
+const UNIT_FALLBACK = { shift: '№' };
+// значение для карточки: [текст, показывать ли единицу]
+function cardValue(f, v) {
+  if (f === 'advice_ids' && typeof v === 'string') return [v ? v.split(/[\s,;]+/).filter(Boolean).map((a) => ADVICE_RU[a] || a).join(', ') : 'нет', false];
+  if (f === 'level' && typeof v === 'number') return [['к сведению', 'важно', 'критично'][v] || fmt(v), false];
+  if (/^scenario_/.test(f) && typeof v === 'number') return [v ? 'включён' : 'выключен', false];
+  if (f === 'hours_to_full' && typeof v === 'number' && v < 0) return ['не ожидается', false];
+  if (typeof v === 'string' && /^\s*[\[{]/.test(v)) {   // данные JSON строкой — сколько записей
+    try {
+      const j = JSON.parse(v);
+      const n = Array.isArray(j) ? j.length : (j && Array.isArray(j.rows) ? j.rows.length : Object.keys(j || {}).length);
+      return [(JSON_RU[f] || 'записей: ') + n, false];
+    } catch (e) { /* не JSON — как есть */ }
+  }
+  if (typeof v === 'string') {
+    if (v === '') return ['—', false];
+    if (twins[NS + ':' + v]) return [nameOf(NS + ':' + v), false];   // ссылка на двойника — его имя
+    const w = f === 'cargo_type' && v === 'none' ? 'нет груза' : VALUE_RU[v];
+    if (w) return [w, false];
+  }
+  return [fmt(v), true];
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmt(v, digits) {
   if (v === undefined || v === null) return '—';
@@ -2747,6 +2854,7 @@ dbgWin.__buildingBoxes = () => {
   if (fuelStationObj) { box.setFromObject(fuelStationObj); out.fuel = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], pos: [+fuelStationObj.position.x.toFixed(1), +fuelStationObj.position.z.toFixed(1)] }; }
   return out;
 };
+dbgWin.__openCard = (thingId) => { openCard(thingId); renderCard(); return !card.hidden; };   // для проверок: карточка двойника
 dbgWin.__screenOf = (thingId) => {
   const o = byThing(thingId); if (!o) return null;
   o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
@@ -3001,7 +3109,7 @@ function initGuide() {
   fetch('/config.json').then((r) => r.json()).then((c) => {
     if (c && c.grafanaUrl) {
       const a = document.getElementById('grafana-link');
-      a.href = c.grafanaUrl.replace(/\/$/, '') + '/dashboards?query=' + encodeURIComponent('Бозшаколь');
+      a.href = c.grafanaUrl.replace(/\/$/, '') + '/dashboards?tag=bozshakol';   // все наши дашборды (у каждого тег bozshakol)
       a.hidden = false;
     }
   }).catch((e) => console.warn('config.json', e));
