@@ -112,7 +112,8 @@ let camera = perspCam;
 
 const controls = new OrbitControls(perspCam, canvas);
 controls.target.set(-800, 0, 150);
-controls.maxPolarAngle = Math.PI * 0.49;
+// наклон взгляда — от −85° (почти отвесно вниз) до +80° (в небо): камера может быть ниже точки, вокруг которой вращается
+controls.minPolarAngle = Math.PI * 5 / 180; controls.maxPolarAngle = Math.PI * 170 / 180;
 controls.enableDamping = true; controls.dampingFactor = 0.12;   // плавное вращение
 controls.enableZoom = false;   // колесо и тачпад — свой плавный зум (wheelZoom): шаг ≈ 11 % расстояния, мягкое торможение
 controls.minDistance = 60;
@@ -157,6 +158,8 @@ function resize() {
   orthoCam.left = -half * asp; orthoCam.right = half * asp; orthoCam.top = half; orthoCam.bottom = -half;
   orthoCam.updateProjectionMatrix();
 }
+// панель диспетчера свёрнута или развёрнута (запомнено в localStorage; без него — развёрнута) — до первого resize
+try { document.body.classList.toggle('panel-collapsed', localStorage.getItem('bz-panel') === 'collapsed'); } catch (e) { /* хранилище недоступно */ }
 window.addEventListener('resize', resize);
 resize();
 
@@ -264,7 +267,7 @@ function updateLabels() {
   let shown = 0;
   for (const L of cand) {
     const t = L.warn || L.obj.userData.label === undefined ? L.text : L.obj.userData.label;
-    const txt = String(t);
+    const txt = L.warn ? String(t) : labelName(L.obj, String(t));
     const cw = L.small ? 5.6 : 6.3, ch = L.small ? 15 : 18;
     const bw = txt.length * cw + 14;
     const r = { x: L.sx - bw / 2, y: L.sy - ch, w: bw, h: ch };
@@ -291,6 +294,14 @@ function register(obj, thingId, opts = {}) {
 }
 const byThing = (thingId) => clickable.find((o) => o.userData.thingId === thingId) || null;
 function thingOf(obj) { let o = obj; while (o && !o.userData.thingId) o = o.parent; return o ? o.userData.thingId : null; }
+// Подписи, которые сцена уточняет поверх имени двойника (имя — в twins.json модуля): начало подписи заменяется
+const LABEL_NAMES = { 'dump-waste-1': 'Отвал вскрыши (пустая порода)' };
+function labelName(obj, text) {
+  const id = thingOf(obj), alias = id && LABEL_NAMES[id.split(':')[1]];
+  if (!alias) return text;
+  const n = nameOf(id);
+  return text.startsWith(n) ? alias + text.slice(n.length) : text;
+}
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 function pick(clientX, clientY) {
@@ -418,9 +429,10 @@ function plantCard(id, label) {
 }
 function renderDispatcher() {
   const mine = NS + ':mine', disp = NS + ':dispatch';
-  document.getElementById('shift-line').textContent =
-    'Смена ' + fmt(val(mine, 'shift', '—'), 0) + ' · ' + simClock() + ' модельного времени' +
-    (val(mine, 'shift_hour', null) !== null ? ' · ' + fmt(val(mine, 'shift_hour'), 1) + '-й час' : '');
+  const shiftEl = document.getElementById('shift-line');   // коротко, в одну строку; время — модельное (в подсказке)
+  shiftEl.textContent = 'Смена ' + fmt(val(mine, 'shift', '—'), 0) +
+    (val(mine, 'shift_hour', null) !== null ? ' · ' + (Math.floor(Number(val(mine, 'shift_hour')) || 0) + 1) + '-й час' : '') + ' · ' + simClock();
+  shiftEl.title = 'Время — по часам модели рудника';
   document.getElementById('plants').innerHTML =
     plantCard(NS + ':plant-sulphide', 'Сульфидная фабрика') + plantCard(NS + ':plant-clay', 'Глинистая фабрика');
   // транспорт: сводка по самосвалам
@@ -452,6 +464,125 @@ function renderDispatcher() {
   document.getElementById('transport-block').classList.toggle('alert', off);
   document.getElementById('dispatch-off-note').hidden = !off;
 }
+
+// Главные цифры смены (крупно наверху панели): руда на фабрики, медь в питании, ожидание у экскаватора, режим диспетчера
+function setKpi(id, value, sub, cls) {
+  const el = document.getElementById(id);
+  el.querySelector('.k-val').textContent = value;
+  el.querySelector('.k-sub').textContent = sub || '';
+  el.classList.remove('ok', 'warn', 'bad');
+  if (cls) el.classList.add(cls);
+}
+function renderMain() {
+  const ps = NS + ':plant-sulphide', pc = NS + ':plant-clay', disp = NS + ':dispatch';
+  const feed = (Number(val(ps, 'feed_rate', 0)) || 0) + (Number(val(pc, 'feed_rate', 0)) || 0);
+  const plan = (Number(attr(ps, 'design_tph', 0)) || 0) + (Number(attr(pc, 'design_tph', 0)) || 0);
+  const pct = plan ? feed / plan * 100 : 0;
+  setKpi('kpi-ore', twins[ps] || twins[pc] ? fmt(feed, 0) + ' т/ч' : '—',
+    plan ? 'план ' + fmt(plan, 0) + ' т/ч · ' + fmt(pct, 0) + ' %' : '', plan ? (pct < 70 ? 'bad' : pct < 90 ? 'warn' : 'ok') : '');
+  const cu = val(ps, 'feed_cu', null);
+  setKpi('kpi-cu', cu === null ? '—' : fmt(cu, 2) + ' %', 'сульфидная фабрика');
+  let queued = 0, inCycle = 0, total = 0;
+  for (const id of Object.keys(twins)) {
+    if (!id.startsWith(NS + ':truck-')) continue;
+    total++;
+    const s = val(id, 'state', '');
+    if (s === 'queued_load') queued++;
+    if (IN_CYCLE.has(s)) inCycle++;
+  }
+  const wait = val(disp, 'avg_wait_excavator', null);
+  const wf = twins[disp] && twins[disp].features.avg_wait_excavator;
+  setKpi('kpi-wait', wait === null ? '—' : fmt(wait, 1) + ' ' + ((wf && wf.properties.unit) || 'мин'), 'в очереди: ' + queued);
+  const off = !!val(NS + ':scenarios', 'dispatch_off', false);
+  const mode = val(disp, 'mode', '');
+  setKpi('kpi-mode', off ? 'выключен' : MODE_NAMES[mode] || mode || '—',
+    off ? 'диспетчеризация выключена' : total ? 'в работе ' + inCycle + ' из ' + total + ' самосвалов' : '', off ? 'bad' : '');
+  if (qOpen) fillQ(qOpen.dataset.q);   // открытое пояснение — с живыми цифрами
+}
+
+// «?» у блоков панели: пояснение простыми словами (и живые цифры, где они есть)
+const Q_TEXT = {
+  ore: ['Руда на фабрики', 'Сколько руды за час сейчас поступает на обе фабрики — сульфидную и глинистую. «План» — сколько они могут ' +
+    'принять за час. Факт заметно ниже плана — фабрикам не хватает руды: посмотрите на самосвалы, экскаваторы и дробилку.'],
+  cu: ['Медь в питании', 'Сколько меди в руде, которая сейчас идёт на сульфидную фабрику, — в процентах от веса руды. Чем выше, ' +
+    'тем больше меди получится из той же руды. Руду с разных забоев смешивают, чтобы это число держалось ровным.'],
+  wait: ['Ожидание у экскаватора', 'Сколько минут в среднем самосвал стоит у экскаватора, пока подойдёт его очередь грузиться. ' +
+    'Меньше — лучше: машины не простаивают. Растёт, если на один забой отправили слишком много самосвалов или экскаватор сломался.'],
+  mode: ['Режим диспетчера', '«Автоматический» — система сама выбирает каждому самосвалу забой и место разгрузки, чтобы меньше ждать. ' +
+    '«Закреплённый» — каждый самосвал ездит по одному и тому же маршруту. «Ручной» — рейсы назначает диспетчер. ' +
+    '«Выключен» — включён сценарий «Диспетчеризация выключена».'],
+  advice: ['Совет диспетчеру', 'Подсказка: что сейчас мешает руднику и что с этим сделать. Цвет — срочность: красный — критично, ' +
+    'жёлтый — важно, зелёный — к сведению. Нажмите на совет — камера покажет место; над объектом в сцене тоже висит значок 💡.'],
+  scenarios: ['Сценарии «что если»', 'Кнопки, которыми можно устроить руднику неприятность — например, остановить дробилку или ' +
+    'закрыть съезд. Включите и посмотрите, как рудник справляется и что посоветует система. «Показать» — камера к месту события.'],
+  plants: ['Фабрики', 'Две обогатительные фабрики: сульфидная перерабатывает основную руду, глинистая — руду с глиной. План — сколько ' +
+    'фабрика может принять за час, факт — сколько получает сейчас. Полоска — сколько плана смены уже выполнено.'],
+  transport: ['Транспорт', 'Самосвалы возят руду от экскаваторов на дробилку и склад глины, а пустую породу — в отвал. «В работе» — ' +
+    'в рейсе, на погрузке или разгрузке; «в очереди» — ждут погрузки или разгрузки; «авария» — сломаны. Ниже — погода в карьере.'],
+  log: ['Журнал событий', 'Что случилось за смену: аварии, закрытые дороги, включённые сценарии, новые и снятые советы. ' +
+    'Время — по часам модели рудника.'],
+  legend: ['Легенда', 'Что означают цвета в сцене: груз самосвала, состояние оборудования, дороги и уступы карьера.'],
+  settings: ['Настройки', '«Качество»: «Обычное» — быстрее на слабом компьютере, «Высокое» — с тенями и огнями. ' +
+    '«Освещение»: день или ночная смена с прожекторами и фарами.'],
+};
+const qPop = document.getElementById('q-pop');
+let qOpen = null;   // кнопка «?», чьё пояснение открыто
+function qLive(key) {
+  const ps = NS + ':plant-sulphide', pc = NS + ':plant-clay';
+  const plant = (id, name) => twins[id] ? name + ': ' + fmt(Number(val(id, 'feed_rate', 0)) || 0, 0) + ' из ' +
+    fmt(Number(attr(id, 'design_tph', 0)) || 0, 0) + ' т/ч' : '';
+  if (key === 'ore') return [plant(ps, 'Сульфидная'), plant(pc, 'Глинистая')].filter(Boolean).join(' · ');
+  if (key === 'cu') {
+    const c = val(pc, 'feed_cu', null);
+    return c === null ? '' : 'На глинистой фабрике сейчас — ' + fmt(c, 2) + ' %';
+  }
+  if (key === 'advice') { const l = adviceList(); return l && l.length > 1 ? 'Сейчас советов: ' + l.length + ' (главный — первым)' : ''; }
+  return '';
+}
+function fillQ(key) {
+  const [title, text] = Q_TEXT[key] || ['', ''];
+  document.getElementById('q-pop-title').textContent = title;
+  document.getElementById('q-pop-text').textContent = text;
+  document.getElementById('q-pop-live').textContent = qLive(key);
+}
+function closeQ() {
+  if (!qOpen) return;
+  qOpen.classList.remove('open'); qOpen = null;
+  qPop.hidden = true; windowShown(closeQ, false);
+}
+function openQ(btn) {
+  if (qOpen) qOpen.classList.remove('open');
+  qOpen = btn; btn.classList.add('open');
+  fillQ(btn.dataset.q);
+  qPop.hidden = false;
+  const r = btn.getBoundingClientRect(), w = qPop.offsetWidth, h = qPop.offsetHeight;   // справа от панели, рядом с «?»
+  qPop.style.left = Math.max(8, Math.min(r.right + 12, window.innerWidth - w - 8)) + 'px';
+  qPop.style.top = Math.max(8, Math.min(r.top - 10, window.innerHeight - h - 8)) + 'px';
+  windowShown(closeQ, true);
+}
+for (const b of panelEl.querySelectorAll('.q')) {
+  b.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();   // «?» в заголовке раздела не открывает и не закрывает сам раздел
+    if (qOpen === b) closeQ(); else openQ(b);
+    b.blur();
+  });
+}
+document.getElementById('q-pop-close').addEventListener('click', closeQ);
+document.addEventListener('click', (e) => { if (qOpen && !qPop.contains(e.target)) closeQ(); });
+
+// Свернуть / развернуть панель; положение — в localStorage (без хранилища не запоминается, при открытии панель развёрнута)
+function setPanel(collapsed) {
+  document.body.classList.toggle('panel-collapsed', collapsed);
+  document.getElementById('panel-toggle').setAttribute('aria-expanded', String(!collapsed));
+  try { localStorage.setItem('bz-panel', collapsed ? 'collapsed' : 'expanded'); } catch (e) { /* хранилище недоступно */ }
+  closeQ();
+  resize();
+}
+document.getElementById('panel-toggle').setAttribute('aria-expanded', String(!document.body.classList.contains('panel-collapsed')));
+document.getElementById('panel-toggle').addEventListener('click', (e) => { setPanel(true); e.currentTarget.blur(); });
+document.getElementById('panel-strip').addEventListener('click', (e) => { setPanel(false); e.currentTarget.blur(); });
+// заголовок раздела под фокусом не должен открываться-закрываться пробелом (пробел — полёт вверх)
+panelEl.addEventListener('click', (e) => { const el = e.target.closest('summary'); if (el) el.blur(); });
 
 // ---------------------------------------------------------------- сценарии: кнопки, плашка, значки
 const scenarioButtons = {};
@@ -583,8 +714,9 @@ function adviceHtml(a, i, top) {
   const cls = ADVICE_CLS[a.priority] || 'info';
   return '<div class="advice ' + cls + (top ? ' top' : '') + '" data-i="' + i + '" title="Показать объект в сцене">' +
     '<div class="pri">' + esc(ADVICE_PRI[a.priority] || a.priority) + (a.title ? ' · ' + esc(a.title) : '') + '</div>' +
-    '<div class="text">' + esc(a.text || '') + '</div>' +
-    (top ? '<div class="why">' + esc(a.reason || '') + (a.effect ? ' · Ожидаемый эффект: ' + esc(a.effect) : '') + '</div>' : '') + '</div>';
+    (top || !a.title ? '<div class="text">' + esc(a.text || '') + '</div>' : '') +   // остальные советы — одной строкой
+    (top && (a.reason || a.effect) ? '<details class="why"><summary>Почему и что даст</summary>' + esc(a.reason || '') +
+      (a.effect ? ' · Ожидаемый эффект: ' + esc(a.effect) : '') + '</details>' : '') + '</div>';
 }
 function renderAdvice() {
   const root = document.getElementById('advice');
@@ -592,12 +724,19 @@ function renderAdvice() {
   if (raw === lastAdviceRaw) return;                 // ничего не изменилось — не трогаем DOM (иначе теряются клики)
   lastAdviceRaw = raw;
   const list = adviceList();
+  const alarm = document.getElementById('panel-alarm');   // свёрнутая панель: ⚠, если есть совет (красный — критичный)
+  alarm.hidden = !(list && list.length);
+  alarm.classList.toggle('crit', !!list && list.some((a) => a.priority === 'critical'));
+  document.getElementById('panel-strip').title = 'Развернуть панель диспетчера' + (list && list.length ? ' · советов: ' + list.length : '');
   if (list === null) { root.innerHTML = '<div class="advice none">нет данных</div>'; return; }
   adviceShown = list;
   root.innerHTML = list.length
     ? list.map((a, i) => adviceHtml(a, i, i === 0)).join('')
     : '<div class="advice none">Отклонений нет — советов пока нет</div>';
-  for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', () => flyToThing(adviceShown[+el.dataset.i].target));
+  for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', (e) => {
+    if (e.target.closest('details.why')) return;   // «Почему и что даст» открывается, камера не летит
+    flyToThing(adviceShown[+el.dataset.i].target);
+  });
   // значок над объектом совета
   const ids = new Set(list.map((a) => a.id));
   for (const a of list) {
@@ -727,6 +866,7 @@ function renderPanel() {
   renderReality();
   renderScenarios();
   renderAdvice();
+  renderMain();
   diffEvents();
   document.getElementById('conn').textContent = connState;
   updateRoads();
@@ -880,7 +1020,7 @@ function updateFollowButton() {
   btnFollow.classList.toggle('active', !!followId);
   btnFollow.textContent = followId ? 'Следую: ' + nameOf(followId) : 'Следовать за самосвалом';
 }
-// Следовать за выбранным самосвалом / отпустить (кнопка и Пробел)
+// Следовать за выбранным самосвалом / отпустить (кнопка и G)
 function toggleFollow() {
   if (followId) { followId = null; updateFollowButton(); return; }
   const obj = openedThing && byThing(openedThing);
@@ -893,6 +1033,9 @@ function toggleFollow() {
   updateFollowButton();
 }
 btnFollow.addEventListener('click', toggleFollow);
+// «Наверх» (и Home): плавно к общему виду рудника — откуда угодно (со дна карьера, из неба, из вида сверху)
+const btnUp = document.getElementById('btn-up');
+if (btnUp) btnUp.addEventListener('click', () => { setView('all'); btnUp.blur(); });
 const _d = new THREE.Vector3();
 function updateCamera(dt) {
   if (tween) {
@@ -923,9 +1066,10 @@ function updateCamera(dt) {
     const d = camera === orthoCam ? 1500 : perspCam.position.distanceTo(controls.target);
     scene.fog.near = Math.max(60, d * 0.55 - 150); scene.fog.far = d + 450 + d * 0.35;
   }
-  if (dio && camera === perspCam) {   // камера всегда над поверхностью (облёт вокруг техники в карьере уводил её в борт)
-    const g = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4;
-    if (perspCam.position.y < g) perspCam.position.y = g;
+  if (dio && camera === perspCam) {   // камера всегда над поверхностью (и в перелёте — не сквозь борт);
+    // упёрлась вне перелёта — вверх вместе с целью: взгляд не меняется, поворот мышью у земли поднимает взгляд в небо
+    const up = dio.surfaceAt(perspCam.position.x, -perspCam.position.z) + 4 - perspCam.position.y;
+    if (up > 0) { perspCam.position.y += up; if (!tween) controls.target.y += up; }
   }
   // масштаб техники — постоянный (MACHINE_SCALE); на дальнем плане её видно по значкам-стрелкам (updateMarkers)
   markerScale = MACHINE_SCALE;
@@ -1284,6 +1428,7 @@ function frame(now) {
   if (motionLog.on) sampleMotion(now);
   updateDust(dt);
   if (frameNo % 15 === 0) updateDownBadges();
+  if (frameNo % 30 === 15) updateRoadWaitBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
   if (frameNo % 15 === 0) updateRoute();
   if (routeMesh) routeMat.opacity = 0.75 + 0.2 * Math.sin(now / 300);
@@ -1411,6 +1556,47 @@ function updateDownBadges() {
     if (b) b.enabled = down;
   }
 }
+// Самосвал ждёт из-за закрытого съезда: в рейсе (hauling / returning) стоит, а до цели (пункт разгрузки или свой
+// экскаватор) нет пути по открытым дорогам. Модель в этом случае ждёт на месте и пробует снова (travel_pending —
+// в Ditto его нет), поэтому сцена проверяет путь по графу дорог geometry.json сама. Значок «ждёт: съезд закрыт».
+const roadWaitBadges = {}, roadWaitSeen = {};
+function reachableOpen(a, b, closed) {
+  const seen = new Set([a]), todo = [a];
+  while (todo.length) {
+    const u = todo.pop();
+    if (u === b) return true;
+    for (const e of geometry.edges) {
+      if (closed.has(e.road)) continue;
+      const v = e.from === u ? e.to : (e.to === u ? e.from : null);
+      if (v !== null && !seen.has(v)) { seen.add(v); todo.push(v); }
+    }
+  }
+  return false;
+}
+function waitsForClosedRoad(id, closed) {
+  const s = val(id, 'state', '');
+  if ((s !== 'hauling' && s !== 'returning') || Math.abs(Number(val(id, 'speed', 0)) || 0) > 0.5) return false;
+  const d = val(id, 'destination', '');   // гружёный — пункт разгрузки, порожний — экскаватор, на заправку — fuel-station
+  const goal = (geometry.dump_points || {})[d] || (geometry.load_points || {})[d] || (geometry.nodes[d] ? d : null);
+  const from = nearestNode(Number(val(id, 'x', 0)), Number(val(id, 'y', 0)));
+  return !!(goal && from) && !reachableOpen(from, goal, closed);
+}
+function updateRoadWaitBadges() {
+  if (!geometry || !geometry.edges || !geometry.nodes) return;
+  const closed = new Set(Object.keys(geometry.roads || {}).filter((r) => val(NS + ':' + r, 'open', true) === false));
+  for (const o of clickable) {
+    const id = o.userData.thingId || '';
+    if (!id.includes(':truck-') || !o.isObject3D || o.isMesh) continue;
+    const waiting = closed.size > 0 && waitsForClosedRoad(id, closed);
+    roadWaitSeen[id] = waiting ? (roadWaitSeen[id] || 0) + 1 : 0;   // два замера подряд — не мигает при короткой остановке
+    let b = roadWaitBadges[id];
+    if (b && b.obj !== o) { b.el.remove(); const i = labels.indexOf(b); if (i >= 0) labels.splice(i, 1); b = roadWaitBadges[id] = null; }
+    const on = roadWaitSeen[id] >= 2;
+    if (on && !b) b = roadWaitBadges[id] = addLabel(o, 'ждёт: съезд закрыт', { importance: 3.5, cls: 'warn', dy: 9 });
+    if (b) b.enabled = on;
+  }
+}
+dbgWin.__roadWait = () => Object.keys(roadWaitBadges).filter((id) => roadWaitBadges[id] && roadWaitBadges[id].enabled);
 // Пыль за едущими самосвалами (только «Высокое»): пул мягких спрайтов, гаснут за ~1,5 с
 const dust = [];
 let dustMat = null, dustT = 0;
