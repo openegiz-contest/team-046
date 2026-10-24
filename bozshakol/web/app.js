@@ -158,6 +158,8 @@ function resize() {
   orthoCam.left = -half * asp; orthoCam.right = half * asp; orthoCam.top = half; orthoCam.bottom = -half;
   orthoCam.updateProjectionMatrix();
 }
+// панель диспетчера свёрнута или развёрнута (запомнено в localStorage; без него — развёрнута) — до первого resize
+try { document.body.classList.toggle('panel-collapsed', localStorage.getItem('bz-panel') === 'collapsed'); } catch (e) { /* хранилище недоступно */ }
 window.addEventListener('resize', resize);
 resize();
 
@@ -419,9 +421,10 @@ function plantCard(id, label) {
 }
 function renderDispatcher() {
   const mine = NS + ':mine', disp = NS + ':dispatch';
-  document.getElementById('shift-line').textContent =
-    'Смена ' + fmt(val(mine, 'shift', '—'), 0) + ' · ' + simClock() + ' модельного времени' +
-    (val(mine, 'shift_hour', null) !== null ? ' · ' + fmt(val(mine, 'shift_hour'), 1) + '-й час' : '');
+  const shiftEl = document.getElementById('shift-line');   // коротко, в одну строку; время — модельное (в подсказке)
+  shiftEl.textContent = 'Смена ' + fmt(val(mine, 'shift', '—'), 0) +
+    (val(mine, 'shift_hour', null) !== null ? ' · ' + (Math.floor(Number(val(mine, 'shift_hour')) || 0) + 1) + '-й час' : '') + ' · ' + simClock();
+  shiftEl.title = 'Время — по часам модели рудника';
   document.getElementById('plants').innerHTML =
     plantCard(NS + ':plant-sulphide', 'Сульфидная фабрика') + plantCard(NS + ':plant-clay', 'Глинистая фабрика');
   // транспорт: сводка по самосвалам
@@ -453,6 +456,125 @@ function renderDispatcher() {
   document.getElementById('transport-block').classList.toggle('alert', off);
   document.getElementById('dispatch-off-note').hidden = !off;
 }
+
+// Главные цифры смены (крупно наверху панели): руда на фабрики, медь в питании, ожидание у экскаватора, режим диспетчера
+function setKpi(id, value, sub, cls) {
+  const el = document.getElementById(id);
+  el.querySelector('.k-val').textContent = value;
+  el.querySelector('.k-sub').textContent = sub || '';
+  el.classList.remove('ok', 'warn', 'bad');
+  if (cls) el.classList.add(cls);
+}
+function renderMain() {
+  const ps = NS + ':plant-sulphide', pc = NS + ':plant-clay', disp = NS + ':dispatch';
+  const feed = (Number(val(ps, 'feed_rate', 0)) || 0) + (Number(val(pc, 'feed_rate', 0)) || 0);
+  const plan = (Number(attr(ps, 'design_tph', 0)) || 0) + (Number(attr(pc, 'design_tph', 0)) || 0);
+  const pct = plan ? feed / plan * 100 : 0;
+  setKpi('kpi-ore', twins[ps] || twins[pc] ? fmt(feed, 0) + ' т/ч' : '—',
+    plan ? 'план ' + fmt(plan, 0) + ' т/ч · ' + fmt(pct, 0) + ' %' : '', plan ? (pct < 70 ? 'bad' : pct < 90 ? 'warn' : 'ok') : '');
+  const cu = val(ps, 'feed_cu', null);
+  setKpi('kpi-cu', cu === null ? '—' : fmt(cu, 2) + ' %', 'сульфидная фабрика');
+  let queued = 0, inCycle = 0, total = 0;
+  for (const id of Object.keys(twins)) {
+    if (!id.startsWith(NS + ':truck-')) continue;
+    total++;
+    const s = val(id, 'state', '');
+    if (s === 'queued_load') queued++;
+    if (IN_CYCLE.has(s)) inCycle++;
+  }
+  const wait = val(disp, 'avg_wait_excavator', null);
+  const wf = twins[disp] && twins[disp].features.avg_wait_excavator;
+  setKpi('kpi-wait', wait === null ? '—' : fmt(wait, 1) + ' ' + ((wf && wf.properties.unit) || 'мин'), 'в очереди: ' + queued);
+  const off = !!val(NS + ':scenarios', 'dispatch_off', false);
+  const mode = val(disp, 'mode', '');
+  setKpi('kpi-mode', off ? 'выключен' : MODE_NAMES[mode] || mode || '—',
+    off ? 'диспетчеризация выключена' : total ? 'в работе ' + inCycle + ' из ' + total + ' самосвалов' : '', off ? 'bad' : '');
+  if (qOpen) fillQ(qOpen.dataset.q);   // открытое пояснение — с живыми цифрами
+}
+
+// «?» у блоков панели: пояснение простыми словами (и живые цифры, где они есть)
+const Q_TEXT = {
+  ore: ['Руда на фабрики', 'Сколько руды за час сейчас поступает на обе фабрики — сульфидную и глинистую. «План» — сколько они могут ' +
+    'принять за час. Факт заметно ниже плана — фабрикам не хватает руды: посмотрите на самосвалы, экскаваторы и дробилку.'],
+  cu: ['Медь в питании', 'Сколько меди в руде, которая сейчас идёт на сульфидную фабрику, — в процентах от веса руды. Чем выше, ' +
+    'тем больше меди получится из той же руды. Руду с разных забоев смешивают, чтобы это число держалось ровным.'],
+  wait: ['Ожидание у экскаватора', 'Сколько минут в среднем самосвал стоит у экскаватора, пока подойдёт его очередь грузиться. ' +
+    'Меньше — лучше: машины не простаивают. Растёт, если на один забой отправили слишком много самосвалов или экскаватор сломался.'],
+  mode: ['Режим диспетчера', '«Автоматический» — система сама выбирает каждому самосвалу забой и место разгрузки, чтобы меньше ждать. ' +
+    '«Закреплённый» — каждый самосвал ездит по одному и тому же маршруту. «Ручной» — рейсы назначает диспетчер. ' +
+    '«Выключен» — включён сценарий «Диспетчеризация выключена».'],
+  advice: ['Совет диспетчеру', 'Подсказка: что сейчас мешает руднику и что с этим сделать. Цвет — срочность: красный — критично, ' +
+    'жёлтый — важно, зелёный — к сведению. Нажмите на совет — камера покажет место; над объектом в сцене тоже висит значок 💡.'],
+  scenarios: ['Сценарии «что если»', 'Кнопки, которыми можно устроить руднику неприятность — например, остановить дробилку или ' +
+    'закрыть съезд. Включите и посмотрите, как рудник справляется и что посоветует система. «Показать» — камера к месту события.'],
+  plants: ['Фабрики', 'Две обогатительные фабрики: сульфидная перерабатывает основную руду, глинистая — руду с глиной. План — сколько ' +
+    'фабрика может принять за час, факт — сколько получает сейчас. Полоска — сколько плана смены уже выполнено.'],
+  transport: ['Транспорт', 'Самосвалы возят руду от экскаваторов на дробилку и склад глины, а пустую породу — в отвал. «В работе» — ' +
+    'в рейсе, на погрузке или разгрузке; «в очереди» — ждут погрузки или разгрузки; «авария» — сломаны. Ниже — погода в карьере.'],
+  log: ['Журнал событий', 'Что случилось за смену: аварии, закрытые дороги, включённые сценарии, новые и снятые советы. ' +
+    'Время — по часам модели рудника.'],
+  legend: ['Легенда', 'Что означают цвета в сцене: груз самосвала, состояние оборудования, дороги и уступы карьера.'],
+  settings: ['Настройки', '«Качество»: «Обычное» — быстрее на слабом компьютере, «Высокое» — с тенями и огнями. ' +
+    '«Освещение»: день или ночная смена с прожекторами и фарами.'],
+};
+const qPop = document.getElementById('q-pop');
+let qOpen = null;   // кнопка «?», чьё пояснение открыто
+function qLive(key) {
+  const ps = NS + ':plant-sulphide', pc = NS + ':plant-clay';
+  const plant = (id, name) => twins[id] ? name + ': ' + fmt(Number(val(id, 'feed_rate', 0)) || 0, 0) + ' из ' +
+    fmt(Number(attr(id, 'design_tph', 0)) || 0, 0) + ' т/ч' : '';
+  if (key === 'ore') return [plant(ps, 'Сульфидная'), plant(pc, 'Глинистая')].filter(Boolean).join(' · ');
+  if (key === 'cu') {
+    const c = val(pc, 'feed_cu', null);
+    return c === null ? '' : 'На глинистой фабрике сейчас — ' + fmt(c, 2) + ' %';
+  }
+  if (key === 'advice') { const l = adviceList(); return l && l.length > 1 ? 'Сейчас советов: ' + l.length + ' (главный — первым)' : ''; }
+  return '';
+}
+function fillQ(key) {
+  const [title, text] = Q_TEXT[key] || ['', ''];
+  document.getElementById('q-pop-title').textContent = title;
+  document.getElementById('q-pop-text').textContent = text;
+  document.getElementById('q-pop-live').textContent = qLive(key);
+}
+function closeQ() {
+  if (!qOpen) return;
+  qOpen.classList.remove('open'); qOpen = null;
+  qPop.hidden = true; windowShown(closeQ, false);
+}
+function openQ(btn) {
+  if (qOpen) qOpen.classList.remove('open');
+  qOpen = btn; btn.classList.add('open');
+  fillQ(btn.dataset.q);
+  qPop.hidden = false;
+  const r = btn.getBoundingClientRect(), w = qPop.offsetWidth, h = qPop.offsetHeight;   // справа от панели, рядом с «?»
+  qPop.style.left = Math.max(8, Math.min(r.right + 12, window.innerWidth - w - 8)) + 'px';
+  qPop.style.top = Math.max(8, Math.min(r.top - 10, window.innerHeight - h - 8)) + 'px';
+  windowShown(closeQ, true);
+}
+for (const b of panelEl.querySelectorAll('.q')) {
+  b.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();   // «?» в заголовке раздела не открывает и не закрывает сам раздел
+    if (qOpen === b) closeQ(); else openQ(b);
+    b.blur();
+  });
+}
+document.getElementById('q-pop-close').addEventListener('click', closeQ);
+document.addEventListener('click', (e) => { if (qOpen && !qPop.contains(e.target)) closeQ(); });
+
+// Свернуть / развернуть панель; положение — в localStorage (без хранилища не запоминается, при открытии панель развёрнута)
+function setPanel(collapsed) {
+  document.body.classList.toggle('panel-collapsed', collapsed);
+  document.getElementById('panel-toggle').setAttribute('aria-expanded', String(!collapsed));
+  try { localStorage.setItem('bz-panel', collapsed ? 'collapsed' : 'expanded'); } catch (e) { /* хранилище недоступно */ }
+  closeQ();
+  resize();
+}
+document.getElementById('panel-toggle').setAttribute('aria-expanded', String(!document.body.classList.contains('panel-collapsed')));
+document.getElementById('panel-toggle').addEventListener('click', (e) => { setPanel(true); e.currentTarget.blur(); });
+document.getElementById('panel-strip').addEventListener('click', (e) => { setPanel(false); e.currentTarget.blur(); });
+// заголовок раздела под фокусом не должен открываться-закрываться пробелом (пробел — полёт вверх)
+panelEl.addEventListener('click', (e) => { const el = e.target.closest('summary'); if (el) el.blur(); });
 
 // ---------------------------------------------------------------- сценарии: кнопки, плашка, значки
 const scenarioButtons = {};
@@ -584,8 +706,9 @@ function adviceHtml(a, i, top) {
   const cls = ADVICE_CLS[a.priority] || 'info';
   return '<div class="advice ' + cls + (top ? ' top' : '') + '" data-i="' + i + '" title="Показать объект в сцене">' +
     '<div class="pri">' + esc(ADVICE_PRI[a.priority] || a.priority) + (a.title ? ' · ' + esc(a.title) : '') + '</div>' +
-    '<div class="text">' + esc(a.text || '') + '</div>' +
-    (top ? '<div class="why">' + esc(a.reason || '') + (a.effect ? ' · Ожидаемый эффект: ' + esc(a.effect) : '') + '</div>' : '') + '</div>';
+    (top || !a.title ? '<div class="text">' + esc(a.text || '') + '</div>' : '') +   // остальные советы — одной строкой
+    (top && (a.reason || a.effect) ? '<details class="why"><summary>Почему и что даст</summary>' + esc(a.reason || '') +
+      (a.effect ? ' · Ожидаемый эффект: ' + esc(a.effect) : '') + '</details>' : '') + '</div>';
 }
 function renderAdvice() {
   const root = document.getElementById('advice');
@@ -593,12 +716,19 @@ function renderAdvice() {
   if (raw === lastAdviceRaw) return;                 // ничего не изменилось — не трогаем DOM (иначе теряются клики)
   lastAdviceRaw = raw;
   const list = adviceList();
+  const alarm = document.getElementById('panel-alarm');   // свёрнутая панель: ⚠, если есть совет (красный — критичный)
+  alarm.hidden = !(list && list.length);
+  alarm.classList.toggle('crit', !!list && list.some((a) => a.priority === 'critical'));
+  document.getElementById('panel-strip').title = 'Развернуть панель диспетчера' + (list && list.length ? ' · советов: ' + list.length : '');
   if (list === null) { root.innerHTML = '<div class="advice none">нет данных</div>'; return; }
   adviceShown = list;
   root.innerHTML = list.length
     ? list.map((a, i) => adviceHtml(a, i, i === 0)).join('')
     : '<div class="advice none">Отклонений нет — советов пока нет</div>';
-  for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', () => flyToThing(adviceShown[+el.dataset.i].target));
+  for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', (e) => {
+    if (e.target.closest('details.why')) return;   // «Почему и что даст» открывается, камера не летит
+    flyToThing(adviceShown[+el.dataset.i].target);
+  });
   // значок над объектом совета
   const ids = new Set(list.map((a) => a.id));
   for (const a of list) {
@@ -728,6 +858,7 @@ function renderPanel() {
   renderReality();
   renderScenarios();
   renderAdvice();
+  renderMain();
   diffEvents();
   document.getElementById('conn').textContent = connState;
   updateRoads();

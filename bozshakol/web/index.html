@@ -62,66 +62,104 @@
 
   <!-- Боковая панель диспетчера -->
   <aside id="panel">
-    <h1>Карьер Бозшаколь — диспетчер смены</h1>
-    <div class="status-line">связь: <span id="conn">нет</span></div>
-    <a id="grafana-link" href="#" target="_blank" rel="noopener" hidden>Дашборды Grafana</a>
-    <label class="status-line toggle-line" title="«Высокое» — тени и огни; «Обычное» — быстрее на слабом компьютере">Качество:
-      <select id="quality"><option value="high">Высокое</option><option value="normal">Обычное</option></select></label>
-    <label class="status-line toggle-line" title="«Ночная смена» — тёмное небо, прожекторы мачт, фары самосвалов, окна корпусов">Освещение:
-      <select id="lighting"><option value="day">День</option><option value="night">Ночная смена</option></select></label>
-
-    <section id="advice-block">
-      <h2>Советы диспетчеру</h2>
-      <div id="advice"><div class="advice none">нет данных</div></div>
-    </section>
-
-    <section>
+    <div class="panel-head">
+      <h1>Карьер Бозшаколь — диспетчер смены</h1>
+      <button id="panel-toggle" type="button" title="Свернуть панель" aria-label="Свернуть панель" aria-expanded="true">«</button>
+    </div>
+    <!-- свёрнутая панель: узкая полоска с названием; ⚠ — есть совет диспетчеру -->
+    <button id="panel-strip" type="button" title="Развернуть панель диспетчера" aria-label="Развернуть панель диспетчера">
+      <span class="strip-open">»</span>
+      <span id="panel-alarm" hidden>⚠</span>
+      <span class="strip-title">Карьер Бозшаколь — диспетчер смены</span>
+    </button>
+    <div id="panel-body">
       <div id="shift-line" class="shift">Смена — · —:—</div>
-      <h2>Фабрики</h2>
-      <div id="plants"></div>
-    </section>
+      <div class="status-line">связь: <span id="conn">нет</span></div>
 
-    <section id="transport-block">
-      <h2>Транспорт</h2>
-      <div id="dispatch-off-note" class="note bad" hidden>Диспетчеризация выключена — закреплённое распределение</div>
-      <table id="transport-table" class="kv"></table>
-      <div id="weather" class="muted">Погода: —</div>
-    </section>
+      <!-- главные цифры смены; «?» — пояснение простыми словами -->
+      <div id="kpis">
+        <div class="kpi wide" id="kpi-ore">
+          <div class="k-name">Руда на фабрики <button class="q" type="button" data-q="ore" aria-label="Что это?">?</button></div>
+          <div class="k-row"><span class="k-val">—</span><span class="k-sub"></span></div>
+        </div>
+        <div class="kpi" id="kpi-cu">
+          <div class="k-name">Медь в питании <button class="q" type="button" data-q="cu" aria-label="Что это?">?</button></div>
+          <div class="k-val">—</div><div class="k-sub"></div>
+        </div>
+        <div class="kpi" id="kpi-wait">
+          <div class="k-name">Ожидание у экскаватора <button class="q" type="button" data-q="wait" aria-label="Что это?">?</button></div>
+          <div class="k-val">—</div><div class="k-sub"></div>
+        </div>
+        <div class="kpi wide" id="kpi-mode">
+          <div class="k-name">Режим диспетчера <button class="q" type="button" data-q="mode" aria-label="Что это?">?</button></div>
+          <div class="k-row"><span class="k-val">—</span><span class="k-sub"></span></div>
+        </div>
+      </div>
 
-    <section>
-      <h2>Журнал событий <span class="muted">(модельное время)</span></h2>
-      <div id="log"><div class="muted">пока событий нет</div></div>
-    </section>
+      <section id="advice-block">
+        <h2>Совет диспетчеру <button class="q" type="button" data-q="advice" aria-label="Что это?">?</button></h2>
+        <div id="advice"><div class="advice none">нет данных</div></div>
+      </section>
 
-    <section>
-      <h2>Сценарии «что если»</h2>
-      <div id="scenarios"></div>
-    </section>
-
-    <section class="legend">
-      <h2>Легенда</h2>
-      <div class="legend-title">Груз самосвала</div>
-      <div><i style="background:#3d8f6e"></i> сульфидная руда</div>
-      <div><i style="background:#c8722a"></i> глинистая руда</div>
-      <div><i style="background:#8a8a8a"></i> вскрыша</div>
-      <div><i style="background:#ffffff;border:1px solid #999"></i> порожний</div>
-      <div><i style="background:#ffffff;border:1px solid #999"></i> на заправке (refueling)</div>
-      <div><i style="background:#d5d8dc;border:1px solid #999"></i> в резерве (reserve)</div>
-      <div><i style="background:#d32f2f"></i> авария (down)</div>
-      <div class="legend-title">Оборудование</div>
-      <div><i style="background:#7d8692"></i> работает</div>
-      <div><i style="background:#7d8692;opacity:.55"></i> простой (нет руды) — отметка в подписи</div>
-      <div><i style="background:#d32f2f"></i> остановлено / не принимает</div>
-      <div><i style="background:#9aa5b3"></i> ТО мельницы — отметка «ТО» в подписи</div>
-      <div><i style="background:#f2a21b"></i> экскаватор (красный — сломан)</div>
-      <div class="legend-title">Карьер и дороги</div>
-      <div><i style="background:#d9cfae;border:1px solid #4a3f2e"></i> съезд (тёмная обводка)</div>
-      <div><i style="background:#d32f2f;height:4px"></i> дорога закрыта</div>
-      <div><i style="background:#dcc08e"></i> берма (площадка уступа)</div>
-      <div><i style="background:#8f6a44"></i> стенка уступа</div>
-      <div><i style="background:#a8a27e"></i> дно карьера</div>
-    </section>
+      <!-- остальное — в свёрнутых разделах (щелчок по заголовку), у каждого «?» -->
+      <details class="more">
+        <summary>Сценарии «что если» <button class="q" type="button" data-q="scenarios" aria-label="Что это?">?</button></summary>
+        <div id="scenarios"></div>
+      </details>
+      <details class="more">
+        <summary>Фабрики <button class="q" type="button" data-q="plants" aria-label="Что это?">?</button></summary>
+        <div id="plants"></div>
+      </details>
+      <details class="more" id="transport-block">
+        <summary>Транспорт <button class="q" type="button" data-q="transport" aria-label="Что это?">?</button></summary>
+        <div id="dispatch-off-note" class="note bad" hidden>Диспетчеризация выключена — закреплённое распределение</div>
+        <table id="transport-table" class="kv"></table>
+        <div id="weather" class="muted">Погода: —</div>
+      </details>
+      <details class="more">
+        <summary>Журнал событий <button class="q" type="button" data-q="log" aria-label="Что это?">?</button></summary>
+        <div id="log"><div class="muted">пока событий нет</div></div>
+      </details>
+      <details class="more legend">
+        <summary>Легенда <button class="q" type="button" data-q="legend" aria-label="Что это?">?</button></summary>
+        <div class="legend-title">Груз самосвала</div>
+        <div><i style="background:#3d8f6e"></i> сульфидная руда</div>
+        <div><i style="background:#c8722a"></i> глинистая руда</div>
+        <div><i style="background:#8a8a8a"></i> вскрыша</div>
+        <div><i style="background:#ffffff;border:1px solid #999"></i> порожний</div>
+        <div><i style="background:#ffffff;border:1px solid #999"></i> на заправке (refueling)</div>
+        <div><i style="background:#d5d8dc;border:1px solid #999"></i> в резерве (reserve)</div>
+        <div><i style="background:#d32f2f"></i> авария (down)</div>
+        <div class="legend-title">Оборудование</div>
+        <div><i style="background:#7d8692"></i> работает</div>
+        <div><i style="background:#7d8692;opacity:.55"></i> простой (нет руды) — отметка в подписи</div>
+        <div><i style="background:#d32f2f"></i> остановлено / не принимает</div>
+        <div><i style="background:#9aa5b3"></i> ТО мельницы — отметка «ТО» в подписи</div>
+        <div><i style="background:#f2a21b"></i> экскаватор (красный — сломан)</div>
+        <div class="legend-title">Карьер и дороги</div>
+        <div><i style="background:#d9cfae;border:1px solid #4a3f2e"></i> съезд (тёмная обводка)</div>
+        <div><i style="background:#d32f2f;height:4px"></i> дорога закрыта</div>
+        <div><i style="background:#dcc08e"></i> берма (площадка уступа)</div>
+        <div><i style="background:#8f6a44"></i> стенка уступа</div>
+        <div><i style="background:#a8a27e"></i> дно карьера</div>
+      </details>
+      <details class="more">
+        <summary>Настройки <button class="q" type="button" data-q="settings" aria-label="Что это?">?</button></summary>
+        <label class="status-line toggle-line" title="«Высокое» — тени и огни; «Обычное» — быстрее на слабом компьютере">Качество:
+          <select id="quality"><option value="high">Высокое</option><option value="normal">Обычное</option></select></label>
+        <label class="status-line toggle-line" title="«Ночная смена» — тёмное небо, прожекторы мачт, фары самосвалов, окна корпусов">Освещение:
+          <select id="lighting"><option value="day">День</option><option value="night">Ночная смена</option></select></label>
+      </details>
+      <a id="grafana-link" href="#" target="_blank" rel="noopener" hidden>Дашборды Grafana</a>
+    </div>
   </aside>
+
+  <!-- пояснение к «?» на панели -->
+  <div id="q-pop" role="dialog" hidden>
+    <div class="card-head"><b id="q-pop-title"></b><button id="q-pop-close" type="button" title="Закрыть (Esc)">×</button></div>
+    <div id="q-pop-text"></div>
+    <div id="q-pop-live"></div>
+  </div>
 
   <!-- Фото местности: спутниковый снимок реального Бозшаколя (data/terrain/texture.jpg), подписи объектов -->
   <div id="photo" hidden>
@@ -172,7 +210,7 @@
           двойной клик по объекту — облёт, Esc — выход; реальная местность на спутниковом снимке — кнопка «Фото местности».</li>
         <li><b>Кликните самосвал</b> — справа откроется карточка с живыми данными двойника (груз, скорость, топливо);
           «Следовать за самосвалом» — камера пойдёт за ним, голубая линия покажет его маршрут.</li>
-        <li><b>Включите «Остановка дробилки»</b> в панели слева («Сценарии «что если»») и нажмите «показать»:
+        <li><b>Включите «Остановка дробилки»</b> в панели слева (раздел «Сценарии «что если»» — щелчок по заголовку) и нажмите «показать»:
           у дробилки растёт очередь, склад перед фабрикой тает, появляется прогноз «фабрика встанет в …»
           и совет диспетчеру вверху панели.</li>
         <li><b>Выключите сценарий</b> — очередь рассасывается, дробилка снова принимает руду, совет снимается.</li>
