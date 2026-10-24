@@ -226,6 +226,7 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
   // (витки съезда, съезд и площадка) — ровный откос от края одной до края другой, без обрыва посередине;
   // дальше — плавный возврат к уступам
   const HW = ROAD_W / 2 + 2, NEAR2 = 2 * (CORRIDOR + CORRIDOR_BLEND - HW), RIM_FADE = 18;
+  const SHELF = HW + 4;   // ровная полка под полотном — с обочиной: колесо самосвала на своей полосе не сходит на откос
   // ширина проявления уступов у съезда: у бровки шире (там съезд выходит из карьера поперёк колец — без рваных концов)
   const rampSmooth = (ds) => RAMP_SMOOTH + RAMP_SMOOTH_RIM * (1 - smooth(ds / RIM_SMOOTH_DS));
   function surfaceAt(xs, ys) {
@@ -246,11 +247,11 @@ export function createDiorama(THREE, geometry, terrainApi, D) {
       const n = edgeNearest(e, xs, ys, HW + Math.max(NEAR2, span + RAMP_GAP + RAMP_SMOOTH + RAMP_SMOOTH_RIM));
       take(n.d - HW, n.z);
       if (e.path) aRamp = Math.min(aRamp, n.d - HW);
-      if (n.d <= HW && (!shelf || n.d < shelf.d)) shelf = n;
+      if (n.d <= SHELF && (!shelf || n.d < shelf.d)) shelf = n;
     }
     for (const e of rimEdges) {
-      const n = edgeNearest(e, xs, ys, HW + 1);
-      if (n.d <= HW && (!shelf || n.d < shelf.d)) shelf = n;
+      const n = edgeNearest(e, xs, ys, SHELF + 1);
+      if (n.d <= SHELF && (!shelf || n.d < shelf.d)) shelf = n;
     }
     if (shelf) return shelf.z;   // под полотном — без смешивания с соседними витками, площадками и кромкой
     // уступы; у съезда за откосом — ровный средний склон борта (ещё RAMP_GAP), дальше уступы проступают плавно
