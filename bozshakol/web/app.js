@@ -1726,7 +1726,7 @@ const LANE = 8.75;
 const QUEUE_SIDE = 12;   // единиц: очередь стоит на обочине — на столько правее своей полосы
 // манёвр: задним ходом REV (24 м), радиус поворота R, скорости (единиц/с: вперёд ≈ 6 м/с, задом ≈ 1,9 м/с при ×10),
 // место у экскаватора: на AHEAD вперёд от его центра и на SIDE вбок
-const MAN = { rev: 12, r: 8, fwd: 28, back: 8.5, ahead: 4, side: 17 };
+const MAN = { rev: 12, r: 8, fwd: 28, back: 8.5, ahead: 4, side: 20 };   // side 20: корпус в стороне от экскаватора при любом его повороте
 const FOLLOW = { rMin: 10, acc: 90, dec: 200, vMax: 88, snap: 400 };   // vMax — догон, но не быстрее 1,5 × 50 км/ч модели (ниже порога «телепорта»)
 const DUMP_AT = { 'crusher-01': ['crusher', 'crusher-01'], 'stockpile-clay': ['stockpile-clay', 'stockpile-clay'], 'dump-waste-1': ['dump-waste-1', 'dump-waste-1'] };
 const PARKED = new Set(['refueling', 'reserve']);
@@ -1866,6 +1866,15 @@ function truckTargets() {
           const q = dio.edgeAt(best.e, best.n.t), lat = Math.max(-LANE, Math.min(LANE, -q[4] * (xs - q[0]) + q[3] * (ys - q[1])));
           o.position.x = q[0] - q[4] * lat; o.position.z = -(q[1] + q[3] * lat);
         }
+      }
+    }
+    // едущий к своему экскаватору — не ближе 30 единиц к нему, пока не встал в очередь (подъезд к забою на уступе в схеме
+    // короткий: место модели на нём — у самого экскаватора)
+    if (st === 'returning') {
+      const ex = byThing(NS + ':' + String(val(id, 'excavator', '')));
+      if (ex) {
+        const e0 = ex.userData.rawPos || ex.position, dx = o.position.x - e0.x, dz = o.position.z - e0.z, d = Math.hypot(dx, dz);
+        if (d < 30 && d > 1e-3) { o.position.x = e0.x + dx / d * 30; o.position.z = e0.z + dz / d * 30; }
       }
     }
     // уезжает от пункта: сначала прямо вперёд от места, где стоял (мимо экскаватора, из-под бункера), — цель на этой
