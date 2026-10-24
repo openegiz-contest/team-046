@@ -270,7 +270,7 @@ function updateLabels() {
   let shown = 0;
   for (const L of cand) {
     const t = L.warn || L.obj.userData.label === undefined ? L.text : L.obj.userData.label;
-    const txt = L.warn ? String(t) : labelName(L.obj, String(t));
+    const txt = String(t);
     const cw = L.small ? 5.6 : 6.3, ch = L.small ? 15 : 18;
     const bw = txt.length * cw + 14;
     const r = { x: L.sx - bw / 2, y: L.sy - ch, w: bw, h: ch };
@@ -297,14 +297,6 @@ function register(obj, thingId, opts = {}) {
 }
 const byThing = (thingId) => clickable.find((o) => o.userData.thingId === thingId) || null;
 function thingOf(obj) { let o = obj; while (o && !o.userData.thingId) o = o.parent; return o ? o.userData.thingId : null; }
-// Подписи, которые сцена уточняет поверх имени двойника (имя — в twins.json модуля): начало подписи заменяется
-const LABEL_NAMES = { 'dump-waste-1': 'Отвал вскрыши (пустая порода)' };
-function labelName(obj, text) {
-  const id = thingOf(obj), alias = id && LABEL_NAMES[id.split(':')[1]];
-  if (!alias) return text;
-  const n = nameOf(id);
-  return text.startsWith(n) ? alias + text.slice(n.length) : text;
-}
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 function pick(clientX, clientY) {

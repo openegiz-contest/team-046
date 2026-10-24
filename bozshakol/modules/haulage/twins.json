@@ -3446,7 +3446,7 @@
  "kz.bozshakol:dump-waste-1": {
   "policyId": "default:basic_policy",
   "attributes": {
-   "name": "Отвал вскрыши 1",
+   "name": "Отвал вскрыши (пустая порода)",
    "kind": "dump",
    "_isType": false,
    "_parents": "kz.bozshakol:pit-central"

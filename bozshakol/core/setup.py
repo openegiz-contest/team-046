@@ -85,7 +85,8 @@ def type_bodies(twins):
 
 def link_type(thing_id, body):
     """Двойник ссылается на свой тип: attributes.type = id типа — так хранит OpenEgiz двойник, созданный из типа.
-    Атрибут type занят платформой: своё значение из twins.json (crusher-01: «гирационная») уходит в <kind>_type."""
+    Атрибут type занят платформой: своё значение type (так было у crusher-01: «гирационная», теперь в twins.json
+    это crusher_type) переносится в <kind>_type — для старых данных."""
     attrs = dict(body.get("attributes") or {})
     kind = attrs.get("kind")
     if kind not in TYPES:
