@@ -63,7 +63,7 @@ let markerScale = 1;         // множитель размера значков
 let connState = 'нет';
 
 // Сцена одна — схема рудника (diorama.js): расстояния сжаты в 2 раза (единица карты = 2 м местности), здания
-// и склады — в реальном размере. Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
+// и склады — крупнее для наглядности (enlargeBuildings, ×1,6–2). Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
 // terrainApi (рельеф Copernicus DEM) нужен только для «высоты над землёй» в переносе координат, в сцене его нет.
 const mode = 'schema';
 let dio = null;              // перенос координат в схему (diorama.js)
@@ -994,7 +994,7 @@ const VIEWS_SCHEMA = {
   all: { target: [-650, -200, 0], pos: [-760, -2500, 1500] },    // косой вид ≈ 33° на весь рудник
   pit: { target: [-120, -20, -90], pos: [-200, -640, 420] },     // карьер: 13 уступов, съезды, техника на дне
   crusher: { target: [-160, -330, 0], pos: [-240, -560, 160] },  // дробилка, заправка, начало конвейера
-  plants: { target: [-1290, -400, 10], pos: [-1380, -880, 330] }, // фабрика, склад, подстанция
+  plants: { target: [-1480, -390, 10], pos: [-1560, -1080, 470] }, // фабрика (крупнее для наглядности), склад, подстанция
 };
 // Переход к виду по имени (кнопки сверху и клавиши 1–5)
 function setView(name) {
@@ -1455,10 +1455,21 @@ function frame(now) {
 }
 
 // ---------------------------------------------------------------- заправка (общая сцена)
+let fuelStationObj = null;
+// корень модели объекта слоя (слой регистрирует и якорь подписи, и саму модель — берём самый верхний)
+function buildingRoot(thingId) {
+  let best = null;
+  for (const o of clickable) {
+    if (o.userData.thingId !== thingId) continue;
+    let r = o; while (r.parent && r.parent.userData.thingId === thingId) r = r.parent;
+    if (!best || r !== best) best = r;
+  }
+  return best;
+}
 function buildFuelStation() {
   const o = (geometry.objects || []).find((x) => x.kind === 'fuel');
   if (!o || !modelsLib || !modelsLib.fuelStation) return;
-  const g = modelsLib.fuelStation();
+  const g = fuelStationObj = modelsLib.fuelStation();
   g.position.copy(toScene(o.position[0], o.position[1], groundAt(o.position[0], o.position[1])));
   terrain.add(g);
   addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
@@ -1496,7 +1507,13 @@ function buildSchemaEnvironment() {
   addLabel(d.anchors.pitFloor, 'Карьер · дно −' + geometry.pit.depth + ' м', { importance: 3, dy: 2, occlude: true });
   const A = geometry.pit.semi_axes_top;
   addLabel(d.anchors.pitName, 'Карьер Бозшаколь · ' + fmt(2 * A[0] / 1000, 1) + ' × ' + fmt(2 * A[1] / 1000, 1) + ' км', { importance: 3, dy: 3 });
-  if (d.anchors.tailings) addLabel(d.anchors.tailings, 'Хвостохранилище', { importance: 2, dy: 2 });
+  // синий пруд у фабрики — хвостохранилище (реальный объект, data/SOURCES.md): подпись видна и с общего вида
+  const tl = dio.D.extra && dio.D.extra.tailings;
+  if (d.anchors.tailings && tl) {   // подпись — у восточного края пруда (центр пруда на общем виде у края экрана)
+    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(tl.center[0] + tl.radii[0] * 0.55, tl.center[1], 14));
+    d.anchors.tailings.parent.add(anchor);
+    addLabel(anchor, 'Хвостохранилище · отходы обогащения фабрик', { importance: 3, dy: 2 });
+  }
   // степь уходит в дымку у горизонта: небо и туман одного светлого тона, краёв карты не видно
   scene.background = new THREE.Color(0xdde5ea);
   scene.fog = new THREE.Fog(0xdde5ea, 3500, 22000);
@@ -1520,7 +1537,7 @@ function buildWorld() {
   buildFuelStation();
   jumpToView('all');
 }
-// Здания и склады — в реальном размере. Плитки блоков («Содержание меди») — квадраты по сетке блоков в метрах,
+// Здания и склады — крупнее для наглядности (enlargeBuildings). Плитки блоков («Содержание меди») — квадраты по сетке блоков в метрах,
 // а сетка в схеме сжата в 2 раза: плитку уменьшаем так же (один раз, общая геометрия)
 function applySchemaScales() {
   const tiles = scene.getObjectByName('geology-cu-tiles');
@@ -2266,6 +2283,116 @@ function animateExcavators(dt) {
 }
 
 // для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
+// Здания крупнее для наглядности (в 1,6–2 раза; подпись в углу и «?» об этом говорят): каждое растёт от опорной точки —
+// дробилка от места разгрузки самосвалов (воронка остаётся у их края), фабрика от восточного торца (там конец конвейера
+// и склад), склад глины и заправка от своих подъездов, остальные — от центра. Мельница и флотация — точки на крыше
+// главного корпуса: двигаются и растут вместе с ним. Проверка (?debug=1): __buildingConflicts() — пересечения нет.
+const ENLARGE = [
+  { ids: ['crusher-01'], k: 1.6, pivot: 'node:crusher' },
+  { ids: ['plant-sulphide', 'sag-mill-01', 'flotation-01'], k: 1.6, pivot: [-1308, 470] },
+  { ids: ['plant-clay'], k: 1.6, pivot: [-231, 484] },   // от северо-западного угла: к северу и западу — дороги и стоянка
+  { ids: ['stockpile-coarse'], k: 1.6, pivot: null },
+  { ids: ['stockpile-clay'], k: 1.6, pivot: 'node:stockpile-clay' },
+  { ids: ['power-grid'], k: 1.8, pivot: null },
+  { ids: ['fuel'], k: 1.6, pivot: [-259.6, 395.1], shift: [4, -7] },   // растёт на север (к югу — стоянка, к западу — дорога)
+];
+function enlargeTarget(id) { return id === 'fuel' ? fuelStationObj : buildingRoot(NS + ':' + id); }
+function enlargeBuildings() {
+  for (const e of ENLARGE) {
+    let pv = null;
+    if (typeof e.pivot === 'string') { const n = dio && dio.D.nodes[e.pivot.slice(5)]; if (n) { const v = dio.s(n[0], n[1], 0); pv = [v.x, v.z]; } }
+    else if (e.pivot) pv = e.pivot;
+    for (const id of e.ids) {
+      const o = enlargeTarget(id);
+      if (!o || o.userData.enlarged) continue;
+      o.userData.enlarged = e.k;
+      o.userData.box0 = new THREE.Box3().setFromObject(o);   // габарит до увеличения — для проверки «новых» пересечений
+      o.scale.multiplyScalar(e.k);
+      if (pv) { o.position.x = pv[0] + (o.position.x - pv[0]) * e.k; o.position.z = pv[1] + (o.position.z - pv[1]) * e.k; }
+      if (e.shift) { o.position.x += e.shift[0]; o.position.z += e.shift[1]; }
+    }
+  }
+}
+// для проверок: пересечения увеличенных зданий с дорогами, конвейером, стоянкой, прудом, карьером и друг с другом
+dbgWin.__buildingConflicts = () => {
+  const out = [], boxes = {}, box = new THREE.Box3();
+  for (const e of ENLARGE) for (const id of e.ids) {
+    if (/^(sag-mill|flotation)/.test(id)) continue;
+    const o = enlargeTarget(id); if (!o) continue;
+    box.setFromObject(o); const b0 = o.userData.box0 || box;
+    boxes[id] = { x0: box.min.x + 2, x1: box.max.x - 2, z0: box.min.z + 2, z1: box.max.z - 2,
+      old: { x0: b0.min.x + 2, x1: b0.max.x - 2, z0: b0.min.z + 2, z1: b0.max.z - 2 } };
+  }
+  const inBox = (b, x, z, m) => x > b.x0 - m && x < b.x1 + m && z > b.z0 - m && z < b.z1 + m;
+  const inside = (b, x, z, m = 0) => inBox(b, x, z, m) && !inBox(b.old, x, z, m);   // только новое: до увеличения там не было
+  const own = { 'crusher-01': 'crusher', fuel: 'fuel-station', 'stockpile-clay': 'stockpile-clay' };
+  // дороги: точки по трассам рёбер схемы (кроме конца у своего подъезда)
+  for (const ed of dio.edges) {
+    const pts = ed.path || [ed.sa, ed.sb];
+    for (let i = 0; i + 1 < pts.length; i++) for (let t = 0; t < 1; t += 0.1) {
+      const sx = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, sy = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t;
+      const v = dio.s(sx, sy, 0);
+      for (const [id, b] of Object.entries(boxes)) {
+        if (!inside(b, v.x, v.z)) continue;
+        const nd = own[id] && dio.D.nodes[own[id]];
+        if (nd) { const nv = dio.s(nd[0], nd[1], 0); if (Math.hypot(v.x - nv.x, v.z - nv.z) < 26) continue; }
+        out.push('дорога ' + ed.from + '>' + ed.to + ' в ' + id + ' (' + v.x.toFixed(0) + ', ' + v.z.toFixed(0) + ')');
+      }
+    }
+  }
+  // конвейер (кроме концов: начало у дробилки, конец над складом)
+  const cv = (geometry.objects || []).find((o) => o.kind === 'conveyor');
+  if (cv) {
+    const P = cv.path.map((p) => toScene(p[0], p[1], 0));
+    for (let i = 0; i + 1 < P.length; i++) for (let t = 0; t <= 1; t += 0.02) {
+      const x = P[i].x + (P[i + 1].x - P[i].x) * t, z = P[i].z + (P[i + 1].z - P[i].z) * t;
+      if (Math.hypot(x - P[0].x, z - P[0].z) < 20 || Math.hypot(x - P[P.length - 1].x, z - P[P.length - 1].z) < 40) continue;
+      for (const [id, b] of Object.entries(boxes)) if (inside(b, x, z)) out.push('конвейер в ' + id + ' (' + x.toFixed(0) + ', ' + z.toFixed(0) + ')');
+    }
+  }
+  // стоянка у заправки
+  for (let k = 0; k < PARK_SLOTS.length; k++) {
+    const sp = parkingSpot(k); if (!sp) continue;
+    const v = dio.s(sp.S[0], sp.S[1], 0);
+    for (const [id, b] of Object.entries(boxes)) if (inside(b, v.x, v.z, 6)) out.push('стоянка ' + k + ' в ' + id);
+  }
+  // пруд хвостохранилища и карьер (по углам и серединам сторон)
+  const tl = dio.D.extra && dio.D.extra.tailings, pit = dio.pit;
+  for (const [id, b] of Object.entries(boxes)) {
+    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x0, b.z1], [b.x1, b.z1], [(b.x0 + b.x1) / 2, b.z0], [(b.x0 + b.x1) / 2, b.z1], [b.x0, (b.z0 + b.z1) / 2], [b.x1, (b.z0 + b.z1) / 2]]) {
+      if (inBox(b.old, x, z, 0)) continue;
+      const c = dio.s(0, 0, 0);
+      if (tl) { const t0 = dio.s(tl.center[0], tl.center[1], 0), r0 = dio.s(tl.center[0] + tl.radii[0], tl.center[1] + tl.radii[1], 0);
+        const rx = Math.abs(r0.x - t0.x), rz = Math.abs(r0.z - t0.z);
+        if (((x - t0.x) / rx) ** 2 + ((z - t0.z) / rz) ** 2 < 1) out.push('пруд хвостохранилища у ' + id); }
+      if (pit) { const p0 = dio.s(pit.cx, pit.cy, 0), pr = dio.s(pit.cx + pit.a, pit.cy + pit.b, 0);
+        const ax = Math.abs(pr.x - p0.x), az = Math.abs(pr.z - p0.z);
+        if (((x - p0.x) / ax) ** 2 + ((z - p0.z) / az) ** 2 < 1) out.push('карьер у ' + id); }
+      void c;
+    }
+  }
+  // здания друг с другом
+  const ids = Object.keys(boxes);
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    const a = boxes[ids[i]], b = boxes[ids[j]];
+    const ov = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0;
+    if (ov(a, b) && !ov(a.old, b.old)) out.push('здания ' + ids[i] + ' и ' + ids[j]);
+  }
+  return [...new Set(out)];
+};
+dbgWin.__parkSpots = () => PARK_SLOTS.map((_, k) => { const sp = parkingSpot(k); const v = sp && dio.s(sp.S[0], sp.S[1], 0); return v ? [Math.round(v.x), Math.round(v.z)] : null; });
+// для проверок: габариты зданий в сцене (x/z) — подбор увеличения зданий
+dbgWin.__buildingBoxes = () => {
+  const out = {}, box = new THREE.Box3();
+  for (const id of ['crusher-01', 'plant-sulphide', 'plant-clay', 'stockpile-coarse', 'stockpile-clay', 'power-grid', 'sag-mill-01', 'flotation-01']) {
+    const o = buildingRoot(NS + ':' + id); if (!o) continue;
+    box.setFromObject(o);
+    out[id] = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], y: +box.max.y.toFixed(1),
+      pos: [+o.position.x.toFixed(1), +o.position.z.toFixed(1)], k: +o.scale.x.toFixed(2) };
+  }
+  if (fuelStationObj) { box.setFromObject(fuelStationObj); out.fuel = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], pos: [+fuelStationObj.position.x.toFixed(1), +fuelStationObj.position.z.toFixed(1)] }; }
+  return out;
+};
 dbgWin.__screenOf = (thingId) => {
   const o = byThing(thingId); if (!o) return null;
   o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
@@ -2516,6 +2643,7 @@ function initGuide() {
   startSSE();
   await loadLayers();
   applySchemaScales();
+  enlargeBuildings();
   renderPanel();          // значки сценариев — после регистрации объектов слоями
   updateFollowButton();
   markViewButton('all');
