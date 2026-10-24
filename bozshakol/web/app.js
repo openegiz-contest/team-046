@@ -7,19 +7,20 @@ import { initKeyboard } from './controls.js';
 import { glowTexture } from './environment.js';
 import { createModels } from './models.js';
 import { loadDiorama } from './diorama.js';
-import { buildDiorama, roadRibbons } from './diorama-scene.js';
+import { buildDiorama, roadRibbons, fence } from './diorama-scene.js';
 
 // Отладочный доступ к объектам сцены (window.__*) — только с ?debug=1 в адресе (скрипты проверок)
 const dbgWin = new URLSearchParams(location.search).has('debug') ? window : {};
 
 // ---------------------------------------------------------------- палитра
 const colors = {
-  sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff, down: 0xd32f2f,
+  sulphide: 0x3d8f6e, clay: 0xc8722a, waste: 0x8a8a8a, empty: 0xffffff,
+  down: 0xd1236a,                         // авария / остановка / закрыто — красно-пурпурный (виден и при дальтонизме)
   steppe: 0xe6d9a8,
   bench: [0xdcc08e, 0xcfae78],            // бермы (площадки) — два чередующихся светлых тона
   wall: [0x8f6a44, 0x7f5c3a],             // стенки уступов — заметно темнее берм
   benchLine: 0x4a3418, floor: 0xa8a27e,   // контуры кромок; дно карьера — серо-оливковое
-  road: 0xcfc3a4, ramp: 0xe8dfc3, roadEdge: 0x4a3f2e, roadClosed: 0xd32f2f,
+  road: 0xcfc3a4, ramp: 0xe8dfc3, roadEdge: 0x4a3f2e, roadClosed: 0xd1236a,
   building: 0xd8d8d8, roof: 0xa9b8cc, conveyor: 0x6f7f95, excavator: 0xf2a21b, drill: 0x4f6d8f,
   dump: 0x9a9a9a, stockpileOre: 0x6b7a5a, stockpileClay: 0xb86f3a, label: 0x2b2620,
 };
@@ -62,7 +63,7 @@ let markerScale = 1;         // множитель размера значков
 let connState = 'нет';
 
 // Сцена одна — схема рудника (diorama.js): расстояния сжаты в 2 раза (единица карты = 2 м местности), здания
-// и склады — в реальном размере. Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
+// и склады — крупнее для наглядности (enlargeBuildings, ×1,6–1,8). Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
 // terrainApi (рельеф Copernicus DEM) нужен только для «высоты над землёй» в переносе координат, в сцене его нет.
 const mode = 'schema';
 let dio = null;              // перенос координат в схему (diorama.js)
@@ -91,8 +92,10 @@ const canvas = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
 renderer.setPixelRatio(1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;   // мягкая тональная кривая: светлые тона без пересвета
-renderer.toneMappingExposure = 1.05;
+// AgX: мягкий пересвет без сдвига оттенков (ACES уводил красный в оранжевый) — цвета состояний остаются узнаваемыми
+renderer.toneMapping = THREE.AgXToneMapping;
+const EXPOSURE = { day: 0.92, night: 1.2 };
+renderer.toneMappingExposure = EXPOSURE.day;
 renderer.shadowMap.enabled = false;                   // тени — только в качестве «Высокое»
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
@@ -132,9 +135,9 @@ topControls.enabled = false;
 topControls.update();
 
 // Свет: небо-полусфера (голубое сверху, тёплый отражённый снизу) и тёплое низкое солнце с юго-запада
-const hemi = new THREE.HemisphereLight(0xe3eef8, 0xb59c74, 1.35);
+const hemi = new THREE.HemisphereLight(0xe3eef8, 0x8f7a58, 1.05);   // снизу — темнее: у форм есть теневая сторона
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xffe4bd, 3.1);
+const sun = new THREE.DirectionalLight(0xffe4bd, 3.6);
 sun.position.set(-4200, 3600, 2600);   // низкое солнце: стенки уступов и грани рельефа дают разный тон
 sun.target.position.set(-1100, 0, 200);
 sun.shadow.mapSize.set(2048, 2048);
@@ -267,7 +270,7 @@ function updateLabels() {
   let shown = 0;
   for (const L of cand) {
     const t = L.warn || L.obj.userData.label === undefined ? L.text : L.obj.userData.label;
-    const txt = L.warn ? String(t) : labelName(L.obj, String(t));
+    const txt = String(t);
     const cw = L.small ? 5.6 : 6.3, ch = L.small ? 15 : 18;
     const bw = txt.length * cw + 14;
     const r = { x: L.sx - bw / 2, y: L.sy - ch, w: bw, h: ch };
@@ -294,14 +297,6 @@ function register(obj, thingId, opts = {}) {
 }
 const byThing = (thingId) => clickable.find((o) => o.userData.thingId === thingId) || null;
 function thingOf(obj) { let o = obj; while (o && !o.userData.thingId) o = o.parent; return o ? o.userData.thingId : null; }
-// Подписи, которые сцена уточняет поверх имени двойника (имя — в twins.json модуля): начало подписи заменяется
-const LABEL_NAMES = { 'dump-waste-1': 'Отвал вскрыши (пустая порода)' };
-function labelName(obj, text) {
-  const id = thingOf(obj), alias = id && LABEL_NAMES[id.split(':')[1]];
-  if (!alias) return text;
-  const n = nameOf(id);
-  return text.startsWith(n) ? alias + text.slice(n.length) : text;
-}
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 function pick(clientX, clientY) {
@@ -991,7 +986,7 @@ const VIEWS_SCHEMA = {
   all: { target: [-650, -200, 0], pos: [-760, -2500, 1500] },    // косой вид ≈ 33° на весь рудник
   pit: { target: [-120, -20, -90], pos: [-200, -640, 420] },     // карьер: 13 уступов, съезды, техника на дне
   crusher: { target: [-160, -330, 0], pos: [-240, -560, 160] },  // дробилка, заправка, начало конвейера
-  plants: { target: [-1290, -400, 10], pos: [-1380, -880, 330] }, // фабрика, склад, подстанция
+  plants: { target: [-1480, -390, 10], pos: [-1560, -1080, 470] }, // фабрика (крупнее для наглядности), склад, подстанция
 };
 // Переход к виду по имени (кнопки сверху и клавиши 1–5)
 function setView(name) {
@@ -1236,9 +1231,9 @@ function nightSky() {
 function applyLighting(l) {
   lighting = l === 'night' ? 'night' : 'day';
   const night = lighting === 'night';
-  hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0xb59c74);
-  hemi.intensity = night ? 0.8 : 1.35;
-  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.1;   // ночью — луна
+  hemi.color.setHex(night ? 0x5d7096 : 0xe3eef8); hemi.groundColor.setHex(night ? 0x2b2620 : 0x8f7a58);
+  hemi.intensity = night ? 0.8 : 1.05;
+  sun.color.setHex(night ? 0x9fb6ff : 0xffe4bd); sun.intensity = night ? 0.6 : 3.6;   // ночью — луна
   for (const name of ['diorama-grid', 'grid']) {   // сетка фона (если есть) ночью — тёмно-синяя
     const grid = scene.getObjectByName(name);
     if (grid && grid.material) grid.material.color.setHex(night ? 0x34476b : 0xffffff);
@@ -1248,7 +1243,7 @@ function applyLighting(l) {
     if (!o.userData.baseScale) o.userData.baseScale = o.scale.x;
     o.scale.setScalar(o.userData.baseScale * (night ? 1.7 : 1));
   });
-  renderer.toneMappingExposure = night ? 1.15 : 1.05;
+  renderer.toneMappingExposure = night ? EXPOSURE.night : EXPOSURE.day;
   if (modelsLib && modelsLib.setNight) modelsLib.setNight(night);
   roadNight();
   if (environment && environment.setQuality) environment.setQuality(night);   // ореолы фонарей — только ночью
@@ -1335,6 +1330,7 @@ function decorateModels() {
     const b = new THREE.Mesh(blobGeo, blobMat);
     b.rotation.x = -Math.PI / 2; b.position.y = 0.25; b.scale.set(W * 1.7, L * 1.45, 1); b.renderOrder = -1;
     b.userData.blob = true; b.raycast = () => {};
+    b.visible = false;   // пятно под машиной теперь общее (contact-shadows, одна InstancedMesh) — без двойной тени
     o.add(b); o.userData.blob = b;
   }
   // тени от солнца — у моделей техники и зданий (в «Высоком»)
@@ -1427,6 +1423,10 @@ function frame(now) {
   adjustMachines(dt);
   if (motionLog.on) sampleMotion(now);
   updateDust(dt);
+  updateServiceVehicles(dt);
+  updatePuffs(dt);
+  if (frameNo % 2 === 0) updateClouds(dt * 2);
+  updateContactShadows();
   if (frameNo % 15 === 0) updateDownBadges();
   if (frameNo % 30 === 15) updateRoadWaitBadges();
   if (frameNo % 30 === 1) { decorateModels(); if (lighting === 'night') updateHeadlights(); }   // тени новым моделям; фары новым самосвалам
@@ -1451,10 +1451,21 @@ function frame(now) {
 }
 
 // ---------------------------------------------------------------- заправка (общая сцена)
+let fuelStationObj = null;
+// корень модели объекта слоя (слой регистрирует и якорь подписи, и саму модель — берём самый верхний)
+function buildingRoot(thingId) {
+  let best = null;
+  for (const o of clickable) {
+    if (o.userData.thingId !== thingId) continue;
+    let r = o; while (r.parent && r.parent.userData.thingId === thingId) r = r.parent;
+    if (!best || r !== best) best = r;
+  }
+  return best;
+}
 function buildFuelStation() {
   const o = (geometry.objects || []).find((x) => x.kind === 'fuel');
   if (!o || !modelsLib || !modelsLib.fuelStation) return;
-  const g = modelsLib.fuelStation();
+  const g = fuelStationObj = modelsLib.fuelStation();
   g.position.copy(toScene(o.position[0], o.position[1], groundAt(o.position[0], o.position[1])));
   terrain.add(g);
   addLabel(g, 'Заправка (ГСМ)', { importance: 3, dy: 12 });
@@ -1492,7 +1503,14 @@ function buildSchemaEnvironment() {
   addLabel(d.anchors.pitFloor, 'Карьер · дно −' + geometry.pit.depth + ' м', { importance: 3, dy: 2, occlude: true });
   const A = geometry.pit.semi_axes_top;
   addLabel(d.anchors.pitName, 'Карьер Бозшаколь · ' + fmt(2 * A[0] / 1000, 1) + ' × ' + fmt(2 * A[1] / 1000, 1) + ' км', { importance: 3, dy: 3 });
-  if (d.anchors.tailings) addLabel(d.anchors.tailings, 'Хвостохранилище', { importance: 2, dy: 2 });
+  // синий пруд у фабрики — хвостохранилище (реальный объект, data/SOURCES.md): подпись видна и с общего вида
+  if (d.anchors.concentrate) addLabel(d.anchors.concentrate, 'Склад концентрата · отгрузка в вагоны', { importance: 2, dy: 2 });
+  const tl = dio.D.extra && dio.D.extra.tailings;
+  if (d.anchors.tailings && tl) {   // подпись — у восточного края пруда (центр пруда на общем виде у края экрана)
+    const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(tl.center[0] + tl.radii[0] * 0.55, tl.center[1], 14));
+    d.anchors.tailings.parent.add(anchor);
+    addLabel(anchor, 'Хвостохранилище · отходы обогащения фабрик', { importance: 3, dy: 2 });
+  }
   // степь уходит в дымку у горизонта: небо и туман одного светлого тона, краёв карты не видно
   scene.background = new THREE.Color(0xdde5ea);
   scene.fog = new THREE.Fog(0xdde5ea, 3500, 22000);
@@ -1516,7 +1534,7 @@ function buildWorld() {
   buildFuelStation();
   jumpToView('all');
 }
-// Здания и склады — в реальном размере. Плитки блоков («Содержание меди») — квадраты по сетке блоков в метрах,
+// Здания и склады — крупнее для наглядности (enlargeBuildings). Плитки блоков («Содержание меди») — квадраты по сетке блоков в метрах,
 // а сетка в схеме сжата в 2 раза: плитку уменьшаем так же (один раз, общая геометрия)
 function applySchemaScales() {
   const tiles = scene.getObjectByName('geology-cu-tiles');
@@ -1552,7 +1570,7 @@ function updateDownBadges() {
     const down = val(id, 'state', '') === 'down';
     let b = downBadges[id];
     if (b && b.obj !== o) { b.el.remove(); const i = labels.indexOf(b); if (i >= 0) labels.splice(i, 1); b = downBadges[id] = null; }
-    if (down && !b) b = downBadges[id] = addLabel(o, '⛔ авария', { importance: 3.5, cls: 'warn', dy: 9 });
+    if (down && !b) b = downBadges[id] = addLabel(o, '⛔ авария', { importance: 3.5, cls: 'warn alarm', dy: 9 });
     if (b) b.enabled = down;
   }
 }
@@ -1597,6 +1615,310 @@ function updateRoadWaitBadges() {
   }
 }
 dbgWin.__roadWait = () => Object.keys(roadWaitBadges).filter((id) => roadWaitBadges[id] && roadWaitBadges[id].enabled);
+// Контакт с землёй: мягкое тёмное пятно под каждой машиной — одна InstancedMesh на всю технику, в любом качестве
+// (в «Обычном» теней нет, без пятна техника висит над дорогой); размер — по габариту модели, курс — по машине
+let contactMesh = null;
+const CONTACT_MAX = 128;
+const contactSize = new WeakMap();
+const _cm = new THREE.Matrix4(), _cq = new THREE.Quaternion(), _cwq = new THREE.Quaternion(), _cp = new THREE.Vector3(), _cs = new THREE.Vector3();
+const _cf = new THREE.Vector3(), _cy = new THREE.Vector3(0, 1, 0), _cbox = new THREE.Box3(), _cb = new THREE.Box3(), _cinv = new THREE.Matrix4(), _crel = new THREE.Matrix4();
+function contactTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const x = c.getContext('2d'), gr = x.createRadialGradient(32, 32, 3, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(40,30,20,0.62)'); gr.addColorStop(0.5, 'rgba(40,30,20,0.34)'); gr.addColorStop(1, 'rgba(40,30,20,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+function machineFootprint(o) {   // [длина, ширина] модели в её собственных осях (без стрелы ковша — пятно мягкое)
+  let s = contactSize.get(o);
+  if (s) return s;
+  o.updateWorldMatrix(true, true);
+  _cinv.copy(o.matrixWorld).invert(); _cbox.makeEmpty();
+  o.traverse((c) => {
+    if (!c.isMesh || !c.geometry || !c.visible || c.isSprite || c.userData.blob) return;
+    if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+    _crel.multiplyMatrices(_cinv, c.matrixWorld); _cb.copy(c.geometry.boundingBox).applyMatrix4(_crel); _cbox.union(_cb);
+  });
+  if (_cbox.isEmpty()) return null;
+  _cbox.getSize(_cs);
+  s = [Math.min(_cs.x, _cs.z * 2.2) * o.scale.x, _cs.z * o.scale.z];
+  contactSize.set(o, s);
+  return s;
+}
+function updateContactShadows() {
+  if (!contactMesh) {
+    const geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.MeshBasicMaterial({ map: contactTexture(), transparent: true, depthWrite: false, fog: false, toneMapped: false,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
+    contactMesh = new THREE.InstancedMesh(geo, mat, CONTACT_MAX);
+    contactMesh.name = 'contact-shadows'; contactMesh.frustumCulled = false; contactMesh.raycast = () => {};
+    scene.add(contactMesh);
+  }
+  let n = 0;
+  const cam = camera.position, FAR2 = 900 * 900;   // дальше 900 единиц машина — значок-стрелка, пятно не видно: не рисуем
+  for (const o of clickable) {
+    if (n >= CONTACT_MAX) break;
+    const id = o.userData.thingId || '';
+    if (!MACHINE_RE.test(id) || !o.isObject3D || o.isMesh || !o.visible) continue;
+    const e = o.matrixWorld.elements;   // мировая матрица прошлого кадра — без пересчёта цепочки родителей
+    _cp.set(e[12], e[13], e[14]);
+    if (_cp.distanceToSquared(cam) > FAR2) continue;
+    const s = machineFootprint(o); if (!s) continue;
+    _cq.setFromAxisAngle(_cy, Math.atan2(-e[2], e[0]));
+    _cp.y += 0.25;
+    _cs.set(s[0] * 1.3, 1, s[1] * 1.45);
+    _cm.compose(_cp, _cq, _cs); contactMesh.setMatrixAt(n++, _cm);
+  }
+  for (const S of serviceList) {
+    if (n >= CONTACT_MAX) break;
+    const o = S.o, s = machineFootprint(o); if (!s) continue;
+    o.getWorldPosition(_cp); if (_cp.distanceToSquared(cam) > FAR2) continue;
+    _cp.y += 0.25;
+    _cq.setFromAxisAngle(_cy, o.rotation.y);
+    _cs.set(s[0] * 1.3, 1, s[1] * 1.45);
+    _cm.compose(_cp, _cq, _cs); contactMesh.setMatrixAt(n++, _cm);
+  }
+  contactMesh.count = n; contactMesh.instanceMatrix.needsUpdate = true;
+  contactMesh.visible = n > 0;
+  contactMesh.material.opacity = lighting === 'night' ? 0.5 : (quality === 'high' ? 0.55 : 1);   // в «Высоком» есть и тени солнца
+}
+// ---------------------------------------------------------------- живой фон: служебные машины, пыль, облака
+// Служебные машины (не двойники, только картинка): поливомоечная, грейдер, пикап мастера — каждая по своему замкнутому
+// пути в свободной степи (путь ищется при загрузке: не ближе 35 единиц к дорогам, не у объектов, не в карьере, пруду,
+// на ж/д ветке и под зданиями). Скорость — как у самосвалов: км/ч модели × ускорение стенда (≈ ×9,2). Только вперёд,
+// плавные дуги — правила движения те же; в замере core/tools/motion_check они «service-*».
+const SIM_SPEEDUP = 9.2;
+const SERVICE = [
+  { id: 'service-water', name: 'Поливомоечная машина', kind: 'water', kmh: 20, near: [700, -760], r: [140, 60] },
+  { id: 'service-grader', name: 'Грейдер', kind: 'grader', kmh: 8, near: [-250, 700], r: [100, 45] },
+  { id: 'service-pickup', name: 'Пикап мастера', kind: 'pickup', kmh: 35, near: [250, -1050], r: [170, 75] },
+];
+const serviceList = [];
+function serviceModel(kind) {
+  const g = new THREE.Group(), mats = {};
+  const M = (c) => mats[c] || (mats[c] = new THREE.MeshLambertMaterial({ color: c }));
+  const box = (w, h, l, c, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, l), M(c)); m.position.set(x, y, z); g.add(m); return m; };
+  let L, W, R;
+  if (kind === 'water') {          // поливомоечная: рама, кабина спереди, цистерна
+    L = 8.2; W = 2.6; R = 0.6;
+    box(2.4, 0.6, 8.2, 0x3b3f45, 0, 1.0, 0); box(2.5, 2.1, 2.2, 0xf2f1ec, 0, 2.35, 2.9);
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 5.0, 12), M(0x3f86c6)); tank.rotation.x = Math.PI / 2; tank.position.set(0, 2.5, -1.1); g.add(tank);
+  } else if (kind === 'grader') {  // грейдер: длинная жёлтая рама, кабина сзади, отвал посередине
+    L = 9.6; W = 2.6; R = 0.7;
+    box(1.4, 1.0, 9.6, 0xf2b21b, 0, 1.5, 0); box(2.4, 1.0, 3.2, 0xf2b21b, 0, 1.4, -3.0); box(2.0, 1.9, 1.9, 0xf2b21b, 0, 2.85, -2.4);
+    box(3.6, 0.8, 0.25, 0x3b3f45, 0, 0.55, 0.9);
+  } else {                         // пикап
+    L = 5.3; W = 1.9; R = 0.42;
+    box(1.9, 0.75, 5.3, 0xf4f4f0, 0, 0.85, 0); box(1.8, 0.75, 2.3, 0xf4f4f0, 0, 1.6, 0.45); box(1.82, 0.4, 1.0, 0x2d4a66, 0, 1.6, 1.25);
+  }
+  const wg = new THREE.CylinderGeometry(R, R, 0.5, 10); wg.rotateZ(Math.PI / 2);
+  for (const zf of [L / 2 - 1.2, -(L / 2 - 1.3)]) for (const xs of [-W / 2, W / 2]) { const w = new THREE.Mesh(wg, M(0x2a2b2e)); w.position.set(xs, R, zf); g.add(w); }
+  // детали — в одну геометрию с цветами вершин: один вызов отрисовки на машину (без видеокарты каждый вызов дорог)
+  g.updateMatrixWorld(true);
+  const pos = [], nor = [], col = [];
+  g.traverse((m) => {
+    if (!m.isMesh) return;
+    const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrix);
+    const p = geo.attributes.position, n = geo.attributes.normal, c = m.material.color;
+    for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(n.getX(i), n.getY(i), n.getZ(i)); col.push(c.r, c.g, c.b); }
+  });
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  merged.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const one = new THREE.Group();
+  one.add(new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true })));
+  one.userData.size = { length: L, width: W };
+  one.rotation.order = 'YXZ';
+  return one;
+}
+// свободная точка степи (координаты схемы): дороги, конвейер, объекты, карьер, пруд, ж/д ветка, увеличенные здания
+function serviceFree(boxes) {
+  const D = dio.D, pit = dio.pit, tl = D.extra && D.extra.tailings;
+  const busy = Object.entries(D.objects).filter(([id, o]) => o.position && !/^(face|excavator|drill)-/.test(id)).map(([, o]) => o.position);
+  const cv = Object.values(D.objects).find((o) => o.kind === 'conveyor' && o.path);
+  const seg = (x, y, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L2));
+    return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t); };
+  return (x, y) => {
+    if (((x - pit.cx) / (pit.a + 60)) ** 2 + ((y - pit.cy) / (pit.b + 60)) ** 2 < 1) return false;
+    for (const ed of dio.edges) if ((ed.path ? dio.edgeNearest(ed, x, y, 36).d : seg(x, y, ed.sa, ed.sb)) < 35) return false;
+    if (cv) for (let i = 0; i + 1 < cv.path.length; i++) if (seg(x, y, cv.path[i], cv.path[i + 1]) < 30) return false;
+    for (const p of busy) if (Math.hypot(x - p[0], y - p[1]) < 200) return false;
+    if (tl && ((x - tl.center[0]) / (tl.radii[0] + 120)) ** 2 + ((y - tl.center[1]) / (tl.radii[1] + 120)) ** 2 < 1) return false;
+    const v = dio.s(x, y, 0);
+    for (const b of boxes) if (v.x > b.min.x && v.x < b.max.x && v.z > b.min.z && v.z < b.max.z) return false;
+    return true;
+  };
+}
+function buildServiceVehicles() {
+  if (!dio || serviceList.length) return;
+  const boxes = [];
+  for (const e of ENLARGE) for (const id of e.ids) { const o = enlargeTarget(id); if (o) boxes.push(new THREE.Box3().setFromObject(o).expandByScalar(30)); }
+  const rail = scene.getObjectByName('rail-siding'); if (rail) boxes.push(new THREE.Box3().setFromObject(rail).expandByScalar(40));
+  const free = serviceFree(boxes), N = 240, taken = [];
+  for (const sv of SERVICE) {
+    let path = null;
+    search: for (let d = 0; d <= 900; d += 60) for (let a = 0; a < 12; a++) {
+      const cx = sv.near[0] + Math.cos(a * Math.PI / 6) * d, cy = sv.near[1] + Math.sin(a * Math.PI / 6) * d;
+      if (taken.some(([tx, ty]) => Math.hypot(cx - tx, cy - ty) < sv.r[0] + 220)) continue;
+      const pts = [];
+      for (let i = 0; i < N; i++) {
+        const t = i / N * Math.PI * 2, x = cx + Math.cos(t) * sv.r[0], y = cy + Math.sin(t) * sv.r[1];
+        if (!free(x, y)) continue search;
+        pts.push(dio.s(x, y, 0));
+      }
+      taken.push([cx, cy]); path = pts;
+      break;
+    }
+    if (!path) { console.warn('служебная машина ' + sv.id + ': свободного места для пути нет'); continue; }
+    const cum = [0];
+    for (let i = 1; i <= N; i++) cum.push(cum[i - 1] + path[i % N].distanceTo(path[i - 1]));
+    const o = serviceModel(sv.kind);
+    o.scale.setScalar(1.25);   // техника крупнее в 1,25 раза, как самосвалы
+    o.name = sv.id;
+    terrain.add(o);
+    addLabel(o, sv.name, { importance: 1, dy: 8 });
+    serviceList.push({ sv, o, path, cum, len: cum[N], s: (serviceList.length * 0.37) * cum[N], v: sv.kmh / 3.6 / 2 * SIM_SPEEDUP });
+  }
+}
+const _sp0 = new THREE.Vector3(), _sp1 = new THREE.Vector3();
+function updateServiceVehicles(dt) {
+  if (!serviceList.length) return;
+  for (const S of serviceList) {
+    S.s = (S.s + S.v * Math.min(dt, 0.1)) % S.len;
+    const N = S.path.length;
+    let i = 1; while (i < N && S.cum[i] < S.s) i++;
+    const a = S.path[(i - 1) % N], b = S.path[i % N], k = (S.s - S.cum[i - 1]) / Math.max(1e-6, S.cum[i] - S.cum[i - 1]);
+    _sp0.lerpVectors(a, b, k);
+    // курс — по хорде на 6 единиц вперёд (плавно на дугах)
+    let j = i, ahead = S.cum[i] - S.s; while (ahead < 6) { j++; ahead += S.path[j % N].distanceTo(S.path[(j - 1) % N]); }
+    _sp1.copy(S.path[j % N]);
+    const yaw = Math.atan2(_sp1.x - _sp0.x, _sp1.z - _sp0.z);
+    const o = S.o, L = S.sv && o.userData.size.length * o.scale.x / 2, W = o.userData.size.width * o.scale.x / 2;
+    const fx = Math.sin(yaw), fz = Math.cos(yaw), lx = fz, lz = -fx;
+    const h = (a, b) => dio.surfaceAt(_sp0.x + fx * L * a + lx * W * b, -(_sp0.z + fz * L * a + lz * W * b));
+    const hFL = h(1, 1), hFR = h(1, -1), hBL = h(-1, 1), hBR = h(-1, -1);
+    o.position.set(_sp0.x, (hFL + hFR + hBL + hBR) / 4, _sp0.z);
+    o.rotation.set(Math.asin(Math.max(-0.3, Math.min(0.3, ((hBL + hBR) - (hFL + hFR)) / (4 * L)))), yaw,
+      Math.asin(Math.max(-0.3, Math.min(0.3, ((hFL + hBL) - (hFR + hBR)) / (4 * W)))));
+  }
+}
+// Лёгкая пыль за гружёными самосвалами в «Обычном» (в «Высоком» — своя): облачка — одна InstancedMesh, к камере лицом
+let puffMesh = null, puffT = 0;
+const puffs = [], PUFF_MAX = 96;
+const _pm = new THREE.Matrix4(), _pp = new THREE.Vector3(), _ps = new THREE.Vector3(), _pprev = new WeakMap();
+function updatePuffs(dt) {
+  if (quality === 'high') { if (puffMesh) puffMesh.visible = false; return; }
+  if (!puffMesh) {
+    puffMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: glowTexture(THREE), color: 0xd9cba6,
+      transparent: true, opacity: 0.4, depthWrite: false }), PUFF_MAX);
+    puffMesh.name = 'truck-dust'; puffMesh.frustumCulled = false; puffMesh.raycast = () => {};
+    scene.add(puffMesh);
+  }
+  puffMesh.visible = true;
+  puffMesh.material.opacity = lighting === 'night' ? 0.16 : 0.4;
+  puffT += dt;
+  if (puffT > 0.3) {
+    puffT = 0;
+    for (const o of machineList) {
+      const id = o.userData.thingId || '';
+      if (id.indexOf(':truck-') < 0 || !(Number(val(id, 'payload', 0)) > 0) || !o.visible) continue;
+      if (o.position.distanceToSquared(camera.position) > 1200 * 1200) continue;   // издалека пыли не видно
+      const prev = _pprev.get(o); _pprev.set(o, o.position.clone());
+      if (!prev || prev.distanceTo(o.position) < 1.5 || prev.distanceTo(o.position) > 60) continue;   // стоит или скачок
+      if (puffs.length >= PUFF_MAX) puffs.shift();
+      const yaw = o.rotation.y, L = ((o.userData.size && o.userData.size.length) || 12) * (o.scale.x || 1) / 2;
+      puffs.push({ x: o.position.x - Math.sin(yaw) * L, y: o.position.y + 1.5, z: o.position.z - Math.cos(yaw) * L, age: 0 });
+    }
+  }
+  let n = 0;
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i]; p.age += dt;
+    const k = p.age / 2.2;
+    if (k >= 1) { puffs.splice(i, 1); continue; }
+    const size = 1 + 16 * Math.sin(Math.PI * k);   // раздувается и опадает почти до нуля — гаснет без прозрачности по каждой
+    _pp.set(p.x, p.y + 3 * k, p.z); _ps.set(size, size, size);
+    _pm.compose(_pp, camera.quaternion, _ps); puffMesh.setMatrixAt(n++, _pm);
+  }
+  puffMesh.count = n; puffMesh.instanceMatrix.needsUpdate = true;
+}
+// Облака: мягкие плоские облака вдали над степью (за пределами рудника, чтобы не закрывать его), медленно плывут
+let cloudMesh = null;
+const clouds = [];
+function cloudTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const x = c.getContext('2d');
+  let seed = 5; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (let i = 0; i < 16; i++) {
+    const cx = 40 + rnd() * 176, cy = 44 + rnd() * 40, r = 18 + rnd() * 30;
+    const gr = x.createRadialGradient(cx, cy, 0, cx, cy, r);
+    gr.addColorStop(0, 'rgba(255,255,255,0.75)'); gr.addColorStop(0.6, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = gr; x.fillRect(0, 0, 256, 128);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+let grassMesh, bushMesh, sleeperMesh;   // части фона, которые без видеокарты («Обычное») рисуются частично или не рисуются
+const _clM = new THREE.Matrix4(), _clQ = new THREE.Quaternion(), _clP = new THREE.Vector3(), _clS = new THREE.Vector3();
+function updateClouds(dt) {
+  // бюджет кадров без видеокарты («Обычное»): ковыль и шпалы не рисуются, кустов — 120 из 300
+  if (grassMesh === undefined) {
+    grassMesh = scene.getObjectByName('steppe-grass') || null;
+    bushMesh = scene.getObjectByName('steppe-bushes') || null;
+    sleeperMesh = scene.getObjectByName('rail-sleepers') || null;
+    if (bushMesh) bushMesh.userData.full = bushMesh.count;
+  }
+  const high = quality === 'high';
+  if (grassMesh) grassMesh.visible = high;
+  if (sleeperMesh) sleeperMesh.visible = high;
+  if (bushMesh) bushMesh.count = high ? bushMesh.userData.full : Math.min(120, bushMesh.userData.full);   // без видеокарты — часть куртин
+  if (!cloudMesh) {
+    const geo = new THREE.PlaneGeometry(1, 0.5); geo.rotateX(-Math.PI / 2);
+    cloudMesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: cloudTexture(), transparent: true, depthWrite: false, opacity: 0.9 }), 18);
+    cloudMesh.name = 'clouds'; cloudMesh.frustumCulled = false; cloudMesh.raycast = () => {};
+    let seed = 41; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 18; i++) {   // полосы севернее и южнее рудника (|z| ≥ 3000): ветер с запада не проносит их над ним
+      clouds.push({ x: -9000 + rnd() * 18000, z: (rnd() < 0.7 ? -1 : 1) * (3000 + rnd() * 5500), y: 900 + rnd() * 700, s: 700 + rnd() * 900 });
+    }
+    scene.add(cloudMesh);
+  }
+  cloudMesh.material.color.setHex(lighting === 'night' ? 0x3a4458 : 0xffffff);
+  const m = _clM, q = _clQ, p = _clP, s = _clS;
+  clouds.forEach((c, i) => {
+    c.x += dt * 4; if (c.x > 9500) c.x = -9500;   // ветер с запада, ≈ 4 единицы в секунду
+    m.compose(p.set(c.x, c.y, c.z), q, s.set(c.s, 1, c.s)); cloudMesh.setMatrixAt(i, m);
+  });
+  cloudMesh.instanceMatrix.needsUpdate = true;
+  updateCloudShadows(dt, m, q, p, s);
+}
+// Тени облаков на степи (видны с обычных видов): мягкие тёмные пятна плывут по ветру; над карьером не рисуются
+// (плоскость тени висела бы над уступами), ночью выключены
+let shadeMesh = null;
+const shades = [];
+function updateCloudShadows(dt, m, q, p, s) {
+  if (!dio) return;
+  if (!shadeMesh) {
+    const geo = new THREE.PlaneGeometry(1, 0.5); geo.rotateX(-Math.PI / 2);
+    shadeMesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: cloudMesh.material.map, color: 0x2a2418, transparent: true,
+      opacity: 0.16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), 9);
+    shadeMesh.name = 'cloud-shadows'; shadeMesh.frustumCulled = false; shadeMesh.raycast = () => {};
+    let seed = 77; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 9; i++) shades.push({ x: -3600 + rnd() * 7200, z: -2200 + rnd() * 4400, s: 500 + rnd() * 600 });
+    scene.add(shadeMesh);
+  }
+  // без видеокарты («Обычное») не рисуем: большие прозрачные плоскости — дорогая заливка для программной отрисовки
+  shadeMesh.visible = lighting !== 'night' && quality === 'high';
+  if (!shadeMesh.visible) return;
+  const pit = dio.pit, c0 = dio.s(pit.cx, pit.cy, 0), cA = dio.s(pit.cx + pit.a, pit.cy + pit.b, 0);
+  const ax = Math.abs(cA.x - c0.x) + 40, az = Math.abs(cA.z - c0.z) + 40;
+  shades.forEach((c, i) => {
+    c.x += dt * 4; if (c.x > 4200) c.x = -4200;
+    const r = c.s / 2, inPit = ((c.x - c0.x) / (ax + r)) ** 2 + ((c.z - c0.z) / (az + r * 0.5)) ** 2 < 1;
+    m.compose(p.set(c.x, 1.2, c.z), q, s.set(inPit ? 0 : c.s, 1, inPit ? 0 : c.s)); shadeMesh.setMatrixAt(i, m);
+  });
+  shadeMesh.instanceMatrix.needsUpdate = true;
+}
 // Пыль за едущими самосвалами (только «Высокое»): пул мягких спрайтов, гаснут за ~1,5 с
 const dust = [];
 let dustMat = null, dustT = 0;
@@ -1862,7 +2184,7 @@ let markerMesh = null;
 const _mm = new THREE.Matrix4(), _mq = new THREE.Quaternion(), _ms = new THREE.Vector3(), _mc = new THREE.Color();
 function markerColor(id) {
   const st = val(id, 'state', '');
-  if (st === 'down' || st === 'failed') return 0xd32f2f;
+  if (st === 'down' || st === 'failed') return colors.down;
   if (id.indexOf(':excavator-') >= 0) return 0xef7d1e;
   if (id.indexOf(':drill-') >= 0) return 0x4f8fd0;
   if (st === 'reserve') return 0xb8bec4;
@@ -2206,6 +2528,202 @@ function animateExcavators(dt) {
 }
 
 // для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
+// Здания крупнее для наглядности (в 1,6–1,8 раза; подпись в углу и «?» об этом говорят): каждое растёт от опорной точки —
+// дробилка от места разгрузки самосвалов (воронка остаётся у их края), фабрика от восточного торца (там конец конвейера
+// и склад), склад глины и заправка от своих подъездов, остальные — от центра. Мельница и флотация — точки на крыше
+// главного корпуса: двигаются и растут вместе с ним. Проверка (?debug=1): __buildingConflicts() — пересечения нет.
+const ENLARGE = [
+  { ids: ['crusher-01'], k: 1.6, pivot: 'node:crusher' },
+  { ids: ['plant-sulphide', 'sag-mill-01', 'flotation-01'], k: 1.6, pivot: [-1308, 470] },
+  { ids: ['plant-clay', '#clay-thickener'], k: 1.6, pivot: [-231, 484] },   // от северо-западного угла: к северу и западу — дороги и стоянка
+  { ids: ['stockpile-coarse'], k: 1.6, pivot: null },
+  { ids: ['stockpile-clay'], k: 1.6, pivot: 'node:stockpile-clay' },
+  { ids: ['power-grid'], k: 1.8, pivot: null },
+  { ids: ['fuel'], k: 1.6, pivot: null, place: 'fuel-station' },   // крупная — на ближайшее к узлу свободное место (placeFree)
+];
+function enlargeTarget(id) {
+  if (id === 'fuel') return fuelStationObj;
+  if (id[0] === '#') return scene.getObjectByName(id.slice(1)) || null;   // окружение схемы (не двойник)
+  return buildingRoot(NS + ':' + id);
+}
+function enlargeBuildings() {
+  enlargeAll();
+  const plant = buildingRoot(NS + ':plant-sulphide'), old = scene.getObjectByName('fence');
+  if (plant && old && dio) {
+    const b = new THREE.Box3().setFromObject(plant), sub = buildingRoot(NS + ':power-grid');
+    const sb = sub ? new THREE.Box3().setFromObject(sub) : null;
+    const x0 = b.min.x - 20, x1 = Math.min(b.max.x + 20, sb ? sb.min.x - 8 : Infinity), z0 = b.min.z - 15, z1 = b.max.z + 60;   // юг — со сгустителями
+    const parent = old.parent; parent.remove(old);
+    const f = fence(THREE, dio.s, [[x0, -z1], [x1, -z1], [x1, -z0], [x0, -z0]]);
+    f.name = 'fence'; parent.add(f);
+  }
+}
+// Заправка крупнее не помещается на прежнем месте (там полотно дороги к отвалу, рядом конвейер и стоянка): ставим её
+// на ближайшее к её узлу свободное место (по спирали, в двух поворотах) — без дорог (кроме своего подъезда), конвейера,
+// стоянки, других зданий и карьера
+function placeFree(o, nodeName) {
+  const nd = dio && dio.D.nodes[nodeName]; if (!nd) return;
+  const c0 = dio.s(nd[0], nd[1], 0), R = 420;
+  const box = new THREE.Box3().setFromObject(o), sx = box.max.x - box.min.x, sz = box.max.z - box.min.z;
+  const ox = o.position.x - (box.min.x + box.max.x) / 2, oz = o.position.z - (box.min.z + box.max.z) / 2;   // центр габарита от точки модели
+  const hw = (dio.roadHalf || 14) + 3, roadPts = [], cvPts = [], park = [], others = [];
+  const add = (arr, x, z) => { if (Math.hypot(x - c0.x, z - c0.z) < R) arr.push([x, z]); };
+  for (const ed of dio.edges) {
+    if (ed.from === nodeName || ed.to === nodeName) continue;   // свой подъезд к заправке — можно
+    const pts = ed.path || [ed.sa, ed.sb];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const n = Math.max(1, Math.ceil(Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) / 3));
+      for (let k = 0; k <= n; k++) { const v = dio.s(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k / n, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k / n, 0); add(roadPts, v.x, v.z); }
+    }
+  }
+  const cv = (geometry.objects || []).find((q) => q.kind === 'conveyor');
+  if (cv) {
+    const P = cv.path.map((q) => toScene(q[0], q[1], 0));
+    for (let i = 0; i + 1 < P.length; i++) { const n = Math.ceil(P[i].distanceTo(P[i + 1]) / 3); for (let k = 0; k <= n; k++) add(cvPts, P[i].x + (P[i + 1].x - P[i].x) * k / n, P[i].z + (P[i + 1].z - P[i].z) * k / n); }
+  }
+  for (let k = 0; k < PARK_SLOTS.length; k++) { const sp = parkingSpot(k); if (sp) { const v = dio.s(sp.S[0], sp.S[1], 0); add(park, v.x, v.z); } }
+  for (const e of ENLARGE) for (const id of e.ids) { if (id === 'fuel') continue; const t = enlargeTarget(id); if (t) others.push(new THREE.Box3().setFromObject(t)); }
+  const pit = dio.pit, p0 = dio.s(pit.cx, pit.cy, 0), pa = dio.s(pit.cx + pit.a, pit.cy + pit.b, 0);
+  const ax = Math.abs(pa.x - p0.x) + 30, az = Math.abs(pa.z - p0.z) + 30;
+  const ok = (cx, cz, w, d) => {
+    const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
+    const near = (pts, m) => pts.some(([x, z]) => x > x0 - m && x < x1 + m && z > z0 - m && z < z1 + m);
+    if (near(roadPts, hw) || near(cvPts, 8) || near(park, 10)) return false;
+    if (others.some((b) => x0 < b.max.x + 6 && x1 > b.min.x - 6 && z0 < b.max.z + 6 && z1 > b.min.z - 6)) return false;
+    for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) if (((x - p0.x) / ax) ** 2 + ((z - p0.z) / az) ** 2 < 1) return false;
+    return true;
+  };
+  for (let r = 0; r <= 300; r += 6) for (let a = 0; a < 24; a++) for (const rot of [0, Math.PI / 2]) {
+    const cx = c0.x + Math.cos(a * Math.PI / 12) * r, cz = c0.z + Math.sin(a * Math.PI / 12) * r;
+    if (!ok(cx, cz, rot ? sz : sx, rot ? sx : sz)) continue;
+    const c = Math.cos(rot), sn = Math.sin(rot);
+    o.rotation.y += rot;
+    o.position.x = cx + ox * c + oz * sn; o.position.z = cz - ox * sn + oz * c;   // поворот вокруг вертикали
+    o.position.y = dio.surfaceAt(o.position.x, -o.position.z);
+    return;
+  }
+  console.warn('заправка: свободного места рядом с узлом нет — стоит на прежнем месте');
+}
+function enlargeAll() {
+  for (const e of ENLARGE) {
+    let pv = null;
+    if (typeof e.pivot === 'string') { const n = dio && dio.D.nodes[e.pivot.slice(5)]; if (n) { const v = dio.s(n[0], n[1], 0); pv = [v.x, v.z]; } }
+    else if (e.pivot) pv = e.pivot;
+    for (const id of e.ids) {
+      const o = enlargeTarget(id);
+      if (!o || o.userData.enlarged) continue;
+      o.userData.enlarged = e.k;
+      o.userData.box0 = new THREE.Box3().setFromObject(o);   // габарит до увеличения — для проверки «новых» пересечений
+      o.scale.multiplyScalar(e.k);
+      if (pv) { o.position.x = pv[0] + (o.position.x - pv[0]) * e.k; o.position.z = pv[1] + (o.position.z - pv[1]) * e.k; }
+      if (e.shift) { o.position.x += e.shift[0]; o.position.z += e.shift[1]; }
+      if (e.place) placeFree(o, e.place);
+    }
+  }
+}
+// Кусты, ковыль и камни степи не стоят под увеличенными зданиями и на ж/д ветке (здания растут после сборки степи)
+function clearUnderBuildings() {
+  const boxes = [];
+  for (const e of ENLARGE) for (const id of e.ids) { const o = enlargeTarget(id); if (o) boxes.push(new THREE.Box3().setFromObject(o).expandByScalar(8)); }
+  const rail = scene.getObjectByName('rail-siding'); if (rail) boxes.push(new THREE.Box3().setFromObject(rail).expandByScalar(6));
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (const name of ['steppe-bushes', 'steppe-grass', 'rocks']) {
+    const inst = scene.getObjectByName(name); if (!inst) continue;
+    let n = 0;
+    for (let i = 0; i < inst.count; i++) {
+      inst.getMatrixAt(i, m); p.setFromMatrixPosition(m);
+      if (boxes.some((b) => p.x > b.min.x && p.x < b.max.x && p.z > b.min.z && p.z < b.max.z)) { inst.setMatrixAt(i, zero); n++; }
+    }
+    if (n) inst.instanceMatrix.needsUpdate = true;
+  }
+}
+// для проверок: пересечения увеличенных зданий с дорогами, конвейером, стоянкой, прудом, карьером и друг с другом
+dbgWin.__buildingConflicts = () => {
+  const out = [], boxes = {}, box = new THREE.Box3();
+  for (const e of ENLARGE) for (const id of e.ids) {
+    if (/^(sag-mill|flotation)/.test(id)) continue;
+    const o = enlargeTarget(id); if (!o) continue;
+    box.setFromObject(o); const b0 = o.userData.box0 || box;
+    boxes[id] = { x0: box.min.x + 2, x1: box.max.x - 2, z0: box.min.z + 2, z1: box.max.z - 2,
+      old: { x0: b0.min.x + 2, x1: b0.max.x - 2, z0: b0.min.z + 2, z1: b0.max.z - 2 } };
+  }
+  const inBox = (b, x, z, m) => x > b.x0 - m && x < b.x1 + m && z > b.z0 - m && z < b.z1 + m;
+  const inside = (b, x, z, m = 0) => inBox(b, x, z, m) && !inBox(b.old, x, z, m);   // только новое: до увеличения там не было
+  const own = { 'crusher-01': 'crusher', fuel: 'fuel-station', 'stockpile-clay': 'stockpile-clay' };
+  // дороги: точки по трассам рёбер схемы (кроме конца у своего подъезда)
+  for (const ed of dio.edges) {
+    const pts = ed.path || [ed.sa, ed.sb];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const L = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]), step = 3 / Math.max(L, 3);
+      for (let t = 0; t < 1; t += step) {
+      const sx = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, sy = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t;
+      const v = dio.s(sx, sy, 0);
+      for (const [id, b] of Object.entries(boxes)) {
+        if (!inside(b, v.x, v.z, dio.roadHalf || 14)) continue;   // полотно, а не только ось
+        const nd = own[id] && dio.D.nodes[own[id]];
+        if (nd) { const nv = dio.s(nd[0], nd[1], 0); if (Math.hypot(v.x - nv.x, v.z - nv.z) < 26) continue; }
+        out.push('дорога ' + ed.from + '>' + ed.to + ' в ' + id + ' (' + v.x.toFixed(0) + ', ' + v.z.toFixed(0) + ')');
+      }
+      }
+    }
+  }
+  // конвейер (кроме концов: начало у дробилки, конец над складом)
+  const cv = (geometry.objects || []).find((o) => o.kind === 'conveyor');
+  if (cv) {
+    const P = cv.path.map((p) => toScene(p[0], p[1], 0));
+    for (let i = 0; i + 1 < P.length; i++) for (let t = 0; t <= 1; t += 0.02) {
+      const x = P[i].x + (P[i + 1].x - P[i].x) * t, z = P[i].z + (P[i + 1].z - P[i].z) * t;
+      if (Math.hypot(x - P[0].x, z - P[0].z) < 20 || Math.hypot(x - P[P.length - 1].x, z - P[P.length - 1].z) < 40) continue;
+      for (const [id, b] of Object.entries(boxes)) if (inside(b, x, z)) out.push('конвейер в ' + id + ' (' + x.toFixed(0) + ', ' + z.toFixed(0) + ')');
+    }
+  }
+  // стоянка у заправки
+  for (let k = 0; k < PARK_SLOTS.length; k++) {
+    const sp = parkingSpot(k); if (!sp) continue;
+    const v = dio.s(sp.S[0], sp.S[1], 0);
+    for (const [id, b] of Object.entries(boxes)) if (inside(b, v.x, v.z, 6)) out.push('стоянка ' + k + ' в ' + id);
+  }
+  // пруд хвостохранилища и карьер (по углам и серединам сторон)
+  const tl = dio.D.extra && dio.D.extra.tailings, pit = dio.pit;
+  for (const [id, b] of Object.entries(boxes)) {
+    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x0, b.z1], [b.x1, b.z1], [(b.x0 + b.x1) / 2, b.z0], [(b.x0 + b.x1) / 2, b.z1], [b.x0, (b.z0 + b.z1) / 2], [b.x1, (b.z0 + b.z1) / 2]]) {
+      if (inBox(b.old, x, z, 0)) continue;
+      const c = dio.s(0, 0, 0);
+      if (tl) { const t0 = dio.s(tl.center[0], tl.center[1], 0), r0 = dio.s(tl.center[0] + tl.radii[0], tl.center[1] + tl.radii[1], 0);
+        const rx = Math.abs(r0.x - t0.x), rz = Math.abs(r0.z - t0.z);
+        if (((x - t0.x) / rx) ** 2 + ((z - t0.z) / rz) ** 2 < 1) out.push('пруд хвостохранилища у ' + id); }
+      if (pit) { const p0 = dio.s(pit.cx, pit.cy, 0), pr = dio.s(pit.cx + pit.a, pit.cy + pit.b, 0);
+        const ax = Math.abs(pr.x - p0.x), az = Math.abs(pr.z - p0.z);
+        if (((x - p0.x) / ax) ** 2 + ((z - p0.z) / az) ** 2 < 1) out.push('карьер у ' + id); }
+      void c;
+    }
+  }
+  // здания друг с другом
+  const ids = Object.keys(boxes);
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+    const a = boxes[ids[i]], b = boxes[ids[j]];
+    const ov = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0;
+    if (ov(a, b) && !ov(a.old, b.old)) out.push('здания ' + ids[i] + ' и ' + ids[j]);
+  }
+  return [...new Set(out)];
+};
+dbgWin.__service = () => serviceList.map((S) => ({ id: S.sv.id, x: +S.o.position.x.toFixed(1), y: +S.o.position.y.toFixed(1), z: +S.o.position.z.toFixed(1), len: Math.round(S.len) }));
+// для проверок производительности: скрыть объекты по имени (или префиксу*) и сменить тональное отображение
+dbgWin.__hide = (names, on = false) => { let n = 0; scene.traverse((o) => { if (names.some((x) => x.endsWith('*') ? o.name.startsWith(x.slice(0, -1)) : o.name === x)) { o.visible = on; n++; } }); return n; };
+dbgWin.__tone = (t) => { renderer.toneMapping = THREE[t]; scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => { m.needsUpdate = true; }); }); };
+dbgWin.__parkSpots = () => PARK_SLOTS.map((_, k) => { const sp = parkingSpot(k); const v = sp && dio.s(sp.S[0], sp.S[1], 0); return v ? [Math.round(v.x), Math.round(v.z)] : null; });
+// для проверок: габариты зданий в сцене (x/z) — подбор увеличения зданий
+dbgWin.__buildingBoxes = () => {
+  const out = {}, box = new THREE.Box3();
+  for (const id of ['crusher-01', 'plant-sulphide', 'plant-clay', 'stockpile-coarse', 'stockpile-clay', 'power-grid', 'sag-mill-01', 'flotation-01']) {
+    const o = buildingRoot(NS + ':' + id); if (!o) continue;
+    box.setFromObject(o);
+    out[id] = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], y: +box.max.y.toFixed(1),
+      pos: [+o.position.x.toFixed(1), +o.position.z.toFixed(1)], k: +o.scale.x.toFixed(2) };
+  }
+  if (fuelStationObj) { box.setFromObject(fuelStationObj); out.fuel = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], pos: [+fuelStationObj.position.x.toFixed(1), +fuelStationObj.position.z.toFixed(1)] }; }
+  return out;
+};
 dbgWin.__screenOf = (thingId) => {
   const o = byThing(thingId); if (!o) return null;
   o.getWorldPosition(_v); _v.y += 3; _v.project(camera);
@@ -2324,6 +2842,18 @@ function sampleMotion(now) {
       row.push(+_mb.min.y.toFixed(2), +bx.toFixed(2), +bz.toFixed(2), +dio.surfaceAt(bx, -bz).toFixed(2));
     }
     ms.push(row);
+  }
+  for (const S of serviceList) {   // служебные машины: те же поля, состояние «service»
+    const o = S.o, L = o.userData.size.length * o.scale.x / 2, W = o.userData.size.width * o.scale.x / 2;
+    const yaw = o.rotation.y, fx = Math.sin(yaw), fz = Math.cos(yaw), lx = fz, lz = -fx;
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, b] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const x = o.position.x + fx * L * a + lx * W * b, z = o.position.z + fz * L * a + lz * W * b;
+      const d = o.position.y - Math.sin(o.rotation.x) * L * a + Math.sin(o.rotation.z) * W * b - dio.surfaceAt(x, -z);
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    ms.push([S.sv.id, +o.position.x.toFixed(2), +o.position.y.toFixed(2), +o.position.z.toFixed(2), +yaw.toFixed(4),
+      +L.toFixed(2), +W.toFixed(2), 'service', +lo.toFixed(2), +hi.toFixed(2), +o.position.x.toFixed(2), +o.position.z.toFixed(2)]);
   }
   const rec = { t: +now.toFixed(1), f: frameNo, sim: val(NS + ':mine', 'sim_time', ''), m: ms };
   if (now - motionLog.pilesAt > 5000) { motionLog.pilesAt = now; rec.piles = muckPiles(); }
@@ -2456,6 +2986,9 @@ function initGuide() {
   startSSE();
   await loadLayers();
   applySchemaScales();
+  enlargeBuildings();
+  clearUnderBuildings();
+  buildServiceVehicles();
   renderPanel();          // значки сценариев — после регистрации объектов слоями
   updateFollowButton();
   markViewButton('all');

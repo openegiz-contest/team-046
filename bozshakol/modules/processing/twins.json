@@ -411,7 +411,7 @@
    "kind": "crusher",
    "_isType": false,
    "_parents": "kz.bozshakol:plant-sulphide",
-   "type": "гирационная",
+   "crusher_type": "гирационная",
    "rated_tph": 4500,
    "bunker_t": 900,
    "downstream": "kz.bozshakol:conveyor-01",

@@ -82,7 +82,7 @@ export function createModels(THREE, colors) {
   const C = {
     sulphide: colors.sulphide ?? 0x3d8f6e, clay: colors.clay ?? 0xc8722a, waste: colors.waste ?? 0x8a8a8a,
     down: colors.down ?? 0xd32f2f,
-    truck: 0xf5bd26, reserve: 0xdde0e3, paintDown: 0xd8463a,        // жёлтый корпус Cat; резерв; авария
+    truck: 0xf5bd26, reserve: 0xdde0e3, paintDown: colors.down ?? 0xd1236a,   // жёлтый корпус Cat; резерв; авария — цвет тревоги
     cab: 0xf8f7f2, glass: 0x2d4a66, tyre: 0x2a2b2e, rim: 0xe4e5e2, hub: 0x9ca1a7,
     dark: 0x3b3f45, black: 0x24262a, rail: 0xf0f0ec, steel: 0x6c737b, chrome: 0xdde2e6,
     lamp: 0xfff2bd, lampOff: 0xd8d2bb, tail: 0xc8352b,
@@ -97,7 +97,8 @@ export function createModels(THREE, colors) {
     belt: 0x2c2f33, ore: 0x6b7a5a, water: 0x6f97b3, waterLight: 0x8fb2c8, trafo: 0x7d8a97, porcelain: 0x8e5b3a,
     accent: 0x2f7fc1, safety: 0xf2c230, grating: 0x8a9097,
     dump: colors.dump ?? 0x9a9a9a, dumpDark: 0x868686, pile: 0x7d6f5c, pole: 0x8d949b, wire: 0x3a3a3a,
-    green: 0x36d06e, amber: 0xffb526, red: 0xff3b30, beaconOff: 0x9aa0a6,
+    // маячки: работает — бирюзовый, внимание — янтарный, тревога — пурпурно-красный (различимы и при дальтонизме)
+    green: 0x22b8a6, amber: 0xffb526, red: 0xff2d7a, beaconOff: 0x9aa0a6,
   };
 
   // ---------------------------------------------------------------- ночная смена: подсвеченные окна корпусов

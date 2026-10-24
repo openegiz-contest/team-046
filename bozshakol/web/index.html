@@ -15,7 +15,7 @@
     <canvas id="scene"></canvas>
     <div id="labels"></div>
     <div id="scene-notes">
-      <span id="scale-note">Схема рудника: расстояния сжаты в 2 раза, здания — в реальном размере, техника крупнее в 1,25 раза. Реальная местность — кнопка «Фото местности»</span>
+      <span id="scale-note">Схема рудника: расстояния сжаты в 2 раза, здания показаны крупнее для наглядности, техника крупнее в 1,25 раза. Реальная местность — кнопка «Фото местности»</span>
     </div>
     <!-- Подсказка по клавишам (controls.js): кнопка «?», клавиши ? или H -->
     <button id="help-hint" type="button" title="Показать клавиши управления">? — клавиши</button>
@@ -37,7 +37,8 @@
         <tr><td><kbd>?</kbd> / <kbd>H</kbd></td><td>показать или скрыть эту подсказку</td></tr>
       </table>
       <div class="muted">Мышь: левая кнопка — поворот (можно смотреть и вниз, и в небо), правая — сдвиг, колесо — приближение.
-        Камера не опускается ниже земли, в остальном летайте куда угодно — и из карьера тоже.</div>
+        Камера не опускается ниже земли, в остальном летайте куда угодно — и из карьера тоже.
+        Здания показаны крупнее для наглядности (в 1,6–1,8 раза), расстояния — сжаты в 2 раза.</div>
     </div>
   </div>
 
@@ -102,7 +103,7 @@
       </section>
 
       <!-- остальное — в свёрнутых разделах (щелчок по заголовку), у каждого «?» -->
-      <details class="more">
+      <details class="more" open>
         <summary>Сценарии «что если» <button class="q" type="button" data-q="scenarios" aria-label="Что это?">?</button></summary>
         <div id="scenarios"></div>
       </details>
@@ -129,16 +130,16 @@
         <div><i style="background:#ffffff;border:1px solid #999"></i> порожний</div>
         <div><i style="background:#ffffff;border:1px solid #999"></i> на заправке (refueling)</div>
         <div><i style="background:#d5d8dc;border:1px solid #999"></i> в резерве (reserve)</div>
-        <div><i style="background:#d32f2f"></i> авария (down)</div>
+        <div><i style="background:#d1236a"></i> авария (down)</div>
         <div class="legend-title">Оборудование</div>
         <div><i style="background:#7d8692"></i> работает</div>
         <div><i style="background:#7d8692;opacity:.55"></i> простой (нет руды) — отметка в подписи</div>
-        <div><i style="background:#d32f2f"></i> остановлено / не принимает</div>
+        <div><i style="background:#d1236a"></i> остановлено / не принимает</div>
         <div><i style="background:#9aa5b3"></i> ТО мельницы — отметка «ТО» в подписи</div>
         <div><i style="background:#f2a21b"></i> экскаватор (красный — сломан)</div>
         <div class="legend-title">Карьер и дороги</div>
         <div><i style="background:#d9cfae;border:1px solid #4a3f2e"></i> съезд (тёмная обводка)</div>
-        <div><i style="background:#d32f2f;height:4px"></i> дорога закрыта</div>
+        <div><i style="background:#d1236a;height:4px"></i> дорога закрыта</div>
         <div><i style="background:#dcc08e"></i> берма (площадка уступа)</div>
         <div><i style="background:#8f6a44"></i> стенка уступа</div>
         <div><i style="background:#a8a27e"></i> дно карьера</div>
@@ -206,7 +207,7 @@
       <ol>
         <li><b>Осмотритесь.</b> Мышь или клавиши W/A/S/D, Q/E, R/F; виды 1–5 —
           <a href="#" data-view-go="all">весь рудник</a>, <a href="#" data-view-go="pit">карьер</a>,
-          <a href="#" data-view-go="crusher">дробилка</a>, <a href="#" data-view-go="plants">фабрики</a>, <a href="#" data-view-go="top">сверху</a>. Это схема рудника: расстояния сжаты в 2 раза, здания — в реальном размере; колесо мыши — плавное приближение,
+          <a href="#" data-view-go="crusher">дробилка</a>, <a href="#" data-view-go="plants">фабрики</a>, <a href="#" data-view-go="top">сверху</a>. Это схема рудника: расстояния сжаты в 2 раза, здания показаны крупнее для наглядности; колесо мыши — плавное приближение,
           двойной клик по объекту — облёт, Esc — выход; реальная местность на спутниковом снимке — кнопка «Фото местности».</li>
         <li><b>Кликните самосвал</b> — справа откроется карточка с живыми данными двойника (груз, скорость, топливо);
           «Следовать за самосвалом» — камера пойдёт за ним, голубая линия покажет его маршрут.</li>
