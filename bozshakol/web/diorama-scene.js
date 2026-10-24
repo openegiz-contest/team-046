@@ -43,7 +43,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const outer = new THREE.Shape();
   outer.moveTo(-FAR, -FAR); outer.lineTo(FAR, -FAR); outer.lineTo(FAR, FAR); outer.lineTo(-FAR, FAR); outer.closePath();
   const farHole = new THREE.Path();
-  farHole.absellipse(pit.cx, pit.cy, pit.a - 8, pit.b - 8, 0, Math.PI * 2, true, 0);   // и под выходом съезда из карьера
+  farHole.absellipse(pit.cx, pit.cy, pit.a - 3, pit.b - 3, 0, Math.PI * 2, true, 0);
   outer.holes.push(farHole);
   const far = new THREE.Mesh(new THREE.ShapeGeometry(outer, 160), new THREE.MeshLambertMaterial({ color: GROUND }));
   far.rotation.x = -Math.PI / 2; far.position.y = -1.5; far.receiveShadow = true; far.name = 'diorama-far';
@@ -468,7 +468,9 @@ function rampBands(THREE, dio, colorAt) {
 export const JUNCTION_R = 34;
 export function junctionPads(dio) {
   const out = [];
+  const OWN_PAD = new Set(['crusher', 'stockpile-clay', 'dump-waste-1', 'fuel-station']);   // у пунктов — свои площадки
   for (const [node, p] of Object.entries(dio.D.nodes)) {
+    if (OWN_PAD.has(node)) continue;
     const inside = dio.schemaInset(p[0], p[1]) >= 0;
     if (inside && (p[2] || 0) > -dio.pit.depth + 1) continue;   // в карьере — только на дне
     const dirs = [];
@@ -531,8 +533,8 @@ export function roadRibbons(THREE, dio) {
       for (let k = 0; k <= N; k++) {
         const a = k / N * Math.PI * 2, dx = Math.sin(a), dy = Math.cos(a);
         let r = rad;
-        const off = (x, y) => (inside ? Math.abs(dio.surfaceAt(x, y) - z0) > 0.8 : dio.schemaInset(x, y) >= -2);
-        while (r > 2 && off(cx + dx * r, cy + dy * r)) r -= 2;   // вне карьера — до бровки, на дне — по ровному
+        const off = (x, y) => (inside ? Math.abs(dio.surfaceAt(x, y) - z0) > 0.8 : dio.schemaInset(x + dx * 3, y + dy * 3) >= 0);
+        while (r > 2 && off(cx + dx * r, cy + dy * r)) r -= 2;   // вне карьера — до бровки (запас 3), на дне — по ровному
         const x = cx + dx * r, y = cy + dy * r;
         rim.push([x, dio.surfaceAt(x, y) + lift, -y]);
       }

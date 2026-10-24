@@ -75,10 +75,12 @@ export function init(ctx) {
       let i0 = 0, t0 = 0;
       if (GAL > 0) {
         const s0 = ctx.toScene(o.path[0][0], o.path[0][1], 0);
+        const far = (i, t) => { const [x0, y0] = o.path[i], [x1, y1] = o.path[i + 1], q = ctx.toScene(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 0); return Math.hypot(q.x - s0.x, q.z - s0.z); };
         search: for (let i = 0; i + 1 < o.path.length; i++) for (let k = 1; k <= 40; k++) {
-          const t = k / 40, [x0, y0] = o.path[i], [x1, y1] = o.path[i + 1];
-          const q = ctx.toScene(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 0);
-          if (Math.hypot(q.x - s0.x, q.z - s0.z) >= GAL) { i0 = i; t0 = t; break search; }
+          if (far(i, k / 40) < GAL) continue;
+          let lo = (k - 1) / 40, hi = k / 40;
+          for (let it = 0; it < 24; it++) { const m = (lo + hi) / 2; if (far(i, m) >= GAL) hi = m; else lo = m; }
+          i0 = i; t0 = hi; break search;
         }
       }
       const P = (i, t) => { const [x0, y0, z0] = o.path[i], [x1, y1, z1] = o.path[i + 1]; return [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t]; };
@@ -109,6 +111,16 @@ export function init(ctx) {
       }
       const [xe, ye, ze] = o.path[o.path.length - 1];
       pts.push(ctx.toScene(xe, ye, Math.max(ze, ctx.groundAt(xe, ye))));
+      // точка трассы у самой реальной дороги переносится в схеме на дорогу, а не на трассу: такие точки уходят в сторону
+      // от прямой между соседями — без них лента не делает зигзаг посреди эстакады
+      for (let pass = 0, cut = 1; pass < 8 && cut; pass++) {   // подряд могут уйти две-три точки — повторяем, пока убираются
+        cut = 0;
+        for (let i = pts.length - 2; i >= 3; i--) {
+          const a = pts[i - 1], b = pts[i + 1], p = pts[i], vx = b.x - a.x, vz = b.z - a.z, L2 = vx * vx + vz * vz || 1;
+          const t = Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.z - a.z) * vz) / L2));
+          if (Math.hypot(p.x - a.x - vx * t, p.z - a.z - vz * t) > 2.5) { pts.splice(i, 1); cut++; }
+        }
+      }
       // эстакада: где трасса проходит над дорогой (лента ближе half + 5 к её оси — над полотном или обочиной), лента
       // поднята с просветом не меньше двух высот самосвала (ctx.truckHeight); подъём и спуск — плавно вдоль трассы
       // (RAMP_U единиц пути); стойки — не ближе half + 4 к оси дороги

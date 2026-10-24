@@ -3172,6 +3172,7 @@ function holeScan(o = {}) {
   const keep = { bg: scene.background, fog: scene.fog }, hidden = [];
   scene.background = new THREE.Color(0xff00ff); scene.fog = null;
   scene.traverse((q) => { if (q.visible && (q === cloudMesh || q.isSprite || q.isPoints)) { q.visible = false; hidden.push(q); } });
+  try {   // сцена возвращается как была и при ошибке
   const { pit } = dio, rc = new THREE.Raycaster(), ndc = new THREE.Vector2();
   const views = [];
   for (const [az, el] of [[0, 90], [0, 55], [90, 55], [180, 55], [270, 55], [45, 30], [135, 30], [225, 30], [315, 30]]) views.push({ name: `сетка: азимут ${az}°, наклон ${el}°`, az, el });
@@ -3221,10 +3222,13 @@ function holeScan(o = {}) {
     }
     res.push(item);
   }
-  scene.background = keep.bg; scene.fog = keep.fog;
-  for (const q of hidden) q.visible = true;
-  rt.dispose();
   return res;
+  } finally {
+    scene.background = keep.bg; scene.fog = keep.fog;
+    for (const q of hidden) q.visible = true;
+    renderer.setRenderTarget(null);
+    rt.dispose();
+  }
 }
 
 // Облёт: двойной клик по объекту — камера летит к нему и вращается вокруг; Esc, виды или перетаскивание — выход

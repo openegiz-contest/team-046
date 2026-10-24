@@ -45,7 +45,7 @@ export function initKeyboard(opts) {
   const groundY = (sx, sz) => (o.groundY ? o.groundY(sx, sz) : o.groundAt(sx, -sz) * VZ);
   const bnd = () => (typeof o.bounds === 'function' ? o.bounds() : o.bounds);
   const pressed = new Set();                          // зажатые клавиши (e.code)
-  // сглаженные скорости: vx, vz — в сцене, м/с; rot — рад/с; dolly — 1/с
+  // сглаженные скорости: vx, vz — в сцене, м/с; dolly — 1/с
   const vel = { x: 0, y: 0, z: 0, dolly: 0 };
   const help = makeHelp();
 
