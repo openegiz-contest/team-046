@@ -145,6 +145,7 @@ function buildMuckpile(ctx, ore, dim, level, seed, shape) {
 
 // Дороги из geometry.json (все рёбра графа) отрезками в плоскости сцены: насыпь не должна заходить на полотно.
 let roadSegs = null;
+const ROAD_SAMPLES = 24;   // точек на ребро дороги при проверке, не легла ли насыпь на полотно
 function roadSegments(ctx) {
   if (roadSegs) return roadSegs;
   roadSegs = [];
@@ -153,8 +154,13 @@ function roadSegments(ctx) {
     const a = nodes[e.from], b = nodes[e.to];
     if (!a || !b) continue;
     if (/^face-/.test(e.from) || /^face-/.test(e.to)) continue;       // подъезд к самому забою: машина стоит на его конце, насыпь лежит за ней
-    const pa = ctx.toScene(a[0], a[1], a[2]), pb = ctx.toScene(b[0], b[1], b[2]);
-    roadSegs.push([pa.x, pa.z, pb.x, pb.z]);
+    // ребро — по точкам вдоль него: в схеме съезд идёт спиралью, а не по прямой между узлами (насыпь не ляжет на полотно)
+    let prev = null;
+    for (let k = 0; k <= ROAD_SAMPLES; k++) {
+      const t = k / ROAD_SAMPLES, p = ctx.toScene(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+      if (prev) roadSegs.push([prev.x, prev.z, p.x, p.z]);
+      prev = p;
+    }
   }
   return roadSegs;
 }
@@ -239,6 +245,8 @@ export function init(ctx) {
       const patch = new THREE.Group();
       patch.position.copy(ctx.toScene(x, y, gz + HEAP_LIFT));
       const heap = new THREE.Group();
+      heap.name = 'muckpile';   // насыпь развала (по имени её находит проверка движения core/tools/motion_check)
+      heap.userData.face = o.id;
       heap.position.copy(patch.position);
       ctx.group.add(heap);
       ctx.group.add(patch);

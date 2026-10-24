@@ -90,7 +90,34 @@ PY
 ' "$missing" | wc -w)"
   fi
   if [ "$missing_n" = 0 ]; then ok "все $total двойников $NS есть в Ditto"; else bad "нет двойников ($missing_n): $missing"; fi
-  if [ "$stale_n" = 0 ]; then ok "все двойники обновлялись за последние ${FRESH_S} с"; else bad "не обновлялись больше ${FRESH_S} с ($stale_n): $stale"; fi
+  # Поисковый индекс Ditto под нагрузкой может отставать: «застывшие» по поиску двойники перепроверяем
+  # напрямую (чтение двойника по thingId) с тем же порогом. Ошибка — только если двойник застыл и там;
+  # если Ditto напрямую не ответил — остаётся то, что увидено в поиске
+  lag=""; still_direct=""; still_search=""
+  for t in $stale; do
+    m="$(curl -s --max-time 10 -u "$AUTH" "$DITTO/api/2/things/$t?fields=_modified")"
+    age="$(python3 -c '
+import json, sys, datetime
+try:
+    m = json.loads(sys.argv[1])["_modified"]
+    t = datetime.datetime.fromisoformat(m.replace("Z", "+00:00"))
+    print(int((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds()))
+except Exception:
+    print(-1)' "$m")"
+    if [ "$age" -lt 0 ]; then still_search="$still_search $t"
+    elif [ "$age" -gt "$FRESH_S" ]; then still_direct="$still_direct $t"
+    else lag="$lag $t"; fi
+  done
+  nd="$(printf '%s\n' $still_direct | grep -c .)"; ns="$(printf '%s\n' $still_search | grep -c .)"; nl="$(printf '%s\n' $lag | grep -c .)"
+  if [ "$nd" = 0 ] && [ "$ns" = 0 ]; then
+    if [ "$nl" = 0 ]; then ok "все двойники обновлялись за последние ${FRESH_S} с"
+    else ok "все двойники обновлялись за последние ${FRESH_S} с (Ditto напрямую; поиск отставал у $nl:${lag})"; fi
+  else
+    msg="не обновлялись больше ${FRESH_S} с"
+    [ "$nd" != 0 ] && msg="$msg — Ditto напрямую ($nd):${still_direct}"
+    [ "$ns" != 0 ] && msg="$msg — поиск, напрямую Ditto не ответил ($ns):${still_search}"
+    bad "$msg"
+  fi
 fi
 
 # 2. Сценарий включается и выключается записью одного признака ---------------------

@@ -9,10 +9,13 @@
 точкам (anchors) — у сдвинутых объектов окрестность сдвигается вместе с ними.
 
 Съезды в схеме — не зигзаг реального карьера, а одна непрерывная спираль вдоль борта: от верхнего узла на борту
-вниз с постоянным уклоном GRADE (≈ 6–7 % реального уклона при вертикали ×1,5), с ровной площадкой ±LAND у развилки
-к забою на уступе (узлы *-mid2 и face-05/06); отступ от борта растёт вместе с глубиной (полотно идёт по среднему
-профилю уступов). Узлы съезда стоят на спирали на своей глубине; точки трассы каждого ребра — в "paths"
-(ключ «откуда>куда», как в geometry.edges), сцена ведёт по ним полотно и технику.
+вниз с постоянным уклоном GRADE, с ровной площадкой ±LAND у развилки к забою на уступе (узлы *-mid2 и face-05/06);
+отступ от борта растёт вместе с глубиной (полотно идёт по среднему профилю уступов). Узлы съезда стоят на спирали на
+своей глубине; точки трассы каждого ребра — в "paths" (ключ «откуда>куда», как в geometry.edges), сцена ведёт по ним
+полотно и технику. Модель (geometry.json) и схема — одна сеть дорог: те же узлы и рёбра, а длины рёбер в схеме
+пропорциональны длинам модели — уклон GRADE подобран так, что спираль кончается у западного (восточного) края дна,
+рядом с узлом дна floor-w (floor-e2), и самосвал на съезде и на подходе к нему идёт с одним и тем же масштабом
+скорости (проверка — core/tools/motion_check: без телепортов на стыке съезда с дном).
 
 Запуск: python3 bozshakol/core/tools/make_diorama.py  (пишет bozshakol/core/diorama.json)
 """
@@ -44,12 +47,17 @@ PORTAL_FROM_CRUSHER = [-65.0, -35.0]
 DUMP_TOE_GAP = 15.0     # единицы: точка разгрузки на отвале — за подошвой отвала (отвал в реальном размере)
 RAMPS = {"road-ramp-1": (["r1-top", "r1-mid2", "r1-mid1", "r1-bottom"], -1, ("face-05", "excavator-05")),
          "road-ramp-2": (["r2-top", "r2-mid2", "r2-mid1", "r2-bottom"], +1, ("face-06", "excavator-06"))}
-GRADE = 0.10            # уклон съезда в схеме
-LAND = 20.0             # единицы: полудлина ровной площадки на съезде у развилки к забою на уступе
-LAND_BOTTOM = 200.0     # единицы: внизу съезд выходит на уровень дна раньше узла (стык с дорогой дна — ровный)
+GRADE = 0.16            # уклон съезда в схеме (длины звеньев съезда — ≈ 0,35 от модели, подход ко дну — ≈ 0,45)
+LAND = 30.0             # единицы: полудлина ровной площадки на съезде у развилки к забою на уступе
+VCURVE = 15.0           # единицы: полудлина сглаживания перелома уклона съезда
+TOP_LEAD = 30.0         # единицы: спираль начинается по ходу дальше угла верхнего узла — подход к узлу без шпильки
+LAND_BOTTOM = 40.0      # единицы: внизу съезд выходит на уровень дна раньше узла (стык с дорогой дна — ровный)
 LAND_TOP = 60.0         # единицы: наверху съезд сначала идёт ровно на уровне борта, уходя от кромки внутрь
-FACE_OFF = -30.0        # единицы: центр площадки забоя на уступе — от оси съезда к борту (врезана в стенку, экскаватор работает в забой)
-EXC_TO_ROAD = 0.4       # доля пути от забоя к оси съезда, где стоит экскаватор забоя на уступе
+# Забой на уступе (face-05/06): от оси съезда к стенке — место погрузки (узел забоя) у края полотна, экскаватор, развал
+# у подошвы стенки (единицы от оси); площадка — ровная, на уровне развилки, вытянута вдоль уступа (PAD_*: середина,
+# полудлина вдоль уступа и полуширина к стенке); техника в схеме в натуральную величину, поэтому места с запасом
+FACE_NODE, FACE_EXC, FACE_WALL = 16.0, 28.0, 54.0
+PAD_MID, PAD_HL, PAD_HD = 36.0, 76.0, 18.0   # вдоль уступа — место погрузки и два места очереди за ним целиком на площадке
 LAND_BUMP, LAND_BUMP_LEN = 22.0, 160.0   # у развилки съезд уходит на 22 единицы глубже в карьер (место для площадки забоя)
 PATH_STEP = 4.0         # единицы: шаг точек трассы
 ENTRY_INS, ENTRY_LEN = 28.0, 140.0   # у борта: ось съезда на отступе ≥ 28 (полуширина 16 + 12 на откос), плавно за 140 единиц
@@ -134,7 +142,7 @@ def main():
         "nodes": nodes,
         "objects": objects,
         "paths": paths,
-        "extra": {"tailings": {"center": TAILINGS["center_s"], "radii": TAILINGS["radii"]}},
+        "extra": {"tailings": {"center": TAILINGS["center_s"], "radii": TAILINGS["radii"]}, "face_pads": FACE_PADS},
         "anchors": anchors,
     }
     path = os.path.join(CORE, "diorama.json")
@@ -142,6 +150,9 @@ def main():
         json.dump(out, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
     print("записано", path, len(nodes), "узлов,", len(objects), "объектов")
+
+
+FACE_PADS = []
 
 
 def ramps_on_wall(g, pit, nodes, objects):
@@ -156,10 +167,13 @@ def ramps_on_wall(g, pit, nodes, objects):
         s_l0 = LAND_TOP - z2 / GRADE; s2 = s_l0 + LAND; s_l1 = s_l0 + 2 * LAND
         s1 = s_l1 + (z2 - z1) / GRADE; s_end = s1 + (z1 + depth) / GRADE + LAND_BOTTOM   # внизу — ровный выход на дно
 
-        def z_at(sv):
+        def z_lin(sv):
             if sv <= s_l0: return -GRADE * max(0.0, sv - LAND_TOP)
             if sv <= s_l1: return z2
             return max(-depth, z2 - GRADE * (sv - s_l1))
+
+        def z_at(sv):   # переломы уклона сглажены (вертикальные кривые ±VCURVE): корпус самосвала не повисает на изломе
+            return sum(z_lin(sv + VCURVE * (k / 5.0)) for k in range(-5, 6)) / 11.0
         # у борта полотно сразу уходит внутрь на ENTRY_INS (внешний край не ближе 12 к кромке), дальше — по профилю
         def ins_at(sv):   # гладкий максимум (без изломов трассы в плане); у развилки к забою — глубже в карьер
             avg, ent = -z_at(sv) * Ds / depth, ENTRY_INS * smooth01(sv / ENTRY_LEN)
@@ -167,6 +181,7 @@ def ramps_on_wall(g, pit, nodes, objects):
             return min(Ds, (avg + ent + math.hypot(avg - ent, 8.0)) / 2 + bump)
         tx, ty = nodes[top][0], nodes[top][1]
         t = math.atan2((ty - cy) / b, (tx - cx) / a)
+        t += sgn * TOP_LEAD / (math.hypot(a * math.sin(t), b * math.cos(t)) or 1.0)
         pts, sv, h, nxt = [], 0.0, 0.25, 0.0
         marks = {s2: mid2, s1: mid1, s_end: bot}
         while True:
@@ -185,17 +200,18 @@ def ramps_on_wall(g, pit, nodes, objects):
             q = min(pts, key=lambda p: abs(p[3] - sm)); return [q[0], q[1], q[2]]
         for sm, n in marks.items():
             nodes[n] = at(sm)
-        # забой на уступе — у площадки, к центру карьера; экскаватор — на том же месте относительно забоя
+        # забой на уступе: от оси съезда к стенке (w) — место погрузки у края полотна, экскаватор, развал у подошвы;
+        # площадка вдоль уступа (t) — ровная, на уровне развилки
         q = min(pts, key=lambda p: abs(p[3] - s2))
         ins = ins_at(s2); t2 = math.atan2((q[1] - cy) / (b - ins), (q[0] - cx) / (a - ins))
         p0, p1 = ring(ins, t2), ring(ins + 1.0, t2)
         nx, ny = p1[0] - p0[0], p1[1] - p0[1]; ln = math.hypot(nx, ny) or 1.0
-        fx, fy = round(q[0] + nx / ln * FACE_OFF, 2), round(q[1] + ny / ln * FACE_OFF, 2)
-        ex, ey = objects[exc]["position"][0] - objects[face]["position"][0], objects[exc]["position"][1] - objects[face]["position"][1]
-        nodes[face] = [fx, fy, z2]
-        objects[face]["position"] = [fx, fy]
-        # экскаватор — между развалом у стенки и полотном съезда (корпус на площадке, не в стенке)
-        objects[exc]["position"] = [round(fx + ex - nx / ln * FACE_OFF * EXC_TO_ROAD, 2), round(fy + ey - ny / ln * FACE_OFF * EXC_TO_ROAD, 2)]
+        wx, wy = -nx / ln, -ny / ln
+        at_w = lambda d: [round(q[0] + wx * d, 2), round(q[1] + wy * d, 2)]
+        nodes[face] = at_w(FACE_NODE) + [z2]
+        objects[exc]["position"] = at_w(FACE_EXC)
+        objects[face]["position"] = at_w(FACE_WALL)
+        FACE_PADS.append({"face": face, "c": at_w(PAD_MID), "t": [round(-wy, 4), round(wx, 4)], "hl": PAD_HL, "hd": PAD_HD, "z": z2})
         # трассы рёбер (в направлении geometry.edges)
         seg = lambda s_a, s_b: [p[:3] for p in pts if min(s_a, s_b) - 0.01 <= p[3] <= max(s_a, s_b) + 0.01]
         for e in g["edges"]:
