@@ -12,6 +12,19 @@ const GROUND = 0xd6c896;      // цвет степи за пределами т�
 const FAR = 40000;            // степь до горизонта: квадрат ±FAR единиц
 const PIT_SEG = 640;          // точек на кольцо карьера (равный шаг по длине борта ≈ 7 единиц)
 
+// Лента от дробилки идёт в подземной галерее и выходит из портала за площадкой разгрузки — дальше от первой точки
+// трассы на CONVEYOR_GALLERY единиц (там разворачиваются самосвалы); то же место — в слое переработки (ctx.conveyorGallery)
+export const CONVEYOR_GALLERY = 24;
+// точка трассы (схема) на расстоянии d от её начала
+export function alongPath(path, d) {
+  for (let i = 0; i + 1 < path.length; i++) {
+    const [ax, ay] = path[i], [bx, by] = path[i + 1], L = Math.hypot(bx - ax, by - ay);
+    if (d <= L || i === path.length - 2) { const t = L > 0 ? Math.min(1, d / L) : 0; return [ax + (bx - ax) * t, ay + (by - ay) * t, (bx - ax) / (L || 1), (by - ay) / (L || 1)]; }
+    d -= L;
+  }
+  return [path[0][0], path[0][1], 1, 0];
+}
+
 export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const group = new THREE.Group();
   group.name = 'diorama';
@@ -30,7 +43,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
   const outer = new THREE.Shape();
   outer.moveTo(-FAR, -FAR); outer.lineTo(FAR, -FAR); outer.lineTo(FAR, FAR); outer.lineTo(-FAR, FAR); outer.closePath();
   const farHole = new THREE.Path();
-  farHole.absellipse(pit.cx, pit.cy, pit.a - 3, pit.b - 3, 0, Math.PI * 2, true, 0);
+  farHole.absellipse(pit.cx, pit.cy, pit.a - 8, pit.b - 8, 0, Math.PI * 2, true, 0);   // и под выходом съезда из карьера
   outer.holes.push(farHole);
   const far = new THREE.Mesh(new THREE.ShapeGeometry(outer, 160), new THREE.MeshLambertMaterial({ color: GROUND }));
   far.rotation.x = -Math.PI / 2; far.position.y = -1.5; far.receiveShadow = true; far.name = 'diorama-far';
@@ -106,12 +119,14 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
       m.position.copy(S((ax + bx) / 2, (ay + by) / 2, y0 + h / 2)); m.rotation.y = Math.atan2(bx - ax, -(by - ay));
       return m;
     };
-    const [p0, p1] = cvp, L01 = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
-    const dx = (p1[0] - p0[0]) / L01, dy = (p1[1] - p0[1]) / L01;
+    const p0 = cvp[0], [px, py, dx, dy] = alongPath(cvp, CONVEYOR_GALLERY);   // портал — за площадкой разгрузки
     const gal = new THREE.Group(); gal.name = 'crusher-gallery';
     gal.add(along(crp[0], crp[1], p0[0], p0[1], 4, 0.3, 0, concrete));                                // крыша галереи
-    gal.add(along(p0[0] - dx * 7, p0[1] - dy * 7, p0[0], p0[1], 6.5, 4.6, 0, concrete));              // портал
-    gal.add(along(p0[0] - dx * 0.2, p0[1] - dy * 0.2, p0[0] + dx * 0.05, p0[1] + dy * 0.05, 3.2, 2.4, 1.6, dark));   // проём под ленту
+    gal.add(along(p0[0], p0[1], px - dx * 7, py - dy * 7, 4, 0.3, 0, concrete));                      // крыша галереи до портала
+    const portal = along(px - dx * 7, py - dy * 7, px, py, 6.5, 4.6, 0, concrete);                    // портал
+    portal.userData.solid = 'портал конвейера';                                                       // для проверки наездов
+    gal.add(portal);
+    gal.add(along(px - dx * 0.2, py - dy * 0.2, px + dx * 0.05, py + dy * 0.05, 3.2, 2.4, 1.6, dark));   // проём под ленту
     group.add(gal);
   }
 
@@ -131,6 +146,7 @@ export function buildDiorama(THREE, dio, models, colors, glowTexture) {
     if (models && models.lightMast) m = models.lightMast(30);
     else { m = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 30, 6), new THREE.MeshLambertMaterial({ color: 0xbfc4c8 })); m.position.y = 15; }
     const holder = new THREE.Group(); holder.add(m);
+    holder.userData.pole = 2.2;   // радиус основания мачты (для проверки наездов, motion_check)
     holder.position.copy(S(xs, ys, 0));
     holder.rotation.y = Math.atan2(pit.cx - xs, -(pit.cy - ys)) + Math.PI;   // прожекторы — к карьеру
     group.add(holder);
@@ -445,6 +461,32 @@ function rampBands(THREE, dio, colorAt) {
 
 // Полотно дорог — лента по поверхности: точки через ≈ 4 единицы, высота каждой поперечины — dio.surfaceAt
 // (максимум по оси и краям) + подъём; обочина — шире и чуть ниже. Ключ результата — 'дорога|материал'
+// Площадки развилок у бровки и у пунктов: где сходятся три дороги или две под углом меньше 100°, самосвал на
+// повороте выходит за край полотна — там ровная площадка радиусом JUNCTION_R (полотно с обочиной), только вне карьера.
+// Те же площадки видит проверка движения (motion_check, «вне дороги»).
+export const JUNCTION_R = 34;
+export function junctionPads(dio) {
+  const out = [];
+  for (const [node, p] of Object.entries(dio.D.nodes)) {
+    if (dio.schemaInset(p[0], p[1]) >= 0) continue;   // в карьере — нет
+    const dirs = [];
+    for (const e of dio.edges) {
+      if (e.from !== node && e.to !== node) continue;
+      const pts = e.path ? e.path : [e.sa, e.sb], seq = e.from === node ? pts : pts.slice().reverse();
+      let q = seq[seq.length - 1];
+      for (const s of seq) if (Math.hypot(s[0] - p[0], s[1] - p[1]) > 20) { q = s; break; }
+      dirs.push(Math.atan2(q[0] - p[0], q[1] - p[1]));
+    }
+    let acute = false;
+    for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) {
+      let d = Math.abs(dirs[i] - dirs[j]); if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d < 100 * Math.PI / 180) acute = true;
+    }
+    if (dirs.length >= 3 || (dirs.length === 2 && acute)) out.push([p[0], p[1], JUNCTION_R, node]);
+  }
+  return out;
+}
+
 export function roadRibbons(THREE, dio) {
   const W = dio.roadW, out = {};
   const ROAD_OFFS = [W / 2, -W / 2], SHOULDER_OFFS = [W / 2 + 3, W / 2, -W / 2, -W / 2 - 3];   // поперёк: слева направо
@@ -478,6 +520,22 @@ export function roadRibbons(THREE, dio) {
         prev = cur;
       }
       add(e.road + '|' + mat, tri);
+    }
+  }
+  // площадки развилок: веер треугольников по поверхности (полотно чуть выше обочины), до бровки карьера
+  for (const [cx, cy, R] of junctionPads(dio)) {
+    for (const [mat, rad, lift] of [['open', R, 0.45], ['shoulder', R + 3, 0.2]]) {
+      const tri = [], N = 40, rim = [];
+      for (let k = 0; k <= N; k++) {
+        const a = k / N * Math.PI * 2, dx = Math.sin(a), dy = Math.cos(a);
+        let r = rad;
+        while (r > 2 && dio.schemaInset(cx + dx * r, cy + dy * r) >= -2) r -= 2;   // не заходит в карьер
+        const x = cx + dx * r, y = cy + dy * r;
+        rim.push([x, dio.surfaceAt(x, y) + lift, -y]);
+      }
+      const c = [cx, dio.surfaceAt(cx, cy) + lift, -cy];
+      for (let k = 0; k < N; k++) tri.push(...c, ...rim[k + 1], ...rim[k]);
+      add('junction|' + mat, tri);
     }
   }
   for (const [key, arr] of Object.entries(parts)) {

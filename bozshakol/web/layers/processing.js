@@ -69,8 +69,21 @@ export function init(ctx) {
       // трассы, проём под ленту на высоте 1,6–4,0 м); лента идёт по проёму и выходит из портала наружу.
       // Точки трассы geometry.json не меняются: добавлена точка внутри портала, первая точка опущена до высоты проёма.
       const LIFT = 3, BELT_IN_PORTAL_M = 2.8;
+      // Портал — за площадкой разгрузки дробилки: на ctx.conveyorGallery единиц сцены по трассе от первой точки
+      // (общая сцена строит там портал, до него лента в подземной галерее). Ищем это место на трассе рудника.
+      const GAL = ctx.conveyorGallery || 0;
+      let i0 = 0, t0 = 0;
+      if (GAL > 0) {
+        const s0 = ctx.toScene(o.path[0][0], o.path[0][1], 0);
+        search: for (let i = 0; i + 1 < o.path.length; i++) for (let k = 1; k <= 40; k++) {
+          const t = k / 40, [x0, y0] = o.path[i], [x1, y1] = o.path[i + 1];
+          const q = ctx.toScene(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 0);
+          if (Math.hypot(q.x - s0.x, q.z - s0.z) >= GAL) { i0 = i; t0 = t; break search; }
+        }
+      }
+      const P = (i, t) => { const [x0, y0, z0] = o.path[i], [x1, y1, z1] = o.path[i + 1]; return [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t]; };
       {
-        const [ax, ay] = o.path[0], [bx, by] = o.path[1];
+        const [ax, ay] = P(i0, t0), [bx, by] = o.path[i0 + 1];
         const L0 = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / L0, uy = (by - ay) / L0;
         for (const back of [6.5, 0]) {
           const x = ax - ux * back, y = ay - uy * back;
@@ -78,17 +91,39 @@ export function init(ctx) {
           pts.push(p);
         }
       }
-      for (let i = 0; i + 1 < o.path.length; i++) {
+      // у дорог — точки чаще (эстакада: плавный подъём и спуск), в остальном — через CONVEYOR_STEP_M
+      const half = ctx.roadHalf || 16, NEAR_U = half + 8, RAMP_U = 50;
+      const roadD = (p) => (ctx.roadDist ? ctx.roadDist(p.x, -p.z) : Infinity);
+      for (let i = i0; i + 1 < o.path.length; i++) {
         const [x0, y0, z0] = o.path[i], [x1, y1, z1] = o.path[i + 1];
-        const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / CONVEYOR_STEP_M));
-        for (let k = i === 0 ? 1 : 0; k < n; k++) {                      // первая точка трассы уже добавлена у портала
-          const t = k / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
-          pts.push(ctx.toScene(x, y, Math.max(z0 + (z1 - z0) * t, ctx.groundAt(x, y))));
+        const ta = i === i0 ? t0 : 0, len = Math.hypot(x1 - x0, y1 - y0) * (1 - ta);
+        const n = Math.max(1, Math.ceil(len / 8));
+        let since = 0;
+        for (let k = 1; k < n; k++) {                                     // первая точка — у портала
+          const t = ta + (1 - ta) * k / n, x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+          since += len / n;
+          const p = ctx.toScene(x, y, Math.max(z0 + (z1 - z0) * t, ctx.groundAt(x, y)));
+          if (since >= CONVEYOR_STEP_M - 1e-6 || roadD(p) < NEAR_U + RAMP_U + 20) { pts.push(p); since = 0; }
         }
+        if (i + 2 < o.path.length) pts.push(ctx.toScene(x1, y1, Math.max(z1, ctx.groundAt(x1, y1))));
       }
       const [xe, ye, ze] = o.path[o.path.length - 1];
       pts.push(ctx.toScene(xe, ye, Math.max(ze, ctx.groundAt(xe, ye))));
-      const g = M.conveyor(pts, { height: LIFT });
+      // эстакада: где трасса проходит над дорогой (лента ближе half + 5 к её оси — над полотном или обочиной), лента
+      // поднята с просветом не меньше двух высот самосвала (ctx.truckHeight); подъём и спуск — плавно вдоль трассы
+      // (RAMP_U единиц пути); стойки — не ближе half + 4 к оси дороги
+      const OVER = 2 * (ctx.truckHeight || 9) + 1.6 + 1.5;   // над точкой: просвет + низ галереи под лентой + запас
+      const sAt = [0];
+      for (let i = 1; i < pts.length; i++) sAt.push(sAt[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+      const cross = pts.map((p, i) => i >= 2 && roadD(p) < half + 5);
+      const lifts = pts.map((p, i) => {
+        if (i < 2) return LIFT;                                           // в портале
+        let dmin = Infinity;
+        for (let j = 0; j < pts.length; j++) if (cross[j]) dmin = Math.min(dmin, Math.abs(sAt[i] - sAt[j]));
+        const k = Math.max(0, Math.min(1, 1 - (dmin - 6) / RAMP_U));
+        return LIFT + (OVER - LIFT) * k * k * (3 - 2 * k);
+      });
+      const g = M.conveyor(pts, { height: LIFT, lifts, legOk: (x, z) => !ctx.roadDist || ctx.roadDist(x, -z) > half + 4 });
       const anchor = new THREE.Object3D(); anchor.position.copy(pts[Math.floor(pts.length / 2)]); g.add(anchor);
       const head = new THREE.Object3D(); head.position.copy(pts[2] || pts[1]); g.add(head);   // лампа — сразу за порталом
       add(id, { kind: o.kind, g, model: g, anchor, hit: 40, lamp: addLamp(head, 4) }, o.id, 3, 12);

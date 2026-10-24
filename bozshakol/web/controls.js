@@ -25,7 +25,6 @@
 const SMOOTH = 0.2;        // с: постоянная времени разгона/торможения
 const MIN_SPEED = 20;      // м/с: скорость у самой земли
 const SPEED_PER_M = 0.6;   // м/с на каждый метр высоты над землёй
-const ROT_SPEED = 1.2;     // рад/с: поворот Q/E
 const DOLLY_RATE = 0.9;    // 1/с: R/F — множитель расстояния до цели за секунду (e^0,9 ≈ ×2,5)
 const ZOOM_RATE = 0.9;     // 1/с: R/F в виде сверху
 const MIN_ABOVE = 8;       // м: камера не ниже земли + столько
@@ -47,7 +46,7 @@ export function initKeyboard(opts) {
   const bnd = () => (typeof o.bounds === 'function' ? o.bounds() : o.bounds);
   const pressed = new Set();                          // зажатые клавиши (e.code)
   // сглаженные скорости: vx, vz — в сцене, м/с; rot — рад/с; dolly — 1/с
-  const vel = { x: 0, y: 0, z: 0, rot: 0, dolly: 0 };
+  const vel = { x: 0, y: 0, z: 0, dolly: 0 };
   const help = makeHelp();
 
   function typingTarget(el) {
@@ -88,7 +87,6 @@ export function initKeyboard(opts) {
     if (!cam || !ctl) return;
     const fwd = axis(has('KeyW', 'ArrowUp'), has('KeyS', 'ArrowDown'));
     const side = axis(has('KeyD', 'ArrowRight'), has('KeyA', 'ArrowLeft'));
-    const rot = 0;                                                     // поворот — мышью
     const upDown = axis(has('KeyR'), has('KeyF'));
     const lift = axis(has('Space', 'KeyE'), has('KeyC', 'KeyQ'));      // полёт вверх / вниз
     const boost = has('ShiftLeft', 'ShiftRight') ? 3 : 1;               // Shift удерживать — втрое быстрее
@@ -119,10 +117,9 @@ export function initKeyboard(opts) {
     if (gl > 1e-6) { gx = gx / gl * speed; gz = gz / gl * speed; }
     vel.x = smooth(vel.x, gx, dt); vel.z = smooth(vel.z, gz, dt);
     vel.y = smooth(vel.y, top ? 0 : lift * speed, dt);
-    vel.rot = smooth(vel.rot, top ? 0 : rot * ROT_SPEED * boost, dt);
     vel.dolly = smooth(vel.dolly, upDown * (top ? ZOOM_RATE : DOLLY_RATE) * boost, dt);
-    const moving = Math.abs(vel.x) + Math.abs(vel.y) + Math.abs(vel.z) > 0.05 || Math.abs(vel.rot) > 1e-3 || Math.abs(vel.dolly) > 1e-3;
-    if (!moving) { vel.x = vel.y = vel.z = vel.rot = vel.dolly = 0; return; }
+    const moving = Math.abs(vel.x) + Math.abs(vel.y) + Math.abs(vel.z) > 0.05 || Math.abs(vel.dolly) > 1e-3;
+    if (!moving) { vel.x = vel.y = vel.z = vel.dolly = 0; return; }
 
     // --- движение: камера и цель вместе
     const dx = vel.x * dt, dy = vel.y * dt, dz = vel.z * dt;
@@ -135,13 +132,6 @@ export function initKeyboard(opts) {
         cam.updateProjectionMatrix();
       }
     } else {
-      // поворот вокруг цели (вокруг вертикальной оси)
-      if (Math.abs(vel.rot) > 1e-3) {
-        const a = vel.rot * dt, c = Math.cos(a), s = Math.sin(a);
-        const ox = pos.x - tgt.x, oz = pos.z - tgt.z;
-        pos.x = tgt.x + ox * c - oz * s;
-        pos.z = tgt.z + ox * s + oz * c;
-      }
       // выше и дальше / ниже и ближе: расстояние до цели растёт или падает по экспоненте
       if (Math.abs(vel.dolly) > 1e-3) {
         const ox = pos.x - tgt.x, oy = pos.y - tgt.y, oz = pos.z - tgt.z;
