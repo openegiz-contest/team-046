@@ -317,6 +317,9 @@ function pick(clientX, clientY) {
     if (o && hit.distance < bestD) { best = o.userData.thingId; bestD = hit.distance; }
   }
   if (best && MACHINE_RE.test(best)) return best;   // прямое попадание в технику главнее «хитбоксов» соседних зон
+  // щелчок мимо всего: «хитбоксы» дальше точки, где луч уходит в землю, не в счёт (иначе щелчок по пустой земле у
+  // самосвала выбирал здание далеко за ней, под землёй)
+  const ground = bestD === Infinity ? rayGround(raycaster.ray) : Infinity;
   for (const o of clickable) {
     if ((!o.visible && !o.userData.farHidden) || !o.parent || !o.userData.hitRadius) continue;
     o.getWorldPosition(_v);
@@ -325,9 +328,23 @@ function pick(clientX, clientY) {
       o.userData.farHidden ? raycaster.ray.origin.distanceTo(_v) * 0.012 : 0);
     if (raycaster.ray.distanceToPoint(_v) > rad) continue;
     const along = raycaster.ray.origin.distanceTo(_v);
+    if (along > ground + rad) continue;
     if (along < bestD + rad) { best = o.userData.thingId; bestD = along; }   // «хитбокс» важнее поверхности за ним
   }
   return best;
+}
+// расстояние по лучу до земли схемы: вне карьера земля ровная (y = 0), в карьере — шагами по поверхности dio.surfaceAt
+function rayGround(ray) {
+  if (!dio || ray.direction.y > -1e-4) return Infinity;
+  const o = ray.origin, d = ray.direction;
+  let t = Math.max(0, -o.y / d.y);
+  const x0 = o.x + d.x * t, z0 = o.z + d.z * t;
+  if (o.y >= 0 && dio.schemaInset(x0, -z0) < 0) return t;   // на ровной степи
+  for (let k = 0; k < 400; k++, t += 4) {
+    const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
+    if (y <= dio.surfaceAt(x, -z)) return t;
+  }
+  return Infinity;
 }
 let downPos = null, movePos = null;
 canvas.addEventListener('pointerdown', (e) => { downPos = [e.clientX, e.clientY]; });
@@ -826,10 +843,13 @@ function renderAdvice() {
   alarm.classList.toggle('crit', !!list && list.some((a) => a.priority === 'critical'));
   document.getElementById('panel-strip').title = 'Развернуть панель диспетчера' + (list && list.length ? ' · советов: ' + list.length : '');
   if (list === null) { root.innerHTML = '<div class="advice none">нет данных</div>'; return; }
+  // раскрытое «Почему и что даст» остаётся раскрытым, пока главный совет тот же (текст совета обновляется часто)
+  const whyOpen = !!root.querySelector('details.why[open]'), prevTop = adviceShown && adviceShown[0] && adviceShown[0].id;
   adviceShown = list;
   root.innerHTML = list.length
     ? list.map((a, i) => adviceHtml(a, i, i === 0)).join('')
     : '<div class="advice none">Отклонений нет — советов пока нет</div>';
+  if (whyOpen && list.length && list[0].id === prevTop) { const w = root.querySelector('details.why'); if (w) w.open = true; }
   for (const el of root.querySelectorAll('[data-i]')) el.addEventListener('click', (e) => {
     if (e.target.closest('details.why')) return;   // «Почему и что даст» открывается, камера не летит
     flyToThing(adviceShown[+el.dataset.i].target);
