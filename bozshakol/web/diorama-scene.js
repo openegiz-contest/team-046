@@ -701,32 +701,41 @@ function steppeLife(THREE, dio, [x0, y0, x1, y1], avoid) {
   return [make(bg, bush, [0x7f8c55, 0x6f7c4a, 0x939d68, 0x8a8a5a, 0x76844c], 'steppe-bushes', 0.35),
     make(gg, grass, [0xc9b77a, 0xb9a865, 0xd6c68e, 0xa99a5e], 'steppe-grass', 0)];
 }
+// коробки [ширина, высота, длина, цвет, x, y, z] → одна геометрия с цветами вершин
+function boxesGeometry(THREE, boxes) {
+  const pos = [], nor = [], col = [], c = new THREE.Color();
+  for (const [w, hh, l, color, x, y, z] of boxes) {
+    const g = new THREE.BoxGeometry(w, hh, l).toNonIndexed(); g.translate(x, y, z);
+    c.setHex(color);
+    const p = g.attributes.position, n = g.attributes.normal;
+    for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(n.getX(i), n.getY(i), n.getZ(i)); col.push(c.r, c.g, c.b); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return geo;
+}
 // ж/д ветка с запада к складу концентрата у сульфидной фабрики: насыпь, рельсы, шпалы, хопперы под концентрат
 function railSiding(THREE, dio, models, plant) {
   if (!plant) return null;
   const grp = new THREE.Group(); grp.name = 'rail-siding';
   const z = -plant[1] + 330, xA = plant[0] - 1500, xB = plant[0] + 40;   // ветка южнее фабрики (схема: y на юг — минус)
   const len = xB - xA, cx = (xA + xB) / 2, h = (x) => dio.surfaceAt(x, -z);
-  const ballast = new THREE.Mesh(new THREE.BoxGeometry(len, 1.2, 7), new THREE.MeshLambertMaterial({ color: 0x9b9384 }));
-  ballast.position.set(cx, h(cx) + 0.3, z); grp.add(ballast);
-  const railMat = new THREE.MeshLambertMaterial({ color: 0x5b5f66 });
-  for (const off of [-0.76, 0.76]) {
-    const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.3, 0.2), railMat); r.position.set(cx, h(cx) + 1.25, z + off); grp.add(r);
-  }
+  // насыпь и рельсы — одна геометрия с цветами вершин (один вызов отрисовки)
+  grp.add(new THREE.Mesh(boxesGeometry(THREE, [[len, 1.2, 7, 0x9b9384, 0, 0.3, 0], [len, 0.3, 0.2, 0x5b5f66, 0, 1.25, -0.76],
+    [len, 0.3, 0.2, 0x5b5f66, 0, 1.25, 0.76]]), new THREE.MeshLambertMaterial({ vertexColors: true })));
+  grp.children[grp.children.length - 1].position.set(cx, h(cx), z);
   const nSl = Math.floor(len / 8);
   const sl = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.2, 2.6), new THREE.MeshLambertMaterial({ color: 0x6a5a48 }), nSl);
   const m = new THREE.Matrix4();
   for (let i = 0; i < nSl; i++) { const x = xA + 4 + i * 8; m.makeTranslation(x, h(cx) + 1.0, z); sl.setMatrixAt(i, m); }
   grp.add(sl);
   // хопперы-вагоны под концентрат у склада: корпус и крыша, 12 вагонов по 14 м
-  const nW = 12, wagons = new THREE.InstancedMesh(new THREE.BoxGeometry(13.2, 3.4, 3.1), new THREE.MeshLambertMaterial({ color: 0x5f6f62 }), nW);
-  const roofs = new THREE.InstancedMesh(new THREE.BoxGeometry(13.2, 0.5, 2.4), new THREE.MeshLambertMaterial({ color: 0x48524a }), nW);
-  for (let i = 0; i < nW; i++) {
-    const x = xB - 70 - i * 14.2;
-    m.makeTranslation(x, h(cx) + 3.4, z); wagons.setMatrixAt(i, m);
-    m.makeTranslation(x, h(cx) + 5.35, z); roofs.setMatrixAt(i, m);
-  }
-  grp.add(wagons, roofs);
+  const nW = 12, wagons = new THREE.InstancedMesh(boxesGeometry(THREE, [[13.2, 3.4, 3.1, 0x5f6f62, 0, 0, 0], [13.2, 0.5, 2.4, 0x48524a, 0, 1.95, 0]]),
+    new THREE.MeshLambertMaterial({ vertexColors: true }), nW);   // кузов и крыша — одна геометрия
+  for (let i = 0; i < nW; i++) { m.makeTranslation(xB - 70 - i * 14.2, h(cx) + 3.4, z); wagons.setMatrixAt(i, m); }
+  grp.add(wagons);
   // склад концентрата с погрузкой в вагоны (крытый склад у конца ветки)
   const shed = models && models.building ? models.building('warehouse', { size: [70, 26, 16] }) : null;
   const anchor = new THREE.Object3D();

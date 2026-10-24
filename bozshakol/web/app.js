@@ -1709,9 +1709,24 @@ function serviceModel(kind) {
   }
   const wg = new THREE.CylinderGeometry(R, R, 0.5, 10); wg.rotateZ(Math.PI / 2);
   for (const zf of [L / 2 - 1.2, -(L / 2 - 1.3)]) for (const xs of [-W / 2, W / 2]) { const w = new THREE.Mesh(wg, M(0x2a2b2e)); w.position.set(xs, R, zf); g.add(w); }
-  g.userData.size = { length: L, width: W };
-  g.rotation.order = 'YXZ';
-  return g;
+  // детали — в одну геометрию с цветами вершин: один вызов отрисовки на машину (без видеокарты каждый вызов дорог)
+  g.updateMatrixWorld(true);
+  const pos = [], nor = [], col = [];
+  g.traverse((m) => {
+    if (!m.isMesh) return;
+    const geo = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrix);
+    const p = geo.attributes.position, n = geo.attributes.normal, c = m.material.color;
+    for (let i = 0; i < p.count; i++) { pos.push(p.getX(i), p.getY(i), p.getZ(i)); nor.push(n.getX(i), n.getY(i), n.getZ(i)); col.push(c.r, c.g, c.b); }
+  });
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  merged.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const one = new THREE.Group();
+  one.add(new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true })));
+  one.userData.size = { length: L, width: W };
+  one.rotation.order = 'YXZ';
+  return one;
 }
 // свободная точка степи (координаты схемы): дороги, конвейер, объекты, карьер, пруд, ж/д ветка, увеличенные здания
 function serviceFree(boxes) {
@@ -1838,7 +1853,11 @@ function cloudTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+let grassMesh;
 function updateClouds(dt) {
+  // пучки ковыля — только в «Высоком»: в «Обычном» бюджет кадров без видеокарты (кусты остаются)
+  if (grassMesh === undefined) grassMesh = scene.getObjectByName('steppe-grass') || null;
+  if (grassMesh) grassMesh.visible = quality === 'high';
   if (!cloudMesh) {
     const geo = new THREE.PlaneGeometry(1, 0.5); geo.rotateX(-Math.PI / 2);
     cloudMesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: cloudTexture(), transparent: true, depthWrite: false, opacity: 0.9 }), 18);
@@ -1874,7 +1893,9 @@ function updateCloudShadows(dt, m, q, p, s) {
     for (let i = 0; i < 9; i++) shades.push({ x: -3600 + rnd() * 7200, z: -2200 + rnd() * 4400, s: 500 + rnd() * 600 });
     scene.add(shadeMesh);
   }
-  shadeMesh.visible = lighting !== 'night';
+  // без видеокарты («Обычное») не рисуем: большие прозрачные плоскости — дорогая заливка для программной отрисовки
+  shadeMesh.visible = lighting !== 'night' && quality === 'high';
+  if (!shadeMesh.visible) return;
   const pit = dio.pit, c0 = dio.s(pit.cx, pit.cy, 0), cA = dio.s(pit.cx + pit.a, pit.cy + pit.b, 0);
   const ax = Math.abs(cA.x - c0.x) + 40, az = Math.abs(cA.z - c0.z) + 40;
   shades.forEach((c, i) => {
