@@ -744,6 +744,7 @@ function railSiding(THREE, dio, models, plant) {
   const sl = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.2, 2.6), new THREE.MeshLambertMaterial({ color: 0x6a5a48 }), nSl);
   const m = new THREE.Matrix4();
   for (let i = 0; i < nSl; i++) { const x = xA + 4 + i * 8; m.makeTranslation(x, h(cx) + 1.0, z); sl.setMatrixAt(i, m); }
+  sl.name = 'rail-sleepers';   // шпалы — только в «Высоком» (сцена скрывает их без видеокарты)
   grp.add(sl);
   // хопперы-вагоны под концентрат у склада: корпус и крыша, 12 вагонов по 14 м
   const nW = 12, wagons = new THREE.InstancedMesh(boxesGeometry(THREE, [[13.2, 3.4, 3.1, 0x5f6f62, 0, 0, 0], [13.2, 0.5, 2.4, 0x48524a, 0, 1.95, 0]]),

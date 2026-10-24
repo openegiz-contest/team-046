@@ -1656,14 +1656,16 @@ function updateContactShadows() {
     scene.add(contactMesh);
   }
   let n = 0;
+  const cam = camera.position, FAR2 = 900 * 900;   // дальше 900 единиц машина — значок-стрелка, пятно не видно: не рисуем
   for (const o of clickable) {
     if (n >= CONTACT_MAX) break;
     const id = o.userData.thingId || '';
     if (!MACHINE_RE.test(id) || !o.isObject3D || o.isMesh || !o.visible) continue;
+    const e = o.matrixWorld.elements;   // мировая матрица прошлого кадра — без пересчёта цепочки родителей
+    _cp.set(e[12], e[13], e[14]);
+    if (_cp.distanceToSquared(cam) > FAR2) continue;
     const s = machineFootprint(o); if (!s) continue;
-    o.getWorldPosition(_cp); o.getWorldQuaternion(_cwq);
-    _cf.set(1, 0, 0).applyQuaternion(_cwq);
-    _cq.setFromAxisAngle(_cy, Math.atan2(-_cf.z, _cf.x));
+    _cq.setFromAxisAngle(_cy, Math.atan2(-e[2], e[0]));
     _cp.y += 0.25;
     _cs.set(s[0] * 1.3, 1, s[1] * 1.45);
     _cm.compose(_cp, _cq, _cs); contactMesh.setMatrixAt(n++, _cm);
@@ -1671,12 +1673,14 @@ function updateContactShadows() {
   for (const S of serviceList) {
     if (n >= CONTACT_MAX) break;
     const o = S.o, s = machineFootprint(o); if (!s) continue;
-    o.getWorldPosition(_cp); _cp.y += 0.25;
+    o.getWorldPosition(_cp); if (_cp.distanceToSquared(cam) > FAR2) continue;
+    _cp.y += 0.25;
     _cq.setFromAxisAngle(_cy, o.rotation.y);
     _cs.set(s[0] * 1.3, 1, s[1] * 1.45);
     _cm.compose(_cp, _cq, _cs); contactMesh.setMatrixAt(n++, _cm);
   }
   contactMesh.count = n; contactMesh.instanceMatrix.needsUpdate = true;
+  contactMesh.visible = n > 0;
   contactMesh.material.opacity = lighting === 'night' ? 0.5 : (quality === 'high' ? 0.55 : 1);   // в «Высоком» есть и тени солнца
 }
 // ---------------------------------------------------------------- живой фон: служебные машины, пыль, облака
@@ -1820,6 +1824,7 @@ function updatePuffs(dt) {
     for (const o of machineList) {
       const id = o.userData.thingId || '';
       if (id.indexOf(':truck-') < 0 || !(Number(val(id, 'payload', 0)) > 0) || !o.visible) continue;
+      if (o.position.distanceToSquared(camera.position) > 1200 * 1200) continue;   // издалека пыли не видно
       const prev = _pprev.get(o); _pprev.set(o, o.position.clone());
       if (!prev || prev.distanceTo(o.position) < 1.5 || prev.distanceTo(o.position) > 60) continue;   // стоит или скачок
       if (puffs.length >= PUFF_MAX) puffs.shift();
@@ -1854,12 +1859,20 @@ function cloudTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
-let grassMesh;
+let grassMesh, bushMesh, sleeperMesh;   // части фона, которые без видеокарты («Обычное») рисуются частично или не рисуются
 const _clM = new THREE.Matrix4(), _clQ = new THREE.Quaternion(), _clP = new THREE.Vector3(), _clS = new THREE.Vector3();
 function updateClouds(dt) {
-  // пучки ковыля — только в «Высоком»: в «Обычном» бюджет кадров без видеокарты (кусты остаются)
-  if (grassMesh === undefined) grassMesh = scene.getObjectByName('steppe-grass') || null;
-  if (grassMesh) grassMesh.visible = quality === 'high';
+  // бюджет кадров без видеокарты («Обычное»): ковыль и шпалы не рисуются, кустов — 120 из 300
+  if (grassMesh === undefined) {
+    grassMesh = scene.getObjectByName('steppe-grass') || null;
+    bushMesh = scene.getObjectByName('steppe-bushes') || null;
+    sleeperMesh = scene.getObjectByName('rail-sleepers') || null;
+    if (bushMesh) bushMesh.userData.full = bushMesh.count;
+  }
+  const high = quality === 'high';
+  if (grassMesh) grassMesh.visible = high;
+  if (sleeperMesh) sleeperMesh.visible = high;
+  if (bushMesh) bushMesh.count = high ? bushMesh.userData.full : Math.min(120, bushMesh.userData.full);   // без видеокарты — часть куртин
   if (!cloudMesh) {
     const geo = new THREE.PlaneGeometry(1, 0.5); geo.rotateX(-Math.PI / 2);
     cloudMesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ map: cloudTexture(), transparent: true, depthWrite: false, opacity: 0.9 }), 18);
