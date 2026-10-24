@@ -11,6 +11,7 @@ services:
     environment:
       DITTO_URL: http://ditto-nginx:80
       DITTO_PASSWORD: ${DITTO_PASSWORD}
+      EXTENDED_URL: http://extended-api:8080   # типы двойников создаются через Extended API платформы
       TWINS_DIR: /mine
     volumes:
       # Все twins.json читаются прямо из репозитория: core/twins.json и modules/*/twins.json
