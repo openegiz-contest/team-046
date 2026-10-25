@@ -797,7 +797,7 @@ function steppeLife(THREE, dio, [x0, y0, x1, y1], avoid) {
   const segD = (x, y, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t); };
   const gully = (x, y) => GULLIES.some((l) => l.some((p, i) => i && segD(x, y, l[i - 1], p) < 80));
   const dens = (x, y) => (gully(x, y) ? 1 : 0.12 + 0.88 * Math.max(0, Math.min(1, (Math.hypot(x + 700, y + 100) - 1300) / 1700)));
-  for (let i = 0; i < 20000 && bush.length < 2200; i++) {   // бюджет кадров без видеокарты: ≈ 270 куртин
+  for (let i = 0; i < 20000 && bush.length < 1500; i++) {   // бюджет кадров без видеокарты: ≈ 180 куртин
     const cx = x0 + 20 + rnd() * (x1 - x0 - 40), cy = y0 + 20 + rnd() * (y1 - y0 - 40);
     if (rnd() > dens(cx, cy) || !free(cx, cy)) continue;
     const n = 5 + Math.floor(rnd() * 7);
@@ -859,7 +859,12 @@ function settlement(THREE, dio) {
   const L = cum[cum.length - 1];
   const carGeo = boxesGeometry(THREE, [[2.6, 1.7, 5.6, 0xffffff, 0, 0.85, 0], [2.3, 1.1, 3, 0xffffff, 0, 2.2, -0.4]]);
   const cars = new THREE.InstancedMesh(carGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), 3);
-  cars.name = 'camp-cars'; cars.raycast = () => {}; cars.frustumCulled = false;
+  cars.name = 'camp-cars'; cars.raycast = () => {};
+  {   // машины ездят только по своей дороге: сфера отсечения — вокруг всей дороги
+    let sx = 0, sy = 0; for (const [x, y] of CAMP.road) { sx += x; sy += y; } sx /= CAMP.road.length; sy /= CAMP.road.length;
+    const r = Math.max(...CAMP.road.map(([x, y]) => Math.hypot(x - sx, y - sy))) + 20;
+    cars.boundingSphere = new THREE.Sphere(new THREE.Vector3(sx, 2, -sy), r);
+  }
   const cc = new THREE.Color();
   [0xf2f2ee, 0xe0b23a, 0x9aa3ab].forEach((h, i) => cars.setColorAt(i, cc.setHex(h)));
   group.add(cars);

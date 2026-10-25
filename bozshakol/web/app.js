@@ -2528,8 +2528,8 @@ function updateMarkers() {
 // встать (у экскаватора — сбоку от него, у пунктов разгрузки — задом к краю); на заправке и в резерве — стоянка рядом
 // с ней (заезд так же, задом). Показанное место догоняет цель как машина: едет передом, поворачивает по дуге, скорость
 // меняется плавно; задним ходом — только в конце манёвра и не быстрее 2 м/с
-const LANE = 8;   // единиц: от оси дороги (ширина 28) до середины полосы: встречные расходятся с зазором
-const QUEUE_SIDE = 3;    // единиц: очередь — у правого края полотна (ось + 11; корпус до 16 — в пределах ленты дороги)
+const LANE = 9.5;   // единиц: от оси дороги (ширина 28) до середины полосы: встречные расходятся с зазором
+const QUEUE_SIDE = 1.5;  // единиц: очередь — у правого края полотна (ось + 11; корпус до 16 — в пределах ленты дороги)
 const QUEUE_LAT = LANE + QUEUE_SIDE;
 // у забоя на уступе на площадке — не больше BENCH_PAD_Q машин в очереди (плюс грузящаяся); остальные ждут на съезде
 // выше площадки у развилки, на своей полосе у правого края, через BENCH_GAP; попутные проезжают их по середине полотна,
@@ -3093,7 +3093,7 @@ function stockpilePads() {
   for (const id of ['stockpile-coarse', 'stockpile-clay']) {
     const o = buildingRoot(NS + ':' + id);
     if (!o || o.getObjectByName('stock-pad')) continue;
-    const pad = new THREE.Mesh(new THREE.CircleGeometry(STOCK_PAD_M, 40), new THREE.MeshLambertMaterial({ color: 0xb4a78c }));
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(STOCK_PAD_M, 24), new THREE.MeshLambertMaterial({ color: 0xb4a78c }));
     pad.rotation.x = -Math.PI / 2; pad.position.y = 0.08; pad.name = 'stock-pad'; pad.receiveShadow = true;
     o.add(pad);
   }
