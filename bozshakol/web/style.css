@@ -30,6 +30,7 @@ body.panel-collapsed { --panel-w: 46px; }
   font-size: 11px; line-height: 15px; box-shadow: 0 1px 4px rgba(30, 40, 55, 0.22);
 }
 .label.small { font-size: 10px; padding: 0 6px; opacity: 0.92; }
+.label.dump-tag { background: #2b2620; color: #fff; font-weight: 600; font-size: 12px; }   /* что и куда выгружает самосвал (3 с) */
 
 /* --- верхняя панель: виды и кнопки --- */
 #topwrap { position: fixed; top: 12px; left: calc(50% + var(--panel-w) / 2); transform: translateX(-50%);
