@@ -2099,7 +2099,7 @@ function unloadFx(dt) {
     const fill = Math.max(0, Math.min(1, Number(val(NS + ':crusher-01', 'bunker_fill', 0)) / 100 || 0));
     // воронка под площадкой закрыта землёй схемы — уровень показан в чаше бункера над землёй: от 0,2 (пусто) до 1,7 м
     // модели (полон), радиус 6,4…8,0 (внутри борта 8,2)
-    const top = 0.2 + 1.5 * fill, r = 6.4 + 1.6 * fill;
+    const top = 0.2 + 1.3 * fill, r = 6.4 + 1.6 * fill;   // не выше 1,5 м модели — ниже бортика, самосвалу не мешает
     hopperOre.visible = fill > 0.02; hopperOre.scale.set(r, top, r); hopperOre.position.set(0, top / 2, 0);
   }
   // --- свежий навал на отвале: растёт с тоннами, принятыми с открытия страницы
