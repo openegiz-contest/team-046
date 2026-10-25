@@ -146,9 +146,9 @@ PLAN_DEFICIT_CAP_T = PLAN_DEFICIT_CAP_TRUCKS * TRUCK_PASSPORT[180]["capacity_t"]
 AVG_PAYLOAD_T = (22 * TRUCK_PASSPORT[135]["capacity_t"] + 6 * TRUCK_PASSPORT[180]["capacity_t"]) / 28.0
 
 # -- дробилка как узкое место (bozshakol/modules/processing/main.py, модуль №4 — только читаем) --
-# запасные значения на случай, если признаки crusher-01.bunker/throughput ещё не пришли;
-# совпадают с CRUSHER_TPH/BUNKER_T у №4 (его допущение, см. bozshakol/data/SOURCES.md:
-# «запас ≈1.4 к средней подаче 2850 т/ч; бункер вмещает ≈20 самосвалов»), а не наша подгонка
+# собственные значения транспорта; с цифрами №4 не совпадают (у №4 дробилка 4 500 т/ч, бункер 900 т):
+# пропускная способность — запасная, на случай, когда признака crusher-01.throughput нет (или он 0);
+# ёмкость бункера №4 не публикует — CRUSHER_BUNKER_T_REF служит масштабом в оценке ожидания у дробилки
 CRUSHER_THROUGHPUT_REF_TPH = 4000.0
 CRUSHER_BUNKER_T_REF = 3000.0
 CRUSHER_ACCEPT_FRACTION = 0.85  # №4 перестаёт принимать при bunker >= BUNKER_T * 0.85

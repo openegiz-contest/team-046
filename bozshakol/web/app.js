@@ -384,7 +384,7 @@ function renderCard() {
       const sc = kind === 'scenarios' ? f : (/^scenario_/.test(f) ? f.slice(9) : '');   // сценарий — как в панели
       const ru = FEATURE_RU_KIND[kind + '.' + f] || (sc && SCENARIO_NAMES[sc] && 'сценарий «' + SCENARIO_NAMES[sc] + '»') || FEATURE_RU[f];
       const name = ru ? esc(ru) + '<div class="tech">' + esc(f) + '</div>' : esc(f);
-      const [value, unitOk] = cardValue(f, p.value);
+      const [value, unitOk] = cardValue(f, p.value, p.unit);
       const unit = unitOk ? (p.unit in UNIT_RU ? UNIT_RU[p.unit] : (p.unit || UNIT_FALLBACK[f] || '')) : '';
       rows.push('<tr><td>' + name + '</td><td class="val">' + esc(value) + '</td><td>' + esc(unit) + '</td></tr>');
     }
@@ -486,8 +486,10 @@ const ADVICE_RU = {   // коды советов советника (core/adviso
 const JSON_RU = { advice: 'советов: ', assignments: 'закреплено самосвалов: ', reality: 'строк сверки: ', block_preview: 'точек: ' };
 const UNIT_RU = { json: '', ISO: '' };          // служебные обозначения формата — не единицы
 const UNIT_FALLBACK = { shift: '№' };
-// значение для карточки: [текст, показывать ли единицу]
-function cardValue(f, v) {
+// значение для карточки: [текст, показывать ли единицу]; медь, % — всегда с двумя знаками
+const CU_PCT = /^(feed_cu|feed_cu_actual|feed_cu_target|cu_grade|cargo_cu)$/;
+function cardValue(f, v, u) {
+  if (typeof v === 'number' && (u === '% Cu' || CU_PCT.test(f))) return [fmtCu(v), true];
   if (f === 'advice_ids' && typeof v === 'string') return [v ? v.split(/[\s,;]+/).filter(Boolean).map((a) => ADVICE_RU[a] || a).join(', ') : 'нет', false];
   if (f === 'level' && typeof v === 'number') return [['к сведению', 'важно', 'критично'][v] || fmt(v), false];
   if (/^scenario_/.test(f) && typeof v === 'number') return [v ? 'включён' : 'выключен', false];
@@ -508,6 +510,8 @@ function cardValue(f, v) {
   return [fmt(v), true];
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+// медь, % — всегда с двумя знаками после запятой (0,40 %, а не 0,4 %)
+const fmtCu = (v) => (typeof v === 'number' ? v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : fmt(v));
 function fmt(v, digits) {
   if (v === undefined || v === null) return '—';
   if (typeof v === 'boolean') return v ? 'да' : 'нет';
@@ -533,7 +537,7 @@ function plantCard(id, label) {
   const stopped = STOPPED.includes(state);
   const cu = val(id, 'feed_cu', null), clay = val(id, 'feed_clay', null);
   const extra = [];
-  if (cu !== null) extra.push('Cu в питании ' + fmt(cu, 2) + ' %');
+  if (cu !== null) extra.push('Cu в питании ' + fmtCu(cu) + ' %');
   if (clay !== null) extra.push('глина ' + fmt(clay, 0) + ' %');
   const stateCls = stopped ? 'bad' : (state === 'idle' ? 'warn' : 'ok');
   return '<div class="plant-card' + (stopped ? ' stopped' : '') + '">' +
@@ -596,7 +600,7 @@ function renderMain() {
   setKpi('kpi-ore', twins[ps] || twins[pc] ? fmt(feed, 0) + ' т/ч' : '—',
     plan ? 'план ' + fmt(plan, 0) + ' т/ч · ' + fmt(pct, 0) + ' %' : '', plan ? (pct < 70 ? 'bad' : pct < 90 ? 'warn' : 'ok') : '');
   const cu = val(ps, 'feed_cu', null);
-  setKpi('kpi-cu', cu === null ? '—' : fmt(cu, 2) + ' %', 'сульфидная фабрика');
+  setKpi('kpi-cu', cu === null ? '—' : fmtCu(cu) + ' %', 'сульфидная фабрика');
   let queued = 0, inCycle = 0, total = 0;
   for (const id of Object.keys(twins)) {
     if (!id.startsWith(NS + ':truck-')) continue;
@@ -649,7 +653,7 @@ function qLive(key) {
   if (key === 'ore') return [plant(ps, 'Сульфидная'), plant(pc, 'Глинистая')].filter(Boolean).join(' · ');
   if (key === 'cu') {
     const c = val(pc, 'feed_cu', null);
-    return c === null ? '' : 'На глинистой фабрике сейчас — ' + fmt(c, 2) + ' %';
+    return c === null ? '' : 'На глинистой фабрике сейчас — ' + fmtCu(c) + ' %';
   }
   if (key === 'advice') { const l = adviceList(); return l && l.length > 1 ? 'Сейчас советов: ' + l.length + ' (главный — первым)' : ''; }
   return '';
