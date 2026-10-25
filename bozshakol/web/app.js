@@ -1565,7 +1565,7 @@ function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now; lastFrame = now; frameNo++;
   if (keyboard) keyboard.update(dt);      // клавиатура: движение камеры до перелётов и рендера
-  if (environment && environment.update) environment.update(dt);   // окружение схемы: машины на дороге посёлка
+  if (environment && environment.update) { try { environment.update(dt); } catch (e) { console.error('окружение: ошибка', e); } }   // машины посёлка
   updateCamera(dt);
   if (frameNo % 4 === 0) updateHover();      // наведение — ~8 раз в секунду
   restoreRaw();                               // поправки прошлого кадра снимаются — слой видит свои места
@@ -1580,7 +1580,7 @@ function frame(now) {
   updateDust(dt);
   updateServiceVehicles(dt);
   updatePuffs(dt);
-  if (dio) unloadFx(dt);
+  if (dio) { try { unloadFx(dt); } catch (e) { console.error('разгрузка: ошибка показа', e); } }
   if (frameNo % 2 === 0) updateClouds(dt * 2);
   updateContactShadows();
   if (frameNo % 15 === 0) updateDownBadges();
@@ -1661,7 +1661,7 @@ function buildSchemaEnvironment() {
   addLabel(d.anchors.pitName, 'Карьер Бозшаколь · ' + fmt(2 * A[0] / 1000, 1) + ' × ' + fmt(2 * A[1] / 1000, 1) + ' км', { importance: 3, dy: 3 });
   // синий пруд у фабрики — хвостохранилище (реальный объект, data/SOURCES.md): подпись видна и с общего вида
   if (d.anchors.concentrate) addLabel(d.anchors.concentrate, 'Склад концентрата · отгрузка в вагоны', { importance: 2, dy: 2 });
-  if (d.anchors.camp) addLabel(d.anchors.camp, 'Вахтовый посёлок', { importance: 2, dy: 2 });
+  if (d.anchors.camp) addLabel(d.anchors.camp, 'Вахтовый посёлок', { importance: 3, dy: 2 });
   const tl = dio.D.extra && dio.D.extra.tailings;
   if (d.anchors.tailings && tl) {   // подпись — у восточного края пруда (центр пруда на общем виде у края экрана)
     const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(tl.center[0] + tl.radii[0] * 0.55, tl.center[1], 14));
@@ -2045,7 +2045,7 @@ function unloadFx(dt) {
     }
     ud.fxUp = !!up;
     if (!up || !o.visible) continue;   // куски и пыль — только у видимой машины
-    ud.fxAcc = (ud.fxAcc || 0) + dt * FX_RATE * Math.min(1, (ud.bed - 0.55) / 0.3);
+    ud.fxAcc = Math.min(3, (ud.fxAcc || 0) + dt * FX_RATE * Math.min(1, (ud.bed - 0.55) / 0.3));   // без «пачки» после полного пула
     const s = o.scale.x || 1, sz = o.userData.size || {}, Lh = (sz.length || 13) * s / 2, H = (sz.height || 6.5) * s;
     const bx = -Math.sin(o.rotation.y), bz = -Math.cos(o.rotation.y);   // назад от кабины
     const col = colors[ud.cargo] !== undefined ? colors[ud.cargo] : colors.waste;
@@ -2097,8 +2097,10 @@ function unloadFx(dt) {
       hopperOre.name = 'hopper-ore'; hopperOre.raycast = () => {}; cr.add(hopperOre);
     }
     const fill = Math.max(0, Math.min(1, Number(val(NS + ':crusher-01', 'bunker_fill', 0)) / 100 || 0));
-    const y = -2.2 + 2.5 * fill, r = 2.6 + 4.9 * fill;   // воронка бункера: радиус 2,6 у дна (−2,2), 7,6 у верха (0,4)
-    hopperOre.visible = fill > 0.01; hopperOre.scale.set(r, 0.9, r); hopperOre.position.set(0, y - 0.45, 0);
+    // воронка под площадкой закрыта землёй схемы — уровень показан в чаше бункера над землёй: от 0,2 (пусто) до 1,7 м
+    // модели (полон), радиус 6,4…8,0 (внутри борта 8,2)
+    const top = 0.2 + 1.5 * fill, r = 6.4 + 1.6 * fill;
+    hopperOre.visible = fill > 0.02; hopperOre.scale.set(r, top, r); hopperOre.position.set(0, top / 2, 0);
   }
   // --- свежий навал на отвале: растёт с тоннами, принятыми с открытия страницы
   const recv = Number(val(NS + ':dump-waste-1', 'received_total', NaN));
@@ -3058,7 +3060,7 @@ function animateExcavators(dt) {
 // и склад), склад глины и заправка от своих подъездов, остальные — от центра. Мельница и флотация — точки на крыше
 // главного корпуса: двигаются и растут вместе с ним. Проверка (?debug=1): __buildingConflicts() — пересечения нет.
 // По высоте корпуса растут сильнее (tall — во сколько раз выше модели): в жизни они намного выше самосвала —
-// корпус дробилки не ниже 5 высот самосвала, корпуса фабрик — не ниже 7 (TALL_*); в плане — как прежде (без новых
+// корпус дробилки не ниже 5 высот самосвала, корпуса фабрик — не ниже 7 (tall, stretch); в плане — как прежде (без новых
 // пересечений с дорогами, конвейером, ЛЭП и стоянкой). Штабели складов — тоже выше (растут вместе с запасом).
 const TRUCK_H = 7 * MACHINE_SCALE;            // высота самосвала 180 т в сцене (по кабине)
 const ENLARGE = [
