@@ -51,7 +51,7 @@ make up
 | Что | Адрес | Вход |
 |---|---|---|
 | 3D-сцена карьера (панель диспетчера, сценарии «что если», карточки двойников) | http://localhost:8095 | не нужен |
-| Grafana → Dashboards → папка **Бозшаколь** (обзор, транспорт, геология, переработка и энергия) | http://localhost:3000 | `admin` / значение `GRAFANA_ADMIN_PASSWORD` из `deploy/compose/.env` (показать: `grep GRAFANA_ADMIN_PASSWORD deploy/compose/.env`) |
+| Grafana → Dashboards → папка **Бозшаколь** (обзор, транспорт, геология, переработка и энергия, сверка с реальностью) | http://localhost:3000 | `admin` / значение `GRAFANA_ADMIN_PASSWORD` из `deploy/compose/.env` (показать: `grep GRAFANA_ADMIN_PASSWORD deploy/compose/.env`) |
 | Grafana → приложение **OpenEgiz** → **Twins** — иерархия двойников `kz.bozshakol`; **Types** — типы двойников `kz.bozshakol.types:<вид>` | там же | там же |
 | Ditto API: все двойники | http://localhost:8080/api/2/search/things?namespaces=kz.bozshakol | `ditto` / `DITTO_PASSWORD` из `deploy/compose/.env` |
 
