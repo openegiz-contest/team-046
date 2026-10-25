@@ -12,6 +12,7 @@
 | Добыча руды 2025 | 35,5 млн т | [KAZ Minerals, Q4 2025 Production report](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Переработка 2025 | 35,7 млн т, в т. ч. глинистой 6,26 млн т | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Содержание меди в руде 2025 | 0,39 % Cu | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
+| Содержание меди в руде 2020 (Замысел: снижение с 0,51 % до 0,39 %) | 0,51 % Cu — строка Bozshakol «Average copper grade processed %», 12 мес. 2020 | [KAZ Minerals, Production Report Q4 2020 (28.01.2021)](https://www.kazminerals.com/media/21861/kaz-minerals-q4-2020-28-jan-21.pdf) | реальные |
 | Содержание золота 2025 | 0,19 г/т | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Извлечение меди 2025 | 73,4 % | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | реальные |
 | Медь в концентрате, темп 2025 (сверка с реальностью) | ≈ 102 тыс. т/год | [KAZ Minerals, Q4 2025](https://www.kazminerals.com/app/uploads/2026/02/Q4-2025-Production-report_FINAL_ENG.pdf) | расчёт по отчёту: 35,7 млн т × 0,39 % × 73,4 % ≈ 102 тыс. т |
