@@ -797,7 +797,7 @@ function steppeLife(THREE, dio, [x0, y0, x1, y1], avoid) {
   const segD = (x, y, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(x - a[0] - dx * t, y - a[1] - dy * t); };
   const gully = (x, y) => GULLIES.some((l) => l.some((p, i) => i && segD(x, y, l[i - 1], p) < 80));
   const dens = (x, y) => (gully(x, y) ? 1 : 0.12 + 0.88 * Math.max(0, Math.min(1, (Math.hypot(x + 700, y + 100) - 1300) / 1700)));
-  for (let i = 0; i < 20000 && bush.length < 1500; i++) {   // бюджет кадров без видеокарты: ≈ 180 куртин
+  for (let i = 0; i < 20000 && bush.length < 900; i++) {   // бюджет кадров без видеокарты: ≈ 110 куртин
     const cx = x0 + 20 + rnd() * (x1 - x0 - 40), cy = y0 + 20 + rnd() * (y1 - y0 - 40);
     if (rnd() > dens(cx, cy) || !free(cx, cy)) continue;
     const n = 5 + Math.floor(rnd() * 7);
@@ -805,7 +805,7 @@ function steppeLife(THREE, dio, [x0, y0, x1, y1], avoid) {
       const a = rnd() * Math.PI * 2, r = rnd() * 18, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
       bush.push([x, y, 1.8 + rnd() * 3.0, rnd() * Math.PI]);
     }
-    for (let k = 0; k < 5; k++) {
+    for (let k = 0; k < 3; k++) {
       const a = rnd() * Math.PI * 2, r = 8 + rnd() * 30, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
       if (free(x, y)) grass.push([x, y, 0.8 + rnd() * 1.1, rnd() * Math.PI]);
     }
