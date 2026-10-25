@@ -64,7 +64,8 @@ let markerScale = 1;         // множитель размера значков
 let connState = 'нет';
 
 // Сцена одна — схема рудника (diorama.js): расстояния сжаты в 2 раза (единица карты = 2 м местности), здания
-// и склады — крупнее для наглядности (enlargeBuildings, ×1,6–1,8). Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
+// и склады — крупнее для наглядности (enlargeBuildings: в плане ×1,6–1,8, корпус дробилки — 5 высот самосвала, корпуса
+// фабрик — 7). Реальная местность — фото по кнопке «Фото местности» (окно, сцена от него не зависит).
 // terrainApi (рельеф Copernicus DEM) нужен только для «высоты над землёй» в переносе координат, в сцене его нет.
 const mode = 'schema';
 let dio = null;              // перенос координат в схему (diorama.js)
@@ -1272,7 +1273,13 @@ async function loadLayers(suffix = '') {
       markerScale, hover: null, selected: null, heightAt: groundAt, groundAt, place, mode,
       models: modelsLib, verticalScale: 1,
       // дороги схемы — для эстакады конвейера: расстояние от точки (схема: x — восток, y — север) до оси ближайшей дороги
-      roadDist: (xs, ys) => { let d = Infinity; if (dio) for (const e of dio.edges) d = Math.min(d, dio.edgeNearest(e, xs, ys, 200).d); return d; },
+      roadDist: (xs, ys) => {
+        let d = Infinity; if (!dio) return d;
+        for (const e of dio.edges) d = Math.min(d, dio.edgeNearest(e, xs, ys, 200).d);
+        for (let k = 0; k < PARK_SLOTS.length; k++) { const sp = parkingSpot(k); if (sp) d = Math.min(d, Math.hypot(xs - sp.S[0], ys - sp.S[1]) - 6); }   // стоянка
+        const fsn = dio.D.nodes['fuel-station']; if (fsn) d = Math.min(d, Math.hypot(xs - fsn[0], ys - fsn[1]) - 14);   // разворот у заправки
+        return d;
+      },
       roadHalf: dio ? dio.roadHalf : 16, truckHeight: 7 * MACHINE_SCALE, conveyorGallery: CONVEYOR_GALLERY,
     };
     try {
@@ -1558,6 +1565,7 @@ function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now; lastFrame = now; frameNo++;
   if (keyboard) keyboard.update(dt);      // клавиатура: движение камеры до перелётов и рендера
+  if (environment && environment.update) { try { environment.update(dt); } catch (e) { console.error('окружение: ошибка', e); } }   // машины посёлка
   updateCamera(dt);
   if (frameNo % 4 === 0) updateHover();      // наведение — ~8 раз в секунду
   restoreRaw();                               // поправки прошлого кадра снимаются — слой видит свои места
@@ -1572,6 +1580,7 @@ function frame(now) {
   updateDust(dt);
   updateServiceVehicles(dt);
   updatePuffs(dt);
+  if (dio) { try { unloadFx(dt); } catch (e) { console.error('разгрузка: ошибка показа', e); } }
   if (frameNo % 2 === 0) updateClouds(dt * 2);
   updateContactShadows();
   if (frameNo % 15 === 0) updateDownBadges();
@@ -1652,6 +1661,7 @@ function buildSchemaEnvironment() {
   addLabel(d.anchors.pitName, 'Карьер Бозшаколь · ' + fmt(2 * A[0] / 1000, 1) + ' × ' + fmt(2 * A[1] / 1000, 1) + ' км', { importance: 3, dy: 3 });
   // синий пруд у фабрики — хвостохранилище (реальный объект, data/SOURCES.md): подпись видна и с общего вида
   if (d.anchors.concentrate) addLabel(d.anchors.concentrate, 'Склад концентрата · отгрузка в вагоны', { importance: 2, dy: 2 });
+  if (d.anchors.camp) addLabel(d.anchors.camp, 'Вахтовый посёлок', { importance: 3, dy: 2 });
   const tl = dio.D.extra && dio.D.extra.tailings;
   if (d.anchors.tailings && tl) {   // подпись — у восточного края пруда (центр пруда на общем виде у края экрана)
     const anchor = new THREE.Object3D(); anchor.position.copy(dio.s(tl.center[0] + tl.radii[0] * 0.55, tl.center[1], 14));
@@ -1671,7 +1681,7 @@ function buildSchemaEnvironment() {
       weatherBlizzard = blizzard;
       if (!blizzard) { scene.fog.near = 3500; scene.fog.far = 22000; }
     },
-    update() {},
+    update: (dt) => d.update(dt),   // машины на дороге посёлка
   };
 }
 function buildWorld() {
@@ -1990,6 +2000,150 @@ function updatePuffs(dt) {
   }
   puffMesh.count = n; puffMesh.instanceMatrix.needsUpdate = true;
 }
+// Разгрузка — понятно глазами: из поднятого кузова сыплются куски (цвет груза) и пыль — в бункер дробилки, на склад
+// глинистой руды, на отвал (там куски скатываются по откосу навала); в бункере дробилки виден уровень руды
+// (crusher-01.bunker_fill), по ленте руда уходит дальше (слой переработки); на отвале растёт свежий навал — по тоннам,
+// принятым с открытия страницы (dump-waste-1.received_total); на складе глины от каждой разгрузки — куча, которая за
+// пару минут уходит в штабель; над самосвалом на 3 с подпись «что → куда», если камера близко
+const UNLOAD_TAG = { 'crusher-01': 'руда → дробилка', 'stockpile-clay': 'глинистая руда → склад', 'dump-waste-1': 'пустая порода → отвал' };
+const FX_MAX = 240, FX_RATE = 55, TAG_NEAR = 560, TAG_MS = 3000;
+let fxRocks = null, fxDust = null, hopperOre = null, dumpFan = null, clayHeap = null, dumpRecv0 = null, clayHeapV = 0;
+const fxParts = [], fxDusts = [];
+const _fm = new THREE.Matrix4(), _fq = new THREE.Quaternion(), _fv = new THREE.Vector3(), _fs = new THREE.Vector3(), _fc = new THREE.Color();
+function stationOf(dest) {   // место разгрузки и направление «наружу» (как truckStation для dumping)
+  const d = DUMP_AT[dest], nd = d && dio.D.nodes[d[0]], ob = d && dio.D.objects[d[1]] && dio.D.objects[d[1]].position;
+  if (!nd || !ob) return null;
+  let ux = nd[0] - ob[0], uy = nd[1] - ob[1]; const L = Math.hypot(ux, uy) || 1; ux /= L; uy /= L;
+  const r = roadOut(d[0], ux, uy); if (r) { ux = r[0]; uy = r[1]; }
+  return { S: nd, u: [ux, uy] };
+}
+function heapMesh(color, name) {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 20, 1), new THREE.MeshLambertMaterial({ color, flatShading: true }));
+  m.name = name; m.raycast = () => {}; m.visible = false; scene.add(m);
+  return m;
+}
+function unloadFx(dt) {
+  if (!fxRocks) {
+    fxRocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ flatShading: true }), FX_MAX);
+    fxRocks.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(FX_MAX * 3), 3);
+    fxDust = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: glowTexture(THREE), color: 0xcfc2a0,
+      transparent: true, opacity: 0.5, depthWrite: false }), 48);
+    for (const [m, n] of [[fxRocks, 'unload-rocks'], [fxDust, 'unload-dust']]) { m.name = n; m.frustumCulled = false; m.raycast = () => {}; m.count = 0; scene.add(m); }
+    dumpFan = heapMesh(0x7d7a74, 'dump-fresh-fan'); clayHeap = heapMesh(colors.stockpileClay, 'clay-fresh-heap');
+  }
+  const now = performance.now(), gravity = 45;
+  // --- самосвалы на разгрузке: подпись, поток кусков, события
+  for (const o of machineList) {
+    const id = o.userData.thingId;
+    if (id.indexOf(':truck-') < 0) continue;
+    const ud = o.userData, dest = val(id, 'destination', ''), pay = Number(val(id, 'payload', 0)) || 0;
+    if (pay > 0) { ud.cargo = val(id, 'cargo_type', 'sulphide'); ud.pay = pay; }
+    const up = (ud.bed || 0) > 0.55 && ud.man && ud.man.done && UNLOAD_TAG[dest];
+    if (up && !ud.fxUp) {   // кузов поднялся — разгрузка началась (и вдали от камеры: куча на складе растёт всегда)
+      ud.tagUntil = now + TAG_MS; ud.tagText = UNLOAD_TAG[dest];
+      if (dest === 'stockpile-clay') clayHeapV += (ud.pay || 135) / 1.6;   // м³ свежей кучи
+    }
+    ud.fxUp = !!up;
+    if (!up || !o.visible) continue;   // куски и пыль — только у видимой машины
+    ud.fxAcc = Math.min(3, (ud.fxAcc || 0) + dt * FX_RATE * Math.min(1, (ud.bed - 0.55) / 0.3));   // без «пачки» после полного пула
+    const s = o.scale.x || 1, sz = o.userData.size || {}, Lh = (sz.length || 13) * s / 2, H = (sz.height || 6.5) * s;
+    const bx = -Math.sin(o.rotation.y), bz = -Math.cos(o.rotation.y);   // назад от кабины
+    const col = colors[ud.cargo] !== undefined ? colors[ud.cargo] : colors.waste;
+    while (ud.fxAcc >= 1 && fxParts.length < FX_MAX) {
+      ud.fxAcc -= 1;
+      const side = (Math.random() - 0.5) * 4.5, sp = 4 + Math.random() * 5;
+      fxParts.push({ x: o.position.x + bx * (Lh + 0.5) - bz * side, y: o.position.y + H * 0.45 + Math.random() * 1.5, z: o.position.z + bz * (Lh + 0.5) + bx * side,
+        vx: bx * sp, vy: Math.random() * 2, vz: bz * sp, bx, bz, dest, col, size: 0.6 + Math.random() * 0.9, age: 0, roll: false, life: 2.6 });
+    }
+  }
+  // --- полёт кусков: падают; на отвале — катятся по откосу навала, в бункер и на склад — исчезают с облачком пыли
+  for (let i = fxParts.length - 1; i >= 0; i--) {
+    const p = fxParts[i]; p.age += dt;
+    if (p.age > p.life) { fxParts.splice(i, 1); continue; }
+    if (!p.roll) {
+      p.vy -= gravity * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      const g = dio.surfaceAt(p.x, -p.z) + (p.dest === 'dump-waste-1' && dumpFan.visible ? fanTop(p.x, p.z) : 0) - (p.dest === 'crusher-01' ? 2.5 : 0);
+      if (p.y <= g) {
+        if (Math.random() < 0.25) dustAt(p.x, g + 1, p.z);
+        if (p.dest === 'dump-waste-1') { p.roll = true; p.vx = p.bx * (7 + Math.random() * 6); p.vz = p.bz * (7 + Math.random() * 6); p.life = p.age + 2.2; }
+        else { fxParts.splice(i, 1); continue; }
+      }
+    } else {   // катится вниз по навалу, тормозит
+      const k = Math.exp(-dt * 1.4); p.vx *= k; p.vz *= k; p.x += p.vx * dt; p.z += p.vz * dt;
+      p.y = dio.surfaceAt(p.x, -p.z) + (dumpFan.visible ? fanTop(p.x, p.z) : 0) + p.size * 0.5;
+    }
+  }
+  let n = 0;
+  for (const p of fxParts) {
+    _fq.setFromAxisAngle(_fv.set(0.3, 1, 0.2).normalize(), p.age * 6);
+    _fm.compose(_fv.set(p.x, p.y, p.z), _fq, _fs.set(p.size, p.size, p.size));
+    fxRocks.setMatrixAt(n, _fm); fxRocks.setColorAt(n, _fc.setHex(p.col)); n++;
+  }
+  fxRocks.count = n; fxRocks.visible = n > 0; fxRocks.instanceMatrix.needsUpdate = true; if (fxRocks.instanceColor) fxRocks.instanceColor.needsUpdate = true;
+  let m = 0;
+  for (let i = fxDusts.length - 1; i >= 0; i--) {
+    const d = fxDusts[i]; d.age += dt;
+    const k = d.age / 1.8; if (k >= 1) { fxDusts.splice(i, 1); continue; }
+    const size = 2 + 13 * Math.sin(Math.PI * k);
+    _fm.compose(_fv.set(d.x, d.y + 4 * k, d.z), camera.quaternion, _fs.set(size, size, size)); fxDust.setMatrixAt(m++, _fm);
+  }
+  fxDust.count = m; fxDust.visible = m > 0; fxDust.instanceMatrix.needsUpdate = true;
+  fxDust.material.opacity = lighting === 'night' ? 0.18 : 0.5;
+  // --- уровень руды в бункере дробилки
+  const cr = buildingRoot(NS + ':crusher-01');
+  if (cr) {
+    if (!hopperOre || hopperOre.parent !== cr) {
+      hopperOre = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 1, 1, 18), new THREE.MeshLambertMaterial({ color: 0x6e6252, flatShading: true }));
+      hopperOre.name = 'hopper-ore'; hopperOre.raycast = () => {}; cr.add(hopperOre);
+    }
+    const fill = Math.max(0, Math.min(1, Number(val(NS + ':crusher-01', 'bunker_fill', 0)) / 100 || 0));
+    // воронка под площадкой закрыта землёй схемы — уровень показан в чаше бункера над землёй: от 0,2 (пусто) до 1,7 м
+    // модели (полон), радиус 6,4…8,0 (внутри борта 8,2)
+    const top = 0.2 + 1.3 * fill, r = 6.4 + 1.6 * fill;   // не выше 1,5 м модели — ниже бортика, самосвалу не мешает
+    hopperOre.visible = fill > 0.02; hopperOre.scale.set(r, top, r); hopperOre.position.set(0, top / 2, 0);
+  }
+  // --- свежий навал на отвале: растёт с тоннами, принятыми с открытия страницы
+  const recv = Number(val(NS + ':dump-waste-1', 'received_total', NaN));
+  if (isFinite(recv)) {
+    if (dumpRecv0 === null) dumpRecv0 = recv;
+    const t = Math.max(0, recv - dumpRecv0), st = stationOf('dump-waste-1');
+    if (st && t > 0) {
+      const r = Math.min(70, 8 + 2.3 * Math.cbrt(t)), h = r * 0.42, back = TRUCK_L / 2 + 10 + r * 0.6;
+      const cx = st.S[0] - st.u[0] * back, cy = st.S[1] - st.u[1] * back;
+      dumpFan.visible = true; dumpFan.scale.set(r, h, r); dumpFan.position.set(cx, dio.surfaceAt(cx, cy) + h / 2 - 0.3, -cy);
+      dumpFan.userData.c = [cx, -cy, r, h];
+    }
+  }
+  // --- свежая куча на складе глины: растёт с каждой разгрузкой, за пару минут уходит в штабель
+  clayHeapV *= Math.exp(-dt / 100);
+  const sc = stationOf('stockpile-clay');
+  if (sc && clayHeapV > 5) {
+    const r = Math.cbrt(3 * clayHeapV / (Math.PI * 0.75)) * 1.6, h = r * 0.7, back = TRUCK_L / 2 + 6 + r * 0.5;
+    const cx = sc.S[0] - sc.u[0] * back, cy = sc.S[1] - sc.u[1] * back;
+    clayHeap.visible = true; clayHeap.scale.set(r, h, r); clayHeap.position.set(cx, dio.surfaceAt(cx, cy) + h / 2 - 0.2, -cy);
+  } else if (clayHeap) clayHeap.visible = false;
+  // --- подписи «что → куда» над самосвалами (только близко к камере)
+  for (const o of machineList) {
+    const ud = o.userData;
+    if (!ud.tagText) continue;
+    let el = ud.tagEl;
+    const on = ud.tagUntil > now && o.visible && o.position.distanceTo(camera.position) < TAG_NEAR;
+    if (!on) { if (el) el.style.display = 'none'; if (ud.tagUntil <= now) ud.tagText = null; continue; }
+    if (!el) { el = ud.tagEl = document.createElement('div'); el.className = 'label dump-tag'; labelRoot.appendChild(el); }
+    if (el.textContent !== ud.tagText) el.textContent = ud.tagText;
+    const H = ((ud.size && ud.size.height) || 6.5) * (o.scale.x || 1);
+    _fv.set(o.position.x, o.position.y + H + 5, o.position.z).project(camera);
+    const r = canvas.getBoundingClientRect();
+    if (_fv.z > 1) { el.style.display = 'none'; continue; }
+    el.style.display = ''; el.style.left = ((_fv.x + 1) / 2 * r.width) + 'px'; el.style.top = ((1 - _fv.y) / 2 * r.height) + 'px';
+  }
+}
+function fanTop(x, z) {   // высота свежего навала над землёй в точке (конус)
+  const c = dumpFan && dumpFan.userData.c; if (!c) return 0;
+  const d = Math.hypot(x - c[0], z - c[1]);
+  return d >= c[2] ? 0 : c[3] * (1 - d / c[2]);
+}
+function dustAt(x, y, z) { if (fxDusts.length < 48) fxDusts.push({ x, y, z, age: 0 }); }
 // Облака: мягкие плоские облака вдали над степью (за пределами рудника, чтобы не закрывать его), медленно плывут
 let cloudMesh = null;
 const clouds = [];
@@ -2790,26 +2944,54 @@ function animateExcavators(dt) {
 }
 
 // для проверок: где объект на экране (пиксели холста) — скрипты наводят мышь без перебора точек
-// Здания крупнее для наглядности (в 1,6–1,8 раза; подпись в углу и «?» об этом говорят): каждое растёт от опорной точки —
+// Здания крупнее для наглядности (в плане в 1,6–1,8 раза; подпись в углу и «?» об этом говорят): каждое растёт от опорной точки —
 // дробилка от места разгрузки самосвалов (воронка остаётся у их края), фабрика от восточного торца (там конец конвейера
 // и склад), склад глины и заправка от своих подъездов, остальные — от центра. Мельница и флотация — точки на крыше
 // главного корпуса: двигаются и растут вместе с ним. Проверка (?debug=1): __buildingConflicts() — пересечения нет.
+// По высоте корпуса растут сильнее (tall — во сколько раз выше модели): в жизни они намного выше самосвала —
+// корпус дробилки не ниже 5 высот самосвала, корпуса фабрик — не ниже 7 (tall, stretch); в плане — как прежде (без новых
+// пересечений с дорогами, конвейером, ЛЭП и стоянкой). Штабели складов — тоже выше (растут вместе с запасом).
+const TRUCK_H = 7 * MACHINE_SCALE;            // высота самосвала 180 т в сцене (по кабине)
 const ENLARGE = [
-  { ids: ['crusher-01'], k: 1.6, pivot: 'node:crusher' },
-  { ids: ['plant-sulphide', 'sag-mill-01', 'flotation-01'], k: 1.6, pivot: [-1308, 470] },
-  { ids: ['plant-clay', '#clay-thickener'], k: 1.6, pivot: [-231, 484] },   // от северо-западного угла: к северу и западу — дороги и стоянка
-  { ids: ['stockpile-coarse'], k: 1.6, pivot: null },
-  { ids: ['stockpile-clay'], k: 1.6, pivot: 'node:stockpile-clay' },
+  { ids: ['crusher-01'], k: 1.6, pivot: 'node:crusher', stretch: { 'crusher-01': [3, (5.3 * TRUCK_H / 1.6 - 3) / (16.8 - 3)] } },   // крыша корпуса — 16,8 м модели
+  { ids: ['plant-sulphide', 'sag-mill-01', 'flotation-01'], k: 1.6, pivot: [-1308, 470],
+    tall: { 'plant-sulphide': 7.3 * TRUCK_H / 30, 'sag-mill-01': 7.3 * TRUCK_H / 30, 'flotation-01': 7.3 * TRUCK_H / 30 } },   // корпус 30 м
+  { ids: ['plant-clay', '#clay-thickener'], k: 1.6, pivot: [-231, 484], tall: { 'plant-clay': 7.3 * TRUCK_H / 22 } },   // корпус 22 м; от северо-западного угла
+  { ids: ['stockpile-coarse'], k: 1.6, pivot: null, tall: { 'stockpile-coarse': 2.4 } },
+  { ids: ['stockpile-clay'], k: 1.6, pivot: 'node:stockpile-clay', tall: { 'stockpile-clay': 2.4 } },
   { ids: ['power-grid'], k: 1.8, pivot: null },
   { ids: ['fuel'], k: 1.6, pivot: null, place: 'fuel-station' },   // крупная — на ближайшее к узлу свободное место (placeFree)
 ];
+// выше y0 (м модели) — в f раз выше, ниже — как было: у дробилки площадка разгрузки, бункер и брусья остаются на месте
+function stretchUp(o, y0, f) {
+  for (const c of o.children) {
+    if (c.isMesh && c.geometry && c.position.lengthSq() < 1e-9 && !c.isInstancedMesh) {
+      c.geometry = c.geometry.clone();
+      const pa = c.geometry.attributes.position;
+      for (let i = 0; i < pa.count; i++) { const y = pa.getY(i); if (y > y0) pa.setY(i, y0 + (y - y0) * f); }
+      pa.needsUpdate = true; c.geometry.computeBoundingBox(); c.geometry.computeBoundingSphere();
+    } else if (c.position.y > y0) c.position.y = y0 + (c.position.y - y0) * f;   // лампа, точка подписи
+  }
+}
 function enlargeTarget(id) {
   if (id === 'fuel') return fuelStationObj;
   if (id[0] === '#') return scene.getObjectByName(id.slice(1)) || null;   // окружение схемы (не двойник)
   return buildingRoot(NS + ':' + id);
 }
+// площадка склада (гравий) — по размеру полного штабеля: склад читается и пустым, заметно больше самосвала
+const STOCK_PAD_M = 34;   // м модели: радиус штабеля 40 тыс. т при угле откоса 37° — ≈ 32 м
+function stockpilePads() {
+  for (const id of ['stockpile-coarse', 'stockpile-clay']) {
+    const o = buildingRoot(NS + ':' + id);
+    if (!o || o.getObjectByName('stock-pad')) continue;
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(STOCK_PAD_M, 24), new THREE.MeshLambertMaterial({ color: 0xb4a78c }));
+    pad.rotation.x = -Math.PI / 2; pad.position.y = 0.08; pad.name = 'stock-pad'; pad.receiveShadow = true;
+    o.add(pad);
+  }
+}
 function enlargeBuildings() {
   enlargeAll();
+  stockpilePads();
   const plant = buildingRoot(NS + ':plant-sulphide'), old = scene.getObjectByName('fence');
   if (plant && old && dio) {
     const b = new THREE.Box3().setFromObject(plant), sub = buildingRoot(NS + ':power-grid');
@@ -2877,6 +3059,8 @@ function enlargeAll() {
       o.userData.enlarged = e.k;
       o.userData.box0 = new THREE.Box3().setFromObject(o);   // габарит до увеличения — для проверки «новых» пересечений
       o.scale.multiplyScalar(e.k);
+      if (e.tall && e.tall[id]) o.scale.y *= e.tall[id] / e.k;   // по высоте — во столько раз выше модели
+      if (e.stretch && e.stretch[id]) stretchUp(o, e.stretch[id][0], e.stretch[id][1]);
       if (pv) { o.position.x = pv[0] + (o.position.x - pv[0]) * e.k; o.position.z = pv[1] + (o.position.z - pv[1]) * e.k; }
       if (e.shift) { o.position.x += e.shift[0]; o.position.z += e.shift[1]; }
       if (e.place) placeFree(o, e.place);
@@ -2986,6 +3170,7 @@ dbgWin.__buildingBoxes = () => {
   if (fuelStationObj) { box.setFromObject(fuelStationObj); out.fuel = { x: [+box.min.x.toFixed(1), +box.max.x.toFixed(1)], z: [+box.min.z.toFixed(1), +box.max.z.toFixed(1)], pos: [+fuelStationObj.position.x.toFixed(1), +fuelStationObj.position.z.toFixed(1)] }; }
   return out;
 };
+dbgWin.__dumpDest = (id) => val(id, 'destination', '');   // для проверок: куда едет самосвал
 dbgWin.__scene = () => ({ scene, THREE, dio });   // для проверок: сцена (разбор щелей рельефа и т. п.)
 dbgWin.__openCard = (thingId) => { openCard(thingId); renderCard(); return !card.hidden; };   // для проверок: карточка двойника
 dbgWin.__screenOf = (thingId) => {
